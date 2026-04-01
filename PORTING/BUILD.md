@@ -58,7 +58,7 @@ src/
 cmake_minimum_required(VERSION 3.24)
 project(Altirra VERSION 4.40 LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Platform detection
@@ -118,11 +118,14 @@ if(WIN32)
     )
 else()
     set(SYSTEM_PLATFORM_SOURCES
+        source/date_sdl3.cpp
+        source/debug_sdl3.cpp
+        source/error_sdl3.cpp
         source/file_sdl3.cpp
         source/filesys_sdl3.cpp
-        source/fileasync_sdl3.cpp
-        source/thread_sdl3.cpp
         source/registry_sdl3.cpp
+        source/text_sdl3.cpp
+        source/time_sdl3.cpp
     )
 endif()
 
@@ -143,13 +146,24 @@ add_executable(AltirraSDL
     source/main_sdl3.cpp
     source/display_sdl3.cpp
     source/input_sdl3.cpp
-    source/audioout_sdl3.cpp
+    source/joystick_sdl3.cpp
     source/ui_main.cpp
-    source/ui_settings.cpp
-    source/ui_devices.cpp
-    source/ui_debugger.cpp
-    source/ui_overlay.cpp
-    source/ui_filebrowser.cpp
+    source/ui_system.cpp
+    source/ui_disk.cpp
+    source/ui_cassette.cpp
+    # Stubs for Win32-only symbols
+    stubs/uiaccessors_stubs.cpp
+    stubs/oshelper_stubs.cpp
+    stubs/console_stubs.cpp
+    stubs/uirender_stubs.cpp
+    stubs/win32_stubs.cpp
+    stubs/device_stubs.cpp
+    # Audio output (SDL3 implementation)
+    ${CMAKE_SOURCE_DIR}/src/ATAudio/source/audiooutput_sdl3.cpp
+    # Settings persistence (shared with Windows portable mode)
+    ${CMAKE_SOURCE_DIR}/src/Altirra/source/uiregistry.cpp
+    # All emulation core files (filtered from Altirra/source)
+    ${ALTIRRA_ALL_SOURCES}
 )
 
 target_link_libraries(AltirraSDL PRIVATE
@@ -239,13 +253,18 @@ use `#if VD_OS_WINDOWS` only when a single file must handle both platforms
 
 | Component | Windows | Linux/macOS |
 |-----------|---------|-------------|
-| system/thread | `thread.cpp` | `thread_sdl3.cpp` |
+| system/thread | `thread.cpp` | `thread.cpp` (cross-platform via `#ifdef`) |
 | system/file | `file.cpp` | `file_sdl3.cpp` |
 | system/filesys | `filesys.cpp` | `filesys_sdl3.cpp` |
-| system/fileasync | `fileasync.cpp` | `fileasync_sdl3.cpp` |
+| system/fileasync | `fileasync.cpp` | *(not compiled — not needed)* |
 | system/registry | `registry.cpp` | `registry_sdl3.cpp` |
+| system/text | `text.cpp` | `text_sdl3.cpp` (wchar_t encoding) |
+| system/date | `date.cpp` | `date_sdl3.cpp` |
+| system/time | `time.cpp` | `time_sdl3.cpp` |
+| system/error | `error_win32.cpp` | `error_sdl3.cpp` |
+| system/debug | `debug.cpp` | `debug_sdl3.cpp` |
 | ATAudio output | `audiooutput.cpp`, `audiooutwaveout.cpp`, etc. | `audiooutput_sdl3.cpp` |
-| ATNetworkSockets | `worker.cpp`, etc. | `worker_sdl3.cpp`, etc. |
+| ATNetworkSockets | `worker.cpp`, etc. | *(not yet implemented — Phase 8)* |
 | ATCore timer | `timerserviceimpl_win32.h` | `timerserviceimpl_sdl3.h` |
 | Frontend | `Altirra` project (Win32) | `AltirraSDL` project |
 

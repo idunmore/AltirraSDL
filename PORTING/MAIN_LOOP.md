@@ -237,6 +237,17 @@ For most users, VSync on a 60 Hz display provides the best experience.
 `SDL_DelayPrecise` timing is the fallback for displays with non-standard
 refresh rates.
 
+## Keyboard Shortcuts (main event handler)
+
+| Key | Action |
+|-----|--------|
+| F7 | Quick Load State (in-memory) |
+| F8 | Quick Save State (in-memory) |
+| F9 | Toggle Pause (via menu) |
+| F11 | Warm Reset |
+| F12 | Cold Reset |
+| Alt+Enter | Toggle Fullscreen |
+
 ## Key Differences from Windows Main Loop
 
 | Aspect | Windows | SDL3 |
@@ -285,29 +296,57 @@ The SDL3 frontend needs to call these `ATSimulator` methods:
 
 ```
 src/AltirraSDL/
-    h/
-        display_sdl3.h
-        input_sdl3.h
-        ui_state.h
     source/
-        main_sdl3.cpp        -- Entry point, main loop, frame timing
-        display_sdl3.cpp      -- VDVideoDisplaySDL3
-        input_sdl3.cpp        -- SDL3 event → ATInputCode translation
-        audioout_sdl3.cpp     -- (or in ATAudio, see AUDIO.md)
-        ui_main.cpp           -- ImGui menu bar and orchestration
-        ui_settings.cpp       -- Settings dialogs
-        ui_devices.cpp        -- Device management dialogs
-        ui_debugger.cpp       -- Debugger panes
-        ui_overlay.cpp        -- Status overlay
-        ui_filebrowser.cpp    -- File dialog integration
+        main_sdl3.cpp          -- Entry point, main loop, frame timing
+        display_sdl3.cpp       -- VDVideoDisplaySDL3
+        display_sdl3_impl.h    -- Display class header
+        input_sdl3.cpp         -- SDL3 keyboard/mouse → POKEY/InputManager
+        joystick_sdl3.cpp      -- SDL3 gamepad → IATJoystickManager
+        ui_main.h              -- ATUIState struct, render declarations
+        ui_main.cpp            -- Menu bar (10 menus), About dialog, status overlay
+        ui_system.cpp          -- Configure System (20-page paged dialog)
+        ui_disk.cpp            -- Disk Drives dialog
+        ui_cassette.cpp        -- Cassette Tape Control dialog
+    stubs/
+        uiaccessors_stubs.cpp  -- ATUIGet/Set* functions, g_kbdOpts, g_ATUIManager
+        oshelper_stubs.cpp     -- OS helper stubs
+        console_stubs.cpp      -- Console/debugger stubs
+        uirender_stubs.cpp     -- UI renderer stubs
+        win32_stubs.cpp        -- Win32 API stubs
+        device_stubs.cpp       -- Device button/network stubs
+src/ATAudio/source/
+    audiooutput_sdl3.cpp       -- ATAudioOutputSDL3 (IATAudioOutput factory)
 ```
 
-## Avoiding Global State
+## Speed Control and Audio Rate Sync
+
+The main loop calls `UpdatePacerRate()` after each presented frame.  This
+function reads `ATUIGetSpeedModifier()` and `ATUIGetSlowMotion()` to compute
+a speed factor, adjusts the frame pacer rate accordingly, and calls
+`IATAudioOutput::SetCyclesPerSecond()` with the current scheduler rate and
+speed factor.  This matches the Windows idle handler (`main.cpp` line 537).
+
+When `ATUIGetTurbo()` or `ATUIGetTurboPulse()` is set, the main loop skips
+the frame pacer's `WaitForNextFrame()` call, allowing emulation to run as
+fast as the CPU allows.  The stubs wire `ATUISetTurbo` directly to
+`g_sim.SetTurboModeEnabled()`.
+
+## Window Focus and Pause-When-Inactive
+
+The main loop tracks `g_winActive` via `SDL_EVENT_WINDOW_FOCUS_GAINED` and
+`SDL_EVENT_WINDOW_FOCUS_LOST`.  When `ATUIGetPauseWhenInactive()` is true
+and the window is inactive, the loop skips `Advance()` and renders only UI
+at 16ms intervals.  This matches the Windows `g_pauseInactive` + `g_winActive`
+behavior.
+
+## File Drop
+
+`SDL_EVENT_DROP_FILE` loads the dropped file via `g_sim.Load()` with
+`kATMediaWriteMode_VRWSafe` and triggers a cold reset, matching the Windows
+drag-and-drop behavior.
+
+## Global State
 
 The Windows build uses globals (`g_sim`, `g_pDisplay`). The SDL3 frontend
-can use locals in `main()` passed by reference/pointer to UI functions. This
-improves testability and makes the code easier to reason about.
-
-If global access is needed for compatibility with code shared between
-frontends (e.g., the simulator sources), keep `g_sim` as a global but
-define it in `main_sdl3.cpp` rather than sharing the Windows `main.cpp`.
+does the same for compatibility with shared code that references `g_sim`.
+UI functions receive the simulator by reference from `ATUIRenderFrame()`.

@@ -1,0 +1,58 @@
+AltirraSDL — Network Socket Parity Checklist
+=============================================
+Updated: 2026-04-01
+Reference: PORTING/NETWORK.md vs actual ATNetworkSockets/
+
+Legend:
+  [100%] Fully implemented
+  [  0%] Not implemented
+  [ N/A] Not applicable
+
+
+================================================================================
+1. SDL3_NET INTEGRATION
+================================================================================
+
+  [  0%] SDL3_net find_package in CMakeLists   — Not in root CMakeLists.txt
+  [  0%] nativesockets_sdl3.cpp               — Not created
+  [  0%] worker_sdl3.cpp                      — Not created
+  [  0%] socketutils_sdl3.cpp                 — Not created
+  [  0%] CMakeLists.txt for ATNetworkSockets  — No CMake build file exists
+
+
+================================================================================
+2. INTERFACE IMPLEMENTATION
+================================================================================
+
+  [  0%] IATStreamSocket (TCP)                — Not implemented for SDL3
+  [  0%] IATDatagramSocket (UDP)              — Not implemented for SDL3
+  [  0%] IATEmuNetSocketListener callbacks    — Not wired
+  [  0%] DNS resolution via NET_ResolveHostname — Not implemented
+  [  0%] VXLAN tunnel via NET_*Datagram       — Not implemented
+
+
+================================================================================
+3. CURRENT STATE
+================================================================================
+
+  The ATNetwork library (emulated Atari network stack) compiles unchanged.
+  The ATNetworkSockets bridge library has NO SDL3 implementation.
+  Network features (DrACE, modem emulation, BBS access) do not work.
+
+  The emulator compiles and runs without network support via stubs in
+  stubs/device_stubs.cpp that satisfy link-time symbol requirements.
+
+  NETWORK.md correctly identifies this as Phase 8 (lowest priority).
+
+
+================================================================================
+SUMMARY
+================================================================================
+
+Category                    Implemented    Total    Coverage
+------------------------------------------------------------
+SDL3_net integration             0            5        0%
+Socket interfaces                0            5        0%
+
+Network is entirely unimplemented. This is expected — it's a niche feature
+(modem/BBS emulation) and the emulator is fully functional without it.

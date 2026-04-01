@@ -1,0 +1,511 @@
+AltirraSDL — Dear ImGui UI Parity Checklist
+============================================
+Generated: 2026-04-01
+Updated:   2026-04-01
+Reference: Windows Altirra menu_default.txt + Altirra.rc (149 dialogs)
+
+Legend:
+  [100%] Fully implemented and functional
+  [ 90%] Implemented, minor items missing (noted)
+  [ 50%] Partially implemented
+  [  0%] Not implemented
+  [ N/A] Not applicable to SDL3/Linux (Windows-only feature)
+
+Files:
+  ui_main.cpp      — Menu bar, About dialog, status overlay, render orchestrator
+  ui_main.h        — ATUIState struct, declarations
+  ui_system.cpp    — Configure System (20 category pages)
+  ui_disk.cpp      — Disk Drives dialog
+  ui_cassette.cpp  — Cassette Tape Control dialog
+
+
+================================================================================
+1. MENU BAR (ui_main.cpp)
+================================================================================
+
+1.1 FILE MENU
+  [100%] Boot Image...                    — SDL file dialog, loads + cold resets
+  [100%] Recently Booted (MRU)            — Up to 10 items, stored in registry, Clear List option
+  [100%] Open Image...                    — SDL file dialog, loads without cold reset
+  [100%] Disk Drives...                   — Opens disk manager dialog
+  [100%] Attach Disk submenu              — Rotate Down/Up + per-drive D1-D8 attach
+                                            Shows current image name in menu label
+  [100%] Detach Disk submenu              — All + per-drive D1-D8 detach
+  [ 80%] Cassette submenu                 — Has: Tape Control, New Tape, Load, Unload, Save
+                                            Placeholder: Tape Editor, Export Audio Tape
+  [100%] Load State...                    — SDL file dialog, loads .atstate2/.atstate
+  [100%] Save State...                    — SDL save dialog, sim.SaveState()
+  [100%] Quick Load State                 — F7 hint, in-memory via ApplySnapshot
+  [100%] Quick Save State                 — F8 hint, in-memory via CreateSnapshot
+  [  0%] Attach Special Cartridge         — Missing: 20-item submenu (MaxFlash, SIC, TheCart, etc.)
+  [  0%] Secondary Cartridge              — Missing: Attach/Detach second cart slot
+  [100%] Attach Cartridge...              — SDL file dialog, loads + cold resets
+  [100%] Detach Cartridge                 — Unloads + cold resets, grayed when none
+  [  0%] Save Firmware submenu            — Missing: Save Cart, IDE Flash, U1MB, Rapidus
+  [100%] Exit                             — Pushes SDL_EVENT_QUIT
+
+1.2 VIEW MENU
+  [100%] Full Screen                      — SDL_SetWindowFullscreen toggle
+  [100%] Filter Mode submenu              — 5 modes + Next Mode cycling
+  [100%] Filter Sharpness submenu         — 5 levels (Softer/Soft/Normal/Sharp/Sharper)
+  [100%] Stretch Mode submenu             — 5 modes
+  [ 70%] Overscan Mode submenu            — Has: 5 modes.
+                                            Missing: Vertical Override sub-submenu (5 items),
+                                            Extended PAL Height, Indicator Margin
+  [100%] Vertical Sync                    — Toggle via SDL_SetRenderVSync
+  [100%] Show FPS                         — Toggle with status overlay
+  [  0%] Video Outputs submenu            — Missing: multi-output switching
+  [  0%] Adjust Colors...                 — Missing: complex color calibration dialog (55 controls)
+  [  0%] Adjust Screen Effects...         — Missing: bloom, HDR, scanlines, mask, distortion
+  [  0%] Customize HUD...                 — Missing: HUD layout editor
+  [  0%] Calibrate...                     — Missing: display calibration
+  [  0%] Display pane                     — Missing: dockable display pane
+  [  0%] Printer Output pane              — Missing: dockable printer output
+  [  0%] Copy Frame to Clipboard          — Missing: frame capture
+  [  0%] Copy Frame (True Aspect)         — Missing: frame capture with aspect
+  [  0%] Save Frame...                    — Missing: frame save to file
+  [  0%] Save Frame (True Aspect)...      — Missing: frame save with aspect
+  [  0%] Text Selection submenu           — Missing: 7 items (Copy Text/Hex/Unicode, Paste, Select)
+
+1.3 SYSTEM MENU
+  [  0%] Profiles submenu                 — Missing: profile management
+  [100%] Configure System...              — Opens 20-page config dialog
+  [100%] Warm Reset                       — sim.WarmReset()
+  [100%] Cold Reset                       — sim.ColdReset()
+  [100%] Cold Reset (Computer Only)       — sim.ColdResetComputerOnly()
+  [100%] Pause                            — Toggle with F9 hint
+  [ 80%] Speed submenu                    — Has: Turbo, SlowMo, 1x/2x/4x/8x
+                                            Note: Windows has "Warp Speed" as top-level toggle
+  [100%] Pause When Inactive              — Toggle
+  [100%] Hold Keys For Reset              — ATUIToggleHoldKeys()
+  [  0%] Rewind submenu                   — Missing: Quick Rewind, Rewind dialog
+  [ 80%] Power-On Delay submenu           — Has: None/1/2/3s. Missing: "Auto" option
+  [100%] Console Switches submenu         — Keyboard Present, Force Self-Test, Cart Switch,
+                                            all ATDeviceButton items shown when supported
+  [100%] Video Standard submenu           — NTSC/PAL/SECAM
+  [100%] Hardware Mode submenu            — 6 hardware models
+  [100%] Memory submenu                   — 7 common sizes
+  [100%] Internal BASIC                   — Toggle
+  [100%] Auto-Boot Tape (Hold Start)      — Toggle
+
+1.4 INPUT MENU
+  [  0%] Input Mappings...                — Placeholder (disabled). Missing: full input map editor
+  [  0%] Input Setup...                   — Placeholder (disabled). Missing: input device config
+  [  0%] Cycle Quick Maps                 — Missing: quick map cycling
+  [  0%] Capture Mouse                    — Placeholder (disabled)
+  [100%] Auto-Capture Mouse               — Toggle
+  [  0%] Light Pen/Gun...                 — Placeholder (disabled)
+  [  0%] Recalibrate Light Pen/Gun        — Placeholder (disabled)
+  [  0%] Port 1-4 submenus               — Missing: controller port assignment
+
+1.5 CHEAT MENU
+  [  0%] Cheater...                       — Placeholder (disabled)
+  [100%] Disable P/M Collisions           — Toggle (inverted display)
+  [100%] Disable Playfield Collisions     — Toggle (inverted display)
+
+1.6 DEBUG MENU
+  [  0%] Enable Debugger                  — Placeholder (disabled). Missing: debugger integration
+  [  0%] Open Source File...              — Placeholder (disabled)
+  [ 30%] Window submenu                   — Placeholders for Console/Registers/Disassembly/Memory/
+                                            Call Stack/History/Watch 1-4/Memory 1-4/
+                                            Breakpoints/Targets/Debug Display (all disabled)
+  [ 30%] Options submenu                  — Placeholders for Auto-Reload ROMs, Randomize Memory,
+                                            Break at EXE Run, Change Font (all disabled)
+  [  0%] Run/Break                        — Placeholder (disabled)
+  [  0%] Break                            — Placeholder (disabled)
+  [  0%] Step Into/Over/Out               — Placeholders (disabled)
+  [  0%] Profile View                     — Placeholder (disabled)
+  [  0%] Verifier...                      — Placeholder (disabled)
+  [  0%] Performance Analyzer...          — Placeholder (disabled)
+
+1.7 RECORD MENU
+  [ 20%] Record Raw Audio...              — Placeholder (disabled, grayed when recording)
+  [ 20%] Record Audio...                  — Placeholder (disabled, grayed when recording)
+  [ 20%] Record Video...                  — Placeholder (disabled, grayed when recording)
+  [ 20%] Record SAP Type R...             — Placeholder (disabled, grayed when recording)
+  [ 20%] Record VGM...                    — Placeholder (disabled, grayed when recording)
+  [ 20%] Stop                             — Placeholder (enabled only when recording)
+  [ 20%] Pause/Resume                     — Placeholder (enabled only when recording)
+
+1.8 TOOLS MENU
+  [  0%] Disk Explorer...                 — Placeholder (disabled)
+  [  0%] Convert SAP to EXE...            — Placeholder (disabled)
+  [  0%] Export ROM set...                — Placeholder (disabled)
+  [  0%] Analyze tape decoding...         — Placeholder (disabled)
+  [  0%] Keyboard Shortcuts...            — Placeholder (disabled)
+  [  0%] Advanced Configuration...        — Placeholder (disabled)
+
+1.9 WINDOW MENU
+  [  0%] Close                            — Placeholder (disabled)
+  [  0%] Undock                           — Placeholder (disabled)
+  [100%] Adjust Window Size               — Submenu: 1x/2x/3x/4x sizes, calls SDL_SetWindowSize
+
+1.10 HELP MENU
+  [  0%] Contents                         — Placeholder (disabled)
+  [100%] About                            — Shows version, credits, license, OK button
+  [  0%] Change Log                       — Placeholder (disabled)
+  [  0%] Command-Line Help                — Placeholder (disabled)
+
+
+================================================================================
+2. STANDALONE DIALOGS
+================================================================================
+
+2.1 DISK DRIVES DIALOG (ui_disk.cpp — IDD_DISK_DRIVES)
+  [100%] Drives 1-8 / 9-15 tab selector  — RadioButton pair
+  [100%] Per-drive table (8 rows)         — 6-column table: label, image, write mode,
+                                            browse, eject, more
+  [100%] Drive labels with dirty indicator — Orange text for dirty drives
+  [100%] Image path display               — Basename shown (Windows shows full path in edittext)
+  [100%] Write mode combo per drive       — Off/RO/VRWSafe/VRW/RW
+  [100%] Browse "..." button              — SDL async file dialog
+  [100%] Eject button per drive           — Visible column
+  [100%] "+" context menu                 — New Disk, Save, Save As, Revert, Eject
+  [ 50%] Context menu extras              — Missing: Explore Disk, Show File, Swap/Shift drives,
+                                            Change Interleave submenu, Convert Filesystem submenu,
+                                            Mount Virtual Folder, Extract Boot Sectors, Expand ARC
+  [100%] Emulation level combo            — 12 modes, applied to all drives
+  [100%] OK button                        — Dismisses dialog
+
+2.2 CASSETTE TAPE CONTROL (ui_cassette.cpp — IDD_TAPE_CONTROL)
+  [100%] Status text (no tape message)    — "There is no tape in the cassette tape drive."
+  [100%] Position slider                  — SeekToTime on drag
+  [100%] Position label                   — M:SS.d / M:SS.d format
+  [100%] Stop button                      — cas.Stop(), green when active
+  [100%] Pause button                     — cas.SetPaused(), green when active
+  [100%] Play button                      — cas.Play(), green when active
+  [100%] Seek Start (|<)                  — cas.SeekToTime(0)
+  [100%] Seek End (>|)                    — cas.SeekToTime(length)
+  [100%] Record button                    — cas.Record(), red when active
+  [  0%] Peak waveform visualization      — Missing: Windows has audio waveform display
+
+2.3 ABOUT DIALOG (ui_main.cpp — IDD_ABOUT)
+  [100%] Title, description, license      — Basic info shown
+  [100%] OK button                        — Dismisses dialog
+
+2.4 AUDIO OPTIONS DIALOG (IDD_AUDIO_OPTIONS)
+  [  0%] ENTIRE DIALOG MISSING            — Missing: Volume slider, Drive volume, Covox volume,
+                                            Latency slider, Extra buffer, Audio API selector,
+                                            Debug info checkbox, OK/Cancel buttons
+                                            Note: some settings are in Configure System > Audio
+
+2.5 CARTRIDGE MAPPER SELECTION (IDD_CARTRIDGE_MAPPER)
+  [  0%] ENTIRE DIALOG MISSING            — Missing: mapper list, show all types, show details,
+                                            2600 warning, OK/Cancel
+
+2.6 CREATE DISK DIALOG (IDD_CREATE_DISK)
+  [ 80%] Create Disk dialog               — Format combo (10 presets), sector count, sector size
+                                            radio (128/256/512), boot sector count. Missing: filesystem combo
+
+2.7 CHEATER DIALOG (IDD_CHEATER)
+  [  0%] ENTIRE DIALOG MISSING            — Missing: search results list, active cheats list,
+                                            value type (8/16-bit), search mode/value,
+                                            Add/Edit/Delete/Transfer/Update, Load/Save, OK
+
+2.8 COMPATIBILITY WARNING (IDD_COMPATIBILITY)
+  [  0%] ENTIRE DIALOG MISSING            — Missing: auto-adjust, boot anyway, pause buttons,
+                                            ignore checkboxes
+
+2.9 REWIND DIALOG
+  [  0%] ENTIRE DIALOG MISSING            — Missing: rewind timeline UI
+
+
+================================================================================
+3. CONFIGURE SYSTEM PAGES (ui_system.cpp — IDD_CONFIGURE + IDD_CONFIGURE_*)
+================================================================================
+
+3.0 DIALOG FRAME
+  [100%] Hierarchical tree sidebar        — 5 groups: Computer, Outputs, Peripherals, Media, Emulator
+  [100%] Content panel                    — Switches on category selection (20 pages)
+  [100%] OK button                        — Dismisses dialog
+
+3.1 SYSTEM (Computer > System — IDD_CONFIGURE_SYSTEM)
+  [100%] Hardware type combo              — 6 models
+  [100%] Video standard combo             — NTSC/PAL/SECAM
+  [100%] CTIA mode checkbox               — Toggle CTIA/GTIA
+  [  0%] Toggle NTSC/PAL button           — Missing: convenience button (minor)
+
+3.2 CPU (Computer > CPU — IDD_CONFIGURE_CPU)
+  [100%] CPU mode radio buttons           — 10 modes (6502, 65C02, 8x 65C816 speeds)
+  [100%] Enable illegal instructions      — Checkbox
+  [100%] Allow BRK/IRQ to block NMI       — Checkbox
+  [100%] Stop on BRK instruction          — Checkbox
+  [100%] Record instruction history       — Checkbox
+  [100%] Track code paths                 — Checkbox
+  [100%] Shadow ROMs in fast RAM          — Checkbox
+  [100%] Shadow cartridges in fast RAM    — Checkbox
+
+3.3 FIRMWARE (Computer > Firmware — IDD_CONFIGURE_FIRMWARE)
+  [100%] Operating system ROM listbox     — Kernel ROM selection
+  [100%] BASIC enable checkbox            — "Enable internal BASIC"
+  [100%] BASIC ROM listbox                — BASIC ROM selection
+  [100%] Auto-Reload ROMs on Cold Reset   — Checkbox
+  [  0%] Firmware manager... button       — Missing: opens firmware management dialog
+
+3.4 MEMORY (Computer > Memory — IDD_CONFIGURE_MEMORY)
+  [100%] Memory Size combo                — 13 sizes (8K-1088K)
+  [100%] Memory Clear Pattern combo       — 5 patterns
+  [100%] Enable MapRAM (XL/XE only)       — Checkbox
+  [100%] Enable Ultimate1MB               — Checkbox
+  [100%] Enable bank register aliasing    — Checkbox (Axlon)
+  [100%] Enable floating I/O bus          — Checkbox
+  [100%] Preserve extended memory         — Checkbox
+
+3.5 ACCELERATION (Computer > Acceleration — IDD_CONFIGURE_ACCELERATION)
+  [100%] Fast boot                        — Checkbox
+  [100%] Fast floating-point math         — Checkbox
+  [100%] SIO Patch                        — Checkbox
+  [100%] D: patch (Disk SIO)              — Checkbox
+  [100%] C: patch (Cassette SIO)          — Checkbox
+  [100%] PRT: patch (Other SIO)           — Checkbox
+  [100%] H: (Host device CIO)             — Checkbox
+  [100%] P: (Printer CIO)                 — Checkbox
+  [100%] R: (RS-232 CIO)                  — Checkbox
+  [100%] T: (1030 Serial CIO)             — Checkbox
+  [100%] D: burst I/O                     — Checkbox
+  [100%] PRT: burst I/O                   — Checkbox
+  [100%] CIO burst transfers              — Checkbox
+  [100%] SIO override detection           — Checkbox
+
+3.6 SPEED (Computer > Speed — IDD_CONFIGURE_SPEED)
+  [100%] Run as fast as possible (warp)   — Checkbox
+  [100%] Slow Motion                      — Checkbox
+  [100%] Speed combo                      — 1x/2x/4x/8x
+  [100%] Pause when inactive              — Checkbox
+  [100%] Base frame rate combo            — Hardware/Broadcast/Integral
+  [100%] Lock speed to refresh rate       — Checkbox (VSync adaptive)
+
+3.7 BOOT (Computer > Boot — IDD_CONFIGURE_BOOT)
+  [100%] Program Load Mode combo          — 4 modes
+  [100%] Randomize Memory on EXE Load     — Checkbox
+  [100%] Randomize program load timing    — Checkbox
+  [100%] Unload cartridges on boot        — Checkbox (via storage mask)
+  [100%] Unload disks on boot             — Checkbox (via storage mask)
+  [100%] Unload tapes on boot             — Checkbox (via storage mask)
+  [  0%] Use Specific Seed button         — Missing: seed input UI
+  [  0%] Current/Next seed display        — Missing: seed value labels
+
+3.8 VIDEO (Outputs > Video — IDD_CONFIGURE_VIDEO)
+  [100%] Artifacting combo                — 7 modes
+  [100%] Monitor Mode combo               — 6 modes
+  [100%] Frame Blending                   — Checkbox
+  [100%] Interlace                        — Checkbox
+  [100%] Scanlines                        — Checkbox
+  [100%] Extended PAL Height              — Checkbox
+
+3.9 AUDIO (Outputs > Audio — IDD_CONFIGURE_AUDIO)
+  [100%] Mute All                         — Checkbox
+  [100%] Stereo (Dual POKEYs)             — Checkbox
+  [100%] Downmix stereo to mono           — Checkbox
+  [100%] Non-linear mixing                — Checkbox
+  [100%] Serial noise                     — Checkbox
+  [100%] Simulate console speaker         — Checkbox
+  [100%] Channel 1-4 enable               — 4 checkboxes on one line
+  [100%] Channel 1R-4R enable             — 4 checkboxes (when stereo)
+  [100%] Drive Sounds                     — Checkbox
+  [100%] Audio monitor                    — Checkbox
+  [100%] Audio scope                      — Checkbox
+  [  0%] Visualization combo              — Missing: audio visualization selector
+  [  0%] Host audio options... button     — Missing: opens IDD_AUDIO_OPTIONS
+
+3.10 DEVICES (Peripherals > Devices — IDD_CONFIGURE_DEVICES)
+  [ 10%] Devices page                     — Placeholder text shown. Missing: device tree,
+                                            Add/Remove/Settings buttons, device properties
+
+3.11 KEYBOARD (Peripherals > Keyboard — IDD_CONFIGURE_KEYBOARD)
+  [100%] Arrow key mode combo             — 3 modes (InvertCtrl/AutoCtrl/DefaultCtrl)
+  [100%] Layout mode combo                — 3 modes (Natural/Raw/Custom)
+  [100%] Allow SHIFT on cold reset        — Checkbox
+  [100%] Enable F1-F4 function keys       — Checkbox
+  [100%] Share modifier host keys         — Checkbox
+  [100%] Share non-modifier host keys     — Checkbox
+  [  0%] Copy Default to Custom button    — Missing: custom layout copy
+  [  0%] Customize... button              — Missing: custom key mapping editor
+
+3.12 DISK (Media > Disk — IDD_CONFIGURE_DISK)
+  [100%] Accurate sector timing           — Checkbox
+  [100%] Play drive sounds                — Checkbox
+  [100%] Show sector counter              — Checkbox
+
+3.13 CASSETTE (Media > Cassette — IDD_CONFIGURE_CASSETTE)
+  [100%] Auto-boot on startup             — Checkbox
+  [100%] Auto-boot BASIC on startup       — Checkbox
+  [100%] Auto-rewind on startup           — Checkbox
+  [100%] Load data as audio               — Checkbox
+  [100%] Randomize starting position      — Checkbox
+  [100%] Turbo mode combo                 — 8 modes
+  [100%] Turbo decoder combo              — 5 algorithms
+  [100%] Invert turbo data                — Checkbox (polarity mode)
+  [100%] Direct read filter combo         — 4 modes
+  [100%] Avoid VBI errors                 — Checkbox
+  [100%] FSK speed compensation           — Checkbox
+  [100%] Crosstalk reduction              — Checkbox
+
+3.14 MEDIA DEFAULTS (Media > Defaults — IDD_CONFIGURE_MEDIADEFAULTS)
+  [100%] Default write mode combo         — RO/VRWSafe/VRW/RW via g_ATOptions
+
+3.15 DISPLAY (Emulator > Display — IDD_CONFIGURE_DISPLAY)
+  [100%] Auto-hide mouse pointer          — Checkbox
+  [100%] Constrain mouse in fullscreen    — Checkbox
+  [100%] Hide target pointer              — Checkbox
+  [100%] Show indicators                  — Checkbox
+  [100%] Pad bottom margin for indicators — Checkbox
+  [100%] Show tablet/pad bounds           — Checkbox
+  [100%] Show tablet/pad pointers         — Checkbox
+
+3.16 INPUT (Emulator > Input — IDD_CONFIGURE_INPUT)
+  [100%] Enable paddle pot noise          — Checkbox
+  [100%] Use immediate analog updates     — Checkbox
+  [ N/A] Use Raw Input API                — N/A on Linux
+  [  0%] Use immediate light pen updates  — Missing: checkbox
+
+3.17 EASE OF USE (Emulator > Ease of Use — IDD_CONFIGURE_EASEOFUSE)
+  [100%] Reset when changing cartridges   — Checkbox
+  [100%] Reset when changing video std    — Checkbox
+  [100%] Reset when toggling BASIC        — Checkbox
+
+3.18 ENHANCED TEXT (Emulator > Enhanced Text — IDD_CONFIGURE_ENHANCEDTEXT)
+  [100%] Mode combo                       — None/Hardware/Software
+  [100%] Description text                 — Explains each mode
+
+3.19 CAPTION (Emulator > Caption — IDD_CONFIGURE_CAPTION)
+  [100%] Template input text              — Editable caption template
+  [100%] Variable documentation           — Shows available variables
+  [100%] Reset to Default button          — Clears template
+
+3.20 WORKAROUNDS (Emulator > Workarounds — IDD_CONFIGURE_WORKAROUNDS)
+  [100%] Poll directories checkbox        — g_ATOptions.mbPollDirectories
+
+3.21 MISSING CONFIGURE SYSTEM PAGES (not yet implemented):
+  [  0%] Debugger (IDD_CONFIGURE_DEBUGGER)     — Auto-load symbols, debug link, scripts
+  [  0%] Flash (IDD_CONFIGURE_FLASH)           — Flash chip type combos
+  [  0%] CompatDB (IDD_CONFIGURE_COMPATDB)     — Compat warnings, databases
+  [  0%] Overview (IDD_CONFIGURE_OVERVIEW)     — System config summary, copy to clipboard
+  [  0%] Assessment (IDD_CONFIGURE_ASSESSMENT) — Compatibility assessment
+  [ N/A] File Types (IDD_CONFIGURE_FILETYPES)  — Windows file associations
+  [ N/A] Settings (IDD_CONFIGURE_SETTINGS)     — Registry/portable mode (Windows)
+  [ N/A] Display 2 (IDD_CONFIGURE_DISPLAY2)    — D3D/fullscreen mode (Windows graphics API)
+  [ N/A] UI (IDD_CONFIGURE_UI)                 — Partial N/A (dark theme, menu auto-hide)
+
+
+================================================================================
+4. DEVICE CONFIGURATION DIALOGS (25 dialogs — all missing)
+================================================================================
+
+  [  0%] IDD_DEVICE_1030MODEM             — 835/1030/XM301 modem: TCP, Telnet, baud rate
+  [  0%] IDD_DEVICE_1400XL                — 1400/1450XL modem options
+  [  0%] IDD_DEVICE_815                   — 815 disk drive: drive select, data inversion
+  [  0%] IDD_DEVICE_850                   — 850 interface: baud rate
+  [  0%] IDD_DEVICE_AMDC                  — Amdek AMDC-I/II: drives, DIP switches
+  [  0%] IDD_DEVICE_ATR8000               — ATR8000: drives, serial port
+  [  0%] IDD_DEVICE_BLACKBOX              — Black Box: DIP switches, RAM, SCSI
+  [  0%] IDD_DEVICE_COMPUTEREYES          — ComputerEyes: brightness
+  [  0%] IDD_DEVICE_CORVUS               — Corvus interface: controller port
+  [  0%] IDD_DEVICE_COVOX                — Covox: base address, channels
+  [  0%] IDD_DEVICE_CUSTOM               — Custom device: script path, hot reload
+  [  0%] IDD_DEVICE_DISKDRIVEFULL        — Disk drive: drive select
+  [  0%] IDD_DEVICE_DONGLE              — Joystick dongle: port, mapping
+  [  0%] IDD_DEVICE_GENERIC              — Generic device options
+  [  0%] + 11 more device dialogs
+
+
+================================================================================
+5. DEBUGGER DIALOGS (14+ dialogs — all missing)
+================================================================================
+
+  [  0%] Debugger Console pane
+  [  0%] Registers pane
+  [  0%] Disassembly pane
+  [  0%] Memory viewer (4 instances)
+  [  0%] Watch window (4 instances)
+  [  0%] Call Stack pane
+  [  0%] History pane
+  [  0%] Breakpoint list + Add/Edit dialog
+  [  0%] Targets pane
+  [  0%] Debug Display pane
+  [  0%] Profile View pane
+  [  0%] Trace Viewer (Performance Analyzer)
+  [  0%] Verifier dialog
+  [  0%] Debug font chooser
+
+
+================================================================================
+6. INPUT MAPPING DIALOGS (9 dialogs — all missing)
+================================================================================
+
+  [  0%] IDD_INPUTMAPS                    — Input map list + controller binding
+  [  0%] IDD_INPUTMAP_ADDCONTROLLER       — Add controller mapping
+  [  0%] IDD_INPUTMAP_ADDMAP              — Create new input map
+  [  0%] IDD_INPUTMAP_REMAP               — Remap controls
+  [  0%] IDD_CREATEINPUTMAP               — Create input map: source, port, type
+  [  0%] IDD_INPUTSETUP                   — Input setup dialog
+  [  0%] IDD_INPUTSETUP_REBIND            — Rebind controls
+  [  0%] IDD_LIGHTPEN                     — Light pen/gun configuration
+  [  0%] IDD_KEYBOARD_CUSTOMIZE           — Custom keyboard layout editor
+
+
+================================================================================
+7. COLOR & VIDEO EFFECTS DIALOGS (11 dialogs — all missing)
+================================================================================
+
+  [  0%] IDD_ADJUST_COLORS                — 55-control color calibration
+  [  0%] IDD_ADJUST_COLORS_REFERENCE      — Palette solver
+  [  0%] IDD_ADJUST_SCREENFX              — Screen effects (tabbed)
+  [  0%] IDD_ADJUST_SCREENFX_MAIN         — Scanline/distortion
+  [  0%] IDD_ADJUST_SCREENFX_BLOOM        — Bloom effects
+  [  0%] IDD_ADJUST_SCREENFX_HDR          — HDR settings
+  [  0%] IDD_ADJUST_SCREENFX_MASK         — Screen mask (CRT simulation)
+  [  0%] IDD_ADJUST_ARTIFACTING           — Artifacting slider
+
+
+================================================================================
+8. MISCELLANEOUS DIALOGS
+================================================================================
+
+  [  0%] IDD_AUDIO_OPTIONS                — Volume/latency/API config, OK/Cancel
+  [  0%] IDD_CHEATER + IDD_CHEAT_EDIT     — Memory search + cheat editor
+  [  0%] IDD_CREATE_DISK                  — New disk with geometry options
+  [  0%] IDD_CREATE_VHD                   — VHD image creation
+  [  0%] IDD_DISK_EXPLORER                — Filesystem browser
+  [  0%] IDD_CARTRIDGE_MAPPER             — Cartridge type selection
+  [  0%] IDD_COMPATIBILITY                — Compatibility warning
+  [  0%] IDD_DRAGONCART                   — DragonCart network config
+  [  0%] IDD_CHANGE_LOG                   — Changelog viewer
+  [  0%] IDD_CMDLINEHELP                  — Command-line help
+  [  0%] IDD_ADVANCED_CONFIGURATION       — Advanced config variables
+  [  0%] IDD_WIZARD_* (6 dialogs)         — First-time setup wizard
+
+
+================================================================================
+SUMMARY
+================================================================================
+
+Category                    Implemented    Total    Coverage
+------------------------------------------------------------
+Menu items (leaf)              58          198       29%
+Standalone dialogs              3           20+      15%
+Configure System pages         20           28       71%
+Config page controls         ~145         ~210       69%
+Device config dialogs           0           25        0%
+Debugger dialogs/panes          0           14        0%
+Input mapping dialogs           0            9        0%
+Color/effects dialogs           0           11        0%
+Misc dialogs                    0           12+       0%
+
+Core daily-use features (boot, open, disk mount/eject, cassette control,
+system config, video/audio settings, reset, pause, speed, console switches)
+are well covered. Menu structure now has Record and Window menus (placeholder).
+Configure System has 20 of 28 pages including 5 new pages (Devices placeholder,
+Media Defaults, Enhanced Text, Caption, Workarounds) and Speed page completion
+(frame rate, VSync).
+
+Remaining major areas:
+  - Debugger (14+ panes/dialogs)
+  - Input mapping (9 dialogs)
+  - Device configuration (25 dialogs)
+  - Color/effects calibration (8+ dialogs)
+  - State save/load
+  - Recording (audio/video)
+  - MRU (recently booted)
+  - Special cartridges
+  - Profile management

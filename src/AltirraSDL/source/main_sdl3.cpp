@@ -26,14 +26,21 @@
 #include "ui_main.h"
 
 #include "simulator.h"
+#include <at/ataudio/audiooutput.h>
+#include "uiaccessors.h"
 #include "gtia.h"
+#include "joystick.h"
+#include "joystick_sdl3.h"
 #include "firmwaremanager.h"
+#include "settings.h"
 
 ATSimulator g_sim;
 static VDVideoDisplaySDL3 *g_pDisplay = nullptr;
 static SDL_Window   *g_pWindow   = nullptr;
 static SDL_Renderer *g_pRenderer = nullptr;
+static IATJoystickManager *g_pJoystickMgr = nullptr;
 static bool g_running = true;
+static bool g_winActive = true;
 static ATUIState g_uiState;
 
 // =========================================================================
@@ -117,6 +124,10 @@ static void HandleEvents() {
 					g_sim.ColdReset();
 				else if (ev.key.key == SDLK_F11)
 					g_sim.WarmReset();
+				else if (ev.key.key == SDLK_F7)
+					ATUIQuickLoadState();
+				else if (ev.key.key == SDLK_F8)
+					ATUIQuickSaveState();
 				else if (ev.key.key == SDLK_RETURN &&
 					(ev.key.mod & SDL_KMOD_ALT)) {
 					bool fs = (SDL_GetWindowFlags(g_pWindow) & SDL_WINDOW_FULLSCREEN) != 0;
@@ -129,6 +140,40 @@ static void HandleEvents() {
 		case SDL_EVENT_KEY_UP:
 			if (!ATUIWantCaptureKeyboard())
 				ATInputSDL3_HandleKeyUp(ev.key);
+			break;
+
+		case SDL_EVENT_GAMEPAD_ADDED:
+			if (g_pJoystickMgr)
+				g_pJoystickMgr->RescanForDevices();
+			break;
+
+		case SDL_EVENT_GAMEPAD_REMOVED:
+			// RescanForDevices only adds new gamepads.  For removal,
+			// the SDL3-specific manager exposes CloseGamepad().
+			if (g_pJoystickMgr)
+				static_cast<ATJoystickManagerSDL3 *>(g_pJoystickMgr)->CloseGamepad(ev.gdevice.which);
+			break;
+
+		case SDL_EVENT_DROP_FILE: {
+			const char *file = ev.drop.data;
+			if (file) {
+				VDStringW widePath = VDTextU8ToW(file, -1);
+				ATImageLoadContext ctx {};
+				if (g_sim.Load(widePath.c_str(), kATMediaWriteMode_VRWSafe, &ctx)) {
+					ATAddMRU(widePath.c_str());
+					g_sim.ColdReset();
+				} else
+					fprintf(stderr, "Warning: Could not load dropped file '%s'\n", file);
+			}
+			break;
+		}
+
+		case SDL_EVENT_WINDOW_FOCUS_GAINED:
+			g_winActive = true;
+			break;
+
+		case SDL_EVENT_WINDOW_FOCUS_LOST:
+			g_winActive = false;
 			break;
 
 		default:
@@ -163,18 +208,41 @@ static void RenderAndPresent() {
 // Update frame pacer rate from current video standard
 // =========================================================================
 
-static void UpdatePacerRate() {
+static double GetBaseFrameRate() {
 	switch (g_sim.GetVideoStandard()) {
 	case kATVideoStandard_PAL:
 	case kATVideoStandard_PAL60:
-		g_pacer.UpdateRate(kFrameRate_PAL);
-		break;
+		return kFrameRate_PAL;
 	case kATVideoStandard_SECAM:
-		g_pacer.UpdateRate(kFrameRate_SECAM);
-		break;
+		return kFrameRate_SECAM;
 	default:
-		g_pacer.UpdateRate(kFrameRate_NTSC);
-		break;
+		return kFrameRate_NTSC;
+	}
+}
+
+static void UpdatePacerRate() {
+	double rate = GetBaseFrameRate();
+
+	// Apply speed modifier: 0 = 1x, 1 = 2x, 3 = 4x, 7 = 8x
+	float spd = ATUIGetSpeedModifier();
+	double speedFactor = (double)spd + 1.0;
+	if (ATUIGetSlowMotion())
+		speedFactor *= 0.25;
+
+	if (speedFactor < 0.01) speedFactor = 0.01;
+	if (speedFactor > 100.0) speedFactor = 100.0;
+
+	g_pacer.UpdateRate(rate * speedFactor);
+
+	// Update audio output resampling rate to match speed.
+	// This mirrors Windows main.cpp line 537.
+	IATAudioOutput *audio = g_sim.GetAudioOutput();
+	if (audio) {
+		double cyclesPerSecond = g_sim.GetScheduler()->GetRate().asDouble();
+		if (cyclesPerSecond <= 0)
+			cyclesPerSecond = 1789772.5;
+
+		audio->SetCyclesPerSecond(cyclesPerSecond, 1.0 / speedFactor);
 	}
 }
 
@@ -185,12 +253,16 @@ static void UpdatePacerRate() {
 int main(int argc, char *argv[]) {
 	fprintf(stderr, "[AltirraSDL] Starting...\n");
 
-	if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_EVENTS)) {
+	if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_EVENTS | SDL_INIT_GAMEPAD)) {
 		fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
 		return 1;
 	}
 
 	VDRegistryAppKey::setDefaultKey("AltirraSDL");
+
+	// Load persisted settings from ~/.config/altirra/settings.ini
+	extern void ATRegistryLoadFromDisk();
+	ATRegistryLoadFromDisk();
 
 	const int kScale = 2;
 	g_pWindow = SDL_CreateWindow("AltirraSDL", 384*kScale, 240*kScale, SDL_WINDOW_RESIZABLE);
@@ -215,8 +287,42 @@ int main(int argc, char *argv[]) {
 	g_sim.LoadROMs();
 
 	g_sim.GetGTIA().SetVideoOutput(g_pDisplay);
-	g_sim.GetGTIA().SetDefectMode(ATGTIADefectMode::None);
-	ATInputSDL3_Init(&g_sim.GetPokey());
+
+	// Initialize joystick manager before loading settings — the Input
+	// settings category needs GetJoystickManager() to read transforms.
+	g_pJoystickMgr = ATCreateJoystickManager();
+	if (g_pJoystickMgr->Init(nullptr, g_sim.GetInputManager()))
+		g_sim.SetJoystickManager(g_pJoystickMgr);
+	else {
+		delete g_pJoystickMgr;
+		g_pJoystickMgr = nullptr;
+	}
+
+	ATInputSDL3_Init(&g_sim.GetPokey(), g_sim.GetInputManager());
+
+	// Load emulator settings using the same code path as Windows.
+	// On first run (no config file), VDRegistryKey returns defaults for all
+	// keys, which matches a fresh Windows install.
+	ATLoadSettings((ATSettingsCategory)(
+		kATSettingsCategory_Hardware
+		| kATSettingsCategory_Firmware
+		| kATSettingsCategory_Acceleration
+		| kATSettingsCategory_Debugging
+		| kATSettingsCategory_View
+		| kATSettingsCategory_Color
+		| kATSettingsCategory_Sound
+		| kATSettingsCategory_Boot
+		| kATSettingsCategory_Environment
+		| kATSettingsCategory_Speed
+		| kATSettingsCategory_StartupConfig
+		| kATSettingsCategory_FullScreen
+		| kATSettingsCategory_Input
+		| kATSettingsCategory_InputMaps
+	));
+
+	// Create the native audio device now that settings have been loaded
+	// (SetApi, SetLatency, etc. may have been called during ATLoadSettings).
+	g_sim.GetAudioOutput()->InitNativeAudio();
 
 	if (argc > 1) {
 		VDStringW widePath = VDTextU8ToW(argv[1], -1);
@@ -257,6 +363,16 @@ int main(int argc, char *argv[]) {
 		HandleEvents();
 		if (!g_running) break;
 
+		// Pause emulation when window loses focus (if enabled).
+		const bool pauseInactive = ATUIGetPauseWhenInactive() && !g_winActive;
+
+		if (pauseInactive) {
+			// Window inactive — render for UI responsiveness, sleep.
+			RenderAndPresent();
+			SDL_Delay(16);
+			continue;
+		}
+
 		ATSimulator::AdvanceResult result = g_sim.Advance(false);
 
 		// Check if a new frame arrived (GTIA called PostBuffer).
@@ -269,15 +385,25 @@ int main(int argc, char *argv[]) {
 		bool hadFrame = g_pDisplay->IsFramePending();
 		g_pDisplay->PrepareFrame();
 
+		const bool turbo = g_sim.IsTurboModeEnabled();
+
 		if (hadFrame) {
 			// A frame was uploaded — present it and pace.
 			RenderAndPresent();
-			g_pacer.WaitForNextFrame();
+
+			// Sync pacer rate and audio rate with current speed settings.
+			// Cheap — just reads a few values and updates if changed.
+			UpdatePacerRate();
+
+			// In turbo mode, skip frame pacing to run as fast as possible.
+			if (!turbo)
+				g_pacer.WaitForNextFrame();
 		} else if (result == ATSimulator::kAdvanceResult_WaitingForFrame) {
 			// GTIA is blocked but we had no frame to show.
 			// Present anyway to keep UI responsive.
 			RenderAndPresent();
-			g_pacer.WaitForNextFrame();
+			if (!turbo)
+				g_pacer.WaitForNextFrame();
 		} else if (result == ATSimulator::kAdvanceResult_Stopped) {
 			// Paused/stopped — render for UI, sleep to avoid busy-wait.
 			RenderAndPresent();
@@ -287,6 +413,39 @@ int main(int argc, char *argv[]) {
 	}
 
 	g_sim.GetGTIA().SetVideoOutput(nullptr);
+
+	// Detach and destroy joystick manager before simulator shutdown
+	if (g_pJoystickMgr) {
+		g_sim.SetJoystickManager(nullptr);
+		g_pJoystickMgr->Shutdown();
+		delete g_pJoystickMgr;
+		g_pJoystickMgr = nullptr;
+	}
+
+	// Save settings before shutdown
+	extern void ATRegistryFlushToDisk();
+	try {
+		ATSaveSettings((ATSettingsCategory)(
+			kATSettingsCategory_Hardware
+			| kATSettingsCategory_Firmware
+			| kATSettingsCategory_Acceleration
+			| kATSettingsCategory_Debugging
+			| kATSettingsCategory_View
+			| kATSettingsCategory_Color
+			| kATSettingsCategory_Sound
+			| kATSettingsCategory_Boot
+			| kATSettingsCategory_Environment
+			| kATSettingsCategory_Speed
+			| kATSettingsCategory_StartupConfig
+			| kATSettingsCategory_FullScreen
+			| kATSettingsCategory_Input
+			| kATSettingsCategory_InputMaps
+		));
+		ATRegistryFlushToDisk();
+	} catch (...) {
+		fprintf(stderr, "[AltirraSDL] Warning: failed to save settings on exit\n");
+	}
+
 	g_sim.Shutdown();
 
 	ATUIShutdown();

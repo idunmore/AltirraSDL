@@ -61,7 +61,7 @@ A new class implementing `IVDVideoDisplay` that uses SDL3 for presentation:
 ```cpp
 class VDVideoDisplaySDL3 : public IVDVideoDisplay {
 public:
-    VDVideoDisplaySDL3(SDL_Window *window, SDL_Renderer *renderer);
+    VDVideoDisplaySDL3(SDL_Renderer *renderer, int w, int h);
 
     // IVDVideoDisplay implementation (key methods shown)
     void SetSource(bool bAutoUpdate, const VDPixmap& px, bool interlaced) override;
@@ -244,7 +244,7 @@ and multi-monitor scenarios.
 | File | Purpose |
 |------|---------|
 | `src/AltirraSDL/source/display_sdl3.cpp` | `VDVideoDisplaySDL3` implementing `IVDVideoDisplay` |
-| `src/AltirraSDL/h/display_sdl3.h` | Header for the above |
+| `src/AltirraSDL/source/display_sdl3_impl.h` | Header for the above (in source/ dir) |
 
 ## Interface Dependency
 

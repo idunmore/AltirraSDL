@@ -88,8 +88,10 @@ This gives us Linux, macOS, and potentially more platforms from a single
 implementation.
 
 **No new external dependencies beyond SDL3 and Dear ImGui.** Configuration
-storage uses a simple JSON file via the existing `vdjson` library, replacing
-the Windows registry. No INI parser, no SQLite, no boost.
+storage uses an INI-like text file in the same format as Windows Altirra's
+portable mode, persisted to `~/.config/altirra/settings.ini`. The existing
+`VDRegistryProviderMemory` class is the in-memory store; `ATUILoadRegistry`
+/ `ATUISaveRegistry` (from `uiregistry.cpp`) handle serialization.
 
 ## Architecture Overview
 

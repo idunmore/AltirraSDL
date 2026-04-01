@@ -1,0 +1,101 @@
+AltirraSDL — Audio Output Parity Checklist
+==========================================
+Updated: 2026-04-01
+Reference: PORTING/AUDIO.md vs actual audiooutput_sdl3.cpp
+
+Legend:
+  [100%] Fully implemented
+  [ 50%] Partial / basic implementation
+  [  0%] Not implemented
+
+
+================================================================================
+1. ATAUDIOOUTPUTSDL3 CLASS
+================================================================================
+
+  [100%] Class exists                         — ATAudioOutputSDL3 final : public IATAudioOutput
+  [100%] Factory function                     — ATCreateAudioOutput() returns SDL3 instance
+  [100%] Build integration                    — Compiled via AltirraSDL/CMakeLists.txt
+  [100%] Destructor                           — SDL_DestroyAudioStream cleanup
+
+  STATUS: Functional — POKEY audio plays through SDL3 audio stream.
+
+
+================================================================================
+2. CORE AUDIO PIPELINE
+================================================================================
+
+  [100%] SDL_AudioStream creation             — SDL_OpenAudioDeviceStream in InitNativeAudio()
+  [100%] Audio device open + bind             — SDL_OpenAudioDeviceStream handles both
+  [100%] WriteAudio() → SDL_PutAudioStreamData — Interleaves L/R, applies volume, pushes to stream
+  [100%] Resampling                           — SDL3 auto-resamples from POKEY rate to device rate
+  [100%] Dynamic rate change                  — SetCyclesPerSecond updates stream input format
+  [100%] Audio device shutdown                — Destructor calls SDL_DestroyAudioStream
+  [100%] InitNativeAudio() called             — Added to main_sdl3.cpp after settings load
+
+
+================================================================================
+3. IATAudioOutput INTERFACE METHODS
+================================================================================
+
+  [100%] Init(ATScheduler&)                   — No-op (scheduler not needed for SDL3)
+  [100%] InitNativeAudio()                    — Creates SDL3 audio stream at POKEY rate
+  [100%] GetApi() / SetApi()                  — Returns Auto / no-op (correct for SDL3)
+  [100%] AsMixer()                            — Returns stub mixer reference
+  [100%] GetPool()                            — Returns sample pool reference
+  [100%] SetCyclesPerSecond()                 — Updates mixing rate, adjusts stream format
+  [100%] GetMute() / SetMute()               — Stores flag, applied in WriteAudio
+  [100%] GetVolume() / SetVolume()            — Stores float, applied in WriteAudio
+  [100%] GetMixLevel() / SetMixLevel()        — Per-mix-bus volume stored
+  [100%] GetLatency() / SetLatency()          — Stored, used for overflow monitoring
+  [100%] GetExtraBuffer() / SetExtraBuffer()  — Stored, used for overflow monitoring
+  [100%] SetFiltersEnabled()                  — No-op (no filter implementation yet)
+  [100%] Pause() / Resume()                   — SDL_PauseAudioStreamDevice / Resume
+  [100%] WriteAudio()                         — Interleave + volume + push to SDL3
+  [100%] GetAudioStatus()                     — Reports underflow/overflow counts
+  [100%] SetAudioTap()                        — Stores tap, forwarded in WriteAudio
+
+
+================================================================================
+4. AUDIO FEATURES
+================================================================================
+
+  [100%] Stereo output                        — L/R interleaved to SDL3 stereo stream
+  [100%] Mono fallback                        — When right==nullptr, duplicates left
+  [100%] Volume control                       — Samples scaled by mVolume in WriteAudio
+  [100%] Mute                                 — Zeroes volume when muted
+  [100%] Pause / Resume                       — SDL3 device pause/resume
+  [ 50%] Audio tap (recording)                — Raw audio forwarded to tap before volume
+  [ 50%] Latency control                      — Value stored, queue depth monitored
+  [ 50%] Audio status reporting               — Under/overflow counted, basic status
+  [  0%] Audio filters                        — SetFiltersEnabled is no-op
+  [  0%] Mix-bus volume application           — Mix levels stored but not applied in mixing
+  [  0%] Real mixer (sync audio sources)      — Stub mixer, no disk/speaker sound effects
+
+
+================================================================================
+5. REMAINING WORK (in order of priority)
+================================================================================
+
+  1. [DONE] Core pipeline: stream creation, WriteAudio, resampling, shutdown
+  2. [DONE] Volume/mute/pause/resume
+  3. Implement real audio mixer (sync sources for disk, speaker, cassette sounds)
+  4. Apply per-bus mix levels in the mixer
+  5. Audio filters (low-pass, DC removal)
+  6. Better latency control (throttle WriteAudio based on queue depth)
+  7. Audio status with measured min/max buffer levels
+
+
+================================================================================
+SUMMARY
+================================================================================
+
+Category                    Implemented    Total    Coverage
+------------------------------------------------------------
+SDL3 audio pipeline              7            7      100%
+Interface methods               16           16      100%
+Interface methods (functional)  14           16       88%
+Audio features                   5           11       45%
+
+POKEY audio output is fully functional. The emulator produces sound.
+Missing: real mixer (disk/speaker effects), audio filters, advanced latency control.

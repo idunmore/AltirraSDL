@@ -1,32 +1,79 @@
 //	Altirra - Atari 800/800XL/5200 emulator
 //	System library - registry provider for non-Windows
 //
-//	Uses VDRegistryProviderMemory (already implemented) as the in-memory
-//	store. Config is persisted to ~/.config/altirra/settings.json via
-//	vdjson. On startup we load the JSON; on exit (or on each write) we
-//	flush it back.
+//	Uses VDRegistryProviderMemory as the in-memory store.  Config is
+//	persisted to ~/.config/altirra/settings.ini using the same INI-like
+//	format as Windows Altirra's portable mode (ATUILoadRegistry /
+//	ATUISaveRegistry from uiregistry.cpp).
 //
-//	For Phase 3 (get libraries to link), the in-memory provider is
-//	sufficient — the JSON persistence layer can be added in Phase 5/6.
+//	On startup the INI file is loaded into the memory provider.  On
+//	exit (via ATRegistryFlushToDisk()) it is written back.
 
 #include <stdafx.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/stat.h>
 #include <vd2/system/registry.h>
 #include <vd2/system/registrymemory.h>
 #include <vd2/system/VDString.h>
+#include <vd2/system/text.h>
+
+// Forward-declare the INI load/save functions from uiregistry.cpp.
+// These work with whichever IVDRegistryProvider is currently active.
+void ATUILoadRegistry(const wchar_t *path);
+void ATUISaveRegistry(const wchar_t *fnpath);
 
 // -------------------------------------------------------------------------
-// VDRegistryKey — thin wrapper around IVDRegistryProvider
+// Config file path
 // -------------------------------------------------------------------------
 
-// These are defined in registry.cpp on Windows; provide the cross-platform
-// implementations here.
+static VDStringW s_configPath;
+
+static const VDStringW& GetConfigPath() {
+	if (s_configPath.empty()) {
+		// XDG Base Directory: use $XDG_CONFIG_HOME or ~/.config
+		const char *xdgConfig = getenv("XDG_CONFIG_HOME");
+		VDStringA dir;
+		if (xdgConfig && *xdgConfig) {
+			dir = xdgConfig;
+		} else {
+			const char *home = getenv("HOME");
+			if (home && *home) {
+				dir = home;
+				dir += "/.config";
+			} else {
+				dir = "/tmp";
+			}
+		}
+		dir += "/altirra";
+
+		// Ensure directory exists
+		mkdir(dir.c_str(), 0755);
+
+		VDStringA filePath = dir;
+		filePath += "/settings.ini";
+		s_configPath = VDTextU8ToW(filePath);
+	}
+	return s_configPath;
+}
+
+// -------------------------------------------------------------------------
+// Provider and global state
+// -------------------------------------------------------------------------
 
 static IVDRegistryProvider *g_pRegistryProvider;
+static VDRegistryProviderMemory *g_pMemoryProvider;
 
 VDString VDRegistryAppKey::s_appbase;
 
 IVDRegistryProvider *VDGetDefaultRegistryProvider() {
+	// Create the memory provider once and load persisted settings into it
 	static VDRegistryProviderMemory sDefaultProvider;
+	static bool sLoaded = false;
+	if (!sLoaded) {
+		sLoaded = true;
+		g_pMemoryProvider = &sDefaultProvider;
+	}
 	return &sDefaultProvider;
 }
 
@@ -38,6 +85,45 @@ IVDRegistryProvider *VDGetRegistryProvider() {
 
 void VDSetRegistryProvider(IVDRegistryProvider *provider) {
 	g_pRegistryProvider = provider;
+}
+
+// -------------------------------------------------------------------------
+// Public: load from disk (call after setDefaultKey)
+// -------------------------------------------------------------------------
+
+void ATRegistryLoadFromDisk() {
+	const VDStringW& path = GetConfigPath();
+	try {
+		// Check if file exists before trying to parse it
+		FILE *f = fopen(VDTextWToU8(path).c_str(), "r");
+		if (f) {
+			fclose(f);
+			ATUILoadRegistry(path.c_str());
+			fprintf(stderr, "[AltirraSDL] Settings loaded from: %s\n",
+				VDTextWToU8(path).c_str());
+		} else {
+			fprintf(stderr, "[AltirraSDL] No settings file found, using defaults\n");
+		}
+	} catch (...) {
+		fprintf(stderr, "[AltirraSDL] Warning: failed to load settings from %s\n",
+			VDTextWToU8(path).c_str());
+	}
+}
+
+// -------------------------------------------------------------------------
+// Public: flush to disk (call on exit or periodically)
+// -------------------------------------------------------------------------
+
+void ATRegistryFlushToDisk() {
+	const VDStringW& path = GetConfigPath();
+	try {
+		ATUISaveRegistry(path.c_str());
+		fprintf(stderr, "[AltirraSDL] Settings saved to: %s\n",
+			VDTextWToU8(path).c_str());
+	} catch (...) {
+		fprintf(stderr, "[AltirraSDL] Warning: failed to save settings to %s\n",
+			VDTextWToU8(path).c_str());
+	}
 }
 
 // -------------------------------------------------------------------------

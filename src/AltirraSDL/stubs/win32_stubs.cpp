@@ -36,14 +36,7 @@ void ATLaunchURL(const wchar_t *url) {}
 IATDebugger *ATGetDebugger() { return nullptr; }
 IATDebuggerSymbolLookup *ATGetDebuggerSymbolLookup() { return nullptr; }
 
-// ============================================================
-// settings.h stubs — settings.cpp excluded
-// ============================================================
-
-void ATSettingsRegisterLoadCallback(const ATSettingsLoadSaveCallback *fn) {}
-void ATSettingsUnregisterLoadCallback(const ATSettingsLoadSaveCallback *fn) {}
-void ATSettingsRegisterSaveCallback(const ATSettingsLoadSaveCallback *fn) {}
-void ATSettingsUnregisterSaveCallback(const ATSettingsLoadSaveCallback *fn) {}
+// settings.h — settings.cpp is now compiled; register/unregister are real.
 
 // ============================================================
 // asyncdownloader stubs
@@ -54,12 +47,7 @@ void ATAsyncDownloadUrl(const wchar_t *url, const wchar_t *userAgent, size_t max
 	if (downloader) *downloader = nullptr;
 }
 
-// ============================================================
-// Win32 UI stubs (uiaccessors, dialogs, etc.)
-// ============================================================
-
-VDGUIHandle ATUIGetMainWindow() { return nullptr; }
-VDGUIHandle ATUIGetNewPopupOwner() { return nullptr; }
+// UI accessor stubs are now in uiaccessors_stubs.cpp.
 
 // ============================================================
 // ATTimerService stub (timerserviceimpl_win32.cpp excluded)
@@ -97,7 +85,7 @@ bool ATUIClipGetText(VDStringW& s) { return false; }
 bool ATUIIsElevationRequiredForMountVHDImage() { return false; }
 void ATUIShowWarning(VDGUIHandle, const wchar_t*, const wchar_t*) {}
 bool ATUIShowWarningConfirm(VDGUIHandle, const wchar_t*, const wchar_t*) { return false; }
-bool ATUISwitchHardwareMode(VDGUIHandle, ATHardwareMode, bool) { return false; }
+// ATUISwitchHardwareMode is now in uiaccessors_stubs.cpp
 bool ATUISwitchKernel(VDGUIHandle, uint64) { return false; }
 void ATUITemporarilyMountVHDImageW32(VDGUIHandle, const wchar_t*, bool) {}
 bool ATUpdateVerifyFeedSignature(const void*, const void*, size_t) { return false; }

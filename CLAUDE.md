@@ -150,6 +150,7 @@ Detailed documentation lives in `PORTING/`:
 - The `system` library uses `VDStringW` (wchar_t) for all file paths. On non-Windows, `_sdl3.cpp` files convert to UTF-8 at the OS boundary using `VDTextWToU8()` / `VDTextU8ToW()` from `text.h`.
 - Link errors during build usually mean an upstream project failed — always look for the first error.
 - Core emulation libraries (ATCPU, ATEmulation, ATDevices, ATIO, ATNetwork, ATDebugger, ATCompiler, ATVM, Kasumi, vdjson) contain zero Win32 API calls and compile unchanged on any platform once system library headers are cleaned up.
+- **Settings persistence:** The SDL3 build stores settings in `~/.config/altirra/settings.ini` using the same INI format as Windows Altirra's portable mode. `ATRegistryLoadFromDisk()` loads on startup, `ATRegistryFlushToDisk()` saves on exit. The `VDRegistryProviderMemory` provider is the in-memory backing store; `ATUILoadRegistry`/`ATUISaveRegistry` (from `uiregistry.cpp`) handle serialization.
 
 ## SDL3 Porting Pitfalls
 
@@ -158,10 +159,11 @@ Detailed documentation lives in `PORTING/`:
 The emulation core classes have member defaults in their headers (e.g.
 `mFoo = SomeEnum::NonObviousValue`).  On Windows, `settings.cpp` and the
 UI command handlers load user preferences from the registry and call the
-appropriate setters, so the defaults rarely matter.  The SDL3 build
-**excludes** `settings.cpp` and all `cmd*.cpp` files, so any default that
-differs from the "normal user experience" will silently produce wrong
-behaviour.
+appropriate setters, so the defaults rarely matter.  The SDL3 build now
+**includes** `settings.cpp` (and calls `ATLoadSettings`/`ATSaveSettings`)
+but still **excludes** the `cmd*.cpp` files, so any setting that is only
+changed by a command handler (and not by `settings.cpp`) may still use its
+member initialiser default.
 
 **Rule:** When the SDL3 frontend creates or initialises an emulation
 object, explicitly set every configuration property to match the Windows
@@ -189,3 +191,41 @@ Follow this checklist:
 4. **Force-recompile touched files.**  The CMake incremental build
    sometimes misses timestamp changes — use `touch <file>` before
    `cmake --build` to be sure.
+
+### Dear ImGui UI must match Windows Altirra exactly
+
+The SDL3 Dear ImGui UI must replicate Windows Altirra's menus and
+dialogs faithfully — same options, same layout, same location.  Do not
+invent new dialogs, rearrange options for "convenience", or add controls
+that don't exist in the Windows version.
+
+**Rule:** Before implementing or modifying any UI element, check what the
+Windows version shows in that exact context.  The canonical references
+are `menu_default.txt` (menu structure), the `cmd*.cpp` command handlers
+(what each item does), and the `ui*.cpp` dialog implementations (dialog
+layout).
+
+**Key structural facts:**
+- Windows has one large **Configure System** paged dialog (28+ category
+  pages in a tree sidebar).  The SDL3 version replicates this as a
+  single `ATUIRenderSystemConfig()` with a sidebar — **not** as multiple
+  separate dialog windows.
+- Audio, Display, Disk, Cassette, and Input settings that appear inside
+  Configure System in Windows must appear as categories in the SDL3
+  System Configuration sidebar, not as standalone dialogs.
+- The main **menu bar** provides quick-access toggles (like Filter Mode,
+  Overscan, Speed, BASIC) *in addition to* Configure System.  Both
+  paths exist in Windows; replicate both.
+- **Tape Control** is a separate dialog (transport + position).
+  Cassette *settings* (SIO patch, turbo defaults) are in Configure
+  System → Cassette page.
+- **Disk Drives** is a separate dialog (mount/eject/emulation mode).
+  Disk *settings* (SIO patch, timing) are in Configure System →
+  Acceleration page.
+
+**Checklist for new UI work:**
+1. Find the Windows equivalent (menu item, dialog, or page)
+2. Verify every option and its location
+3. Do not add options that the Windows version doesn't show in that
+   context
+4. Do not omit options that the Windows version does show

@@ -81,23 +81,17 @@ Dear ImGui (SDL3 backend)
 ### Integration Model
 
 ```cpp
-void RenderUI(SDL_Renderer *renderer, ATSimulator &sim) {
+void RenderUI(SDL_Renderer *renderer, ATSimulator &sim, ATUIState &state) {
     ImGui_ImplSDLRenderer3_NewFrame();
     ImGui_ImplSDL3_NewFrame();
     ImGui::NewFrame();
 
-    RenderMainMenu(sim);
-    RenderEmulatorScreen(sim);
+    RenderMainMenu(sim, window, state);
 
     // Modeless windows -- each has a bool controlling visibility
-    if (showSystemConfig)   RenderSystemConfig(sim);
-    if (showInputConfig)    RenderInputConfig(sim);
-    if (showDisplayConfig)  RenderDisplayConfig(sim);
-    if (showAudioConfig)    RenderAudioConfig(sim);
-    if (showDiskManager)    RenderDiskManager(sim);
-    if (showDebugger)       RenderDebugger(sim);
-    if (showProfiler)       RenderProfiler(sim);
-    // ... etc.
+    if (state.showSystemConfig)    ATUIRenderSystemConfig(sim, state);
+    if (state.showDiskManager)     ATUIRenderDiskManager(sim, state, window);
+    if (state.showCassetteControl) ATUIRenderCassetteControl(sim, state, window);
 
     RenderStatusOverlay(sim);
 
@@ -105,6 +99,25 @@ void RenderUI(SDL_Renderer *renderer, ATSimulator &sim) {
     ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), renderer);
 }
 ```
+
+### Dialog Behavior Patterns (matching Windows Altirra)
+
+The Windows version uses three dialog patterns.  The Dear ImGui port
+must match each one:
+
+| Pattern | Window Type | Buttons | Apply | Examples |
+|---------|------------|---------|-------|----------|
+| **Live settings** | Modeless | OK (dismiss) | Immediately | Disk drives, Configure System |
+| **Transport/tool** | Modeless | None | Immediately | Cassette Tape Control |
+| **Data input** | Modal | OK + Cancel | On OK | Create Disk, Audio Options |
+
+**Key rule:** Settings apply immediately in all management dialogs.  The
+OK button is a *dismiss* button, not a *confirm* button.  There is no
+Cancel because there is nothing to undo.
+
+Configuration settings (Audio, Display, Video, Disk, Cassette, etc.) all
+live inside the **Configure System** paged dialog — they are sidebar
+categories, **not** separate dialog windows.
 
 ### Emulator Screen as ImGui Texture
 

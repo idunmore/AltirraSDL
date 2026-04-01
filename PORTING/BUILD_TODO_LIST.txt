@@ -1,0 +1,144 @@
+AltirraSDL — Build System Parity Checklist
+==========================================
+Updated: 2026-04-01
+Reference: PORTING/BUILD.md vs actual CMakeLists.txt files
+
+Legend:
+  [100%] Fully implemented and matching
+  [ 50%] Partially implemented or divergent from docs
+  [  0%] Not implemented
+  [ N/A] Not applicable or intentionally different
+
+
+================================================================================
+1. ROOT CMAKE CONFIGURATION
+================================================================================
+
+  [100%] CMakeLists.txt exists at project root
+  [100%] Project version set (4.40)
+  [100%] Platform detection macros (VD_OS_WINDOWS/LINUX/MACOS)
+  [100%] find_package(SDL3 REQUIRED)
+  [  0%] find_package(SDL3_net REQUIRED)      — Missing from root CMakeLists.txt
+                                                Network not yet needed; add when
+                                                ATNetworkSockets SDL3 port starts
+  [ 50%] C++ standard                         — BUILD.md says C++17, actual is C++20
+                                                Update doc to match (C++20 is correct)
+
+
+================================================================================
+2. SYSTEM LIBRARY (src/system/CMakeLists.txt)
+================================================================================
+
+  [100%] Common sources compiled on all platforms
+  [100%] thread.cpp in common sources          — Compiles cross-platform via #ifdef guards
+  [100%] Platform-specific SDL3 sources:
+           date_sdl3.cpp                       — Date/time utilities
+           debug_sdl3.cpp                      — Debug helpers
+           error_sdl3.cpp                      — Error handling
+           file_sdl3.cpp                       — File I/O (VDFile, VDFileStream)
+           filesys_sdl3.cpp                    — Filesystem operations
+           registry_sdl3.cpp                   — Settings persistence (INI format)
+           text_sdl3.cpp                       — Text encoding (wchar_t <-> UTF-8)
+           time_sdl3.cpp                       — High-res timer
+  [  0%] fileasync_sdl3.cpp                   — Not implemented (async file I/O)
+                                                Win32 version not compiled for SDL3;
+                                                may not be needed if no caller requires it
+  [ N/A] w32assist.cpp                        — Windows-only, not needed on SDL3
+
+  BUILD.md DIVERGENCE: Doc lists thread_sdl3.cpp as a separate platform file.
+  Actual: thread.cpp compiles cross-platform in COMMON_SOURCES.
+  Doc lists fileasync_sdl3.cpp; doesn't exist and isn't compiled.
+
+
+================================================================================
+3. CORE EMULATION LIBRARIES
+================================================================================
+
+  [100%] ATCPU                                — Compiles unchanged
+  [100%] ATCore                               — Compiles unchanged
+  [100%] ATEmulation                          — Compiles unchanged
+  [100%] ATDevices                            — Compiles unchanged
+  [100%] ATIO                                 — Compiles unchanged
+  [100%] ATNetwork                            — Compiles unchanged (emulated stack)
+  [100%] ATDebugger                           — Compiles unchanged (backend only)
+  [100%] ATCompiler                           — Compiles unchanged
+  [100%] ATVM                                 — Compiles unchanged
+  [100%] Kasumi                               — Compiles unchanged
+  [100%] vdjson                               — Compiles unchanged
+  [100%] ATAudio (synthesis)                  — Compiles unchanged (POKEY, mixer)
+
+
+================================================================================
+4. ATAUDIO OUTPUT
+================================================================================
+
+  [100%] audiooutput_sdl3.cpp exists           — SDL3 audio output factory
+  [ 20%] Audio implementation quality          — Currently a silent stub; WriteAudio()
+                                                is empty. Needs SDL_AudioStream integration.
+                                                See AUDIO_TODO_LIST.txt for details.
+  [100%] Build integration                    — Compiled via AltirraSDL/CMakeLists.txt
+                                                (not ATAudio CMakeLists, which is correct)
+
+
+================================================================================
+5. ATNETWORKSOCKETS
+================================================================================
+
+  [  0%] nativesockets_sdl3.cpp               — Not implemented
+  [  0%] worker_sdl3.cpp                      — Not implemented
+  [  0%] socketutils_sdl3.cpp                 — Not implemented
+  [  0%] CMakeLists.txt for ATNetworkSockets  — Not created for CMake build
+  Note: Currently uses stubs. Network emulation not functional on SDL3.
+
+
+================================================================================
+6. FRONTEND (src/AltirraSDL/CMakeLists.txt)
+================================================================================
+
+  [100%] main_sdl3.cpp                        — Entry point with frame pacing
+  [100%] display_sdl3.cpp                     — VDVideoDisplaySDL3
+  [100%] input_sdl3.cpp                       — SDL3 keyboard/mouse → POKEY/InputManager
+  [100%] joystick_sdl3.cpp                    — SDL3 gamepad → IATJoystickManager
+  [100%] UI source files (ui_main/system/disk/cassette.cpp)
+  [100%] Stub files (uiaccessors, oshelper, console, etc.)
+  [100%] uiregistry.cpp included              — For settings persistence
+  [100%] Dear ImGui integration (thirdparty/imgui)
+  [100%] Altirra source inclusion via glob + exclusion filters
+
+  BUILD.md DIVERGENCE: Doc lists ui_settings.cpp, ui_devices.cpp,
+  ui_debugger.cpp, ui_overlay.cpp, ui_filebrowser.cpp.
+  Actual: ui_system.cpp, ui_disk.cpp, ui_cassette.cpp (different naming,
+  overlay is in ui_main.cpp, no separate filebrowser).
+
+
+================================================================================
+7. EXCLUDED LIBRARIES (correct — should NOT be compiled)
+================================================================================
+
+  [ N/A] VDDisplay                            — Correctly excluded (GDI/D3D9)
+  [ N/A] Dita                                 — Correctly excluded (COM/shell)
+  [ N/A] Riza                                 — Correctly excluded (Win32 audio)
+  [ N/A] Tessa                                — Correctly excluded
+  [ N/A] ATNativeUI                           — Correctly excluded (Win32 UI)
+  [ N/A] ATUI / ATUIControls                  — Correctly excluded
+  [ N/A] AltirraShell                         — Correctly excluded
+  [ N/A] Asuka                                — Correctly excluded (build tool)
+
+
+================================================================================
+SUMMARY
+================================================================================
+
+Category                    Implemented    Total    Coverage
+------------------------------------------------------------
+Root CMake config                5            6       83%
+System library SDL3 files        8            9       89%
+Core emulation libraries        12           12      100%
+Audio output                     1            1      100% (stub)
+Network sockets                  0            3        0%
+Frontend sources                 9           9+      100%
+Excluded libraries (N/A)         8            8      100%
+
+Build system is functional and produces a working binary.
+Main gaps: network sockets (Phase 8), async file I/O (may not be needed).
+BUILD.md has several divergences from reality (file names, C++ standard).

@@ -1,0 +1,130 @@
+AltirraSDL — Display/Rendering Parity Checklist
+================================================
+Updated: 2026-04-01
+Reference: PORTING/DISPLAY.md vs actual display_sdl3.cpp
+
+Legend:
+  [100%] Fully implemented
+  [ 50%] Partially implemented
+  [  0%] Not implemented
+
+
+================================================================================
+1. CORE DISPLAY (VDVideoDisplaySDL3)
+================================================================================
+
+  [100%] VDVideoDisplaySDL3 class              — Implements IVDVideoDisplay
+  [100%] PostBuffer() frame submission         — Uploads VDPixmap to SDL_Texture
+  [100%] SetSource() for static content        — Handles direct pixmap display
+  [100%] Present() rendering to SDL_Renderer   — Called each frame from main loop
+  [100%] SDL_Texture creation and management   — Streaming texture for emulator output
+  [100%] XRGB8888 pixel format                 — Primary format handled correctly
+
+  DISPLAY.md DIVERGENCE: Doc says constructor is (SDL_Window*, SDL_Renderer*).
+  Actual: constructor is (SDL_Renderer*, int w, int h). No SDL_Window param.
+
+
+================================================================================
+2. SCALING AND ASPECT RATIO
+================================================================================
+
+  [100%] Destination rectangle calculation     — SetDestRectF() support
+  [ 50%] Aspect ratio correction              — Basic stretch modes via UI accessors
+                                                Missing: precise NTSC 12:7 pixel ratio
+  [ 50%] Integer scaling                      — Available via stretch mode enum
+                                                Missing: proper snap-to-integer logic
+  [100%] Filter mode switching                — Point/Bilinear via SDL_SetTextureScaleMode
+
+
+================================================================================
+3. FILTER MODES
+================================================================================
+
+  [100%] Point (nearest neighbor)             — SDL_SCALEMODE_NEAREST
+  [100%] Bilinear                             — SDL_SCALEMODE_LINEAR
+  [  0%] Sharp Bilinear                       — Needs custom shader or pre-filter
+  [  0%] Bicubic                              — Needs SDL_GPU compute/fragment shader
+  [100%] Mode stored via ATUIGet/SetDisplayFilterMode()
+
+  Note: The UI exposes all 5 filter modes, but the SDL3 renderer only supports
+  nearest and linear natively. Sharp bilinear/bicubic would need SDL_GPU shaders.
+
+
+================================================================================
+4. OVERSCAN MODES
+================================================================================
+
+  [100%] Normal / Extended / Full / OS Screen / Widescreen
+         — Set via GTIA SetOverscanMode(), affects emulation output size
+  [  0%] Vertical override sub-menu           — UI not implemented
+  [  0%] Extended PAL height (View menu)      — UI toggle present in System>Video page
+
+
+================================================================================
+5. SCREEN EFFECTS (Post-Processing)
+================================================================================
+
+  [  0%] Scanline simulation                  — Needs SDL_GPU shaders
+  [  0%] Bloom effects                        — Needs SDL_GPU shaders
+  [  0%] Screen mask (CRT simulation)         — Needs SDL_GPU shaders
+  [  0%] HDR output                           — Needs SDL3 HDR support + shaders
+  [  0%] Distortion (barrel, etc.)            — Needs SDL_GPU shaders
+  [  0%] Custom effect path                   — ATUIManager::Get/SetCustomEffectPath
+
+  Note: Phase 2 (current) has no screen effects. These are all advanced features
+  requiring SDL_GPU API or similar. The DISPLAY.md correctly describes this as
+  later work.
+
+
+================================================================================
+6. COMPOSITOR / OVERLAY
+================================================================================
+
+  [100%] Status overlay (FPS, pause)          — Rendered via Dear ImGui (ui_main.cpp)
+  [  0%] IVDDisplayCompositor integration     — Not implemented (Dear ImGui replaces it)
+  [  0%] Drive activity LEDs                  — Not shown in overlay
+  [  0%] Cassette position indicator          — Not shown in overlay
+  [  0%] On-screen keyboard                   — Not implemented
+
+  DISPLAY.md recommended Option B (Dear ImGui overlays), which is what's done.
+
+
+================================================================================
+7. VSYNC AND FRAME TIMING
+================================================================================
+
+  [100%] SDL_SetRenderVSync                    — Set to 1 (enabled) in main_sdl3.cpp
+  [100%] Frame pacing via g_pacer             — SDL_DelayPrecise-based pacing object
+  [100%] NTSC ~59.92 Hz / PAL ~49.86 Hz      — Frame rate adapts to video standard
+  [  0%] Adaptive VSync                       — ATUIGetFrameRateVSyncAdaptive() stored
+                                                but not applied to actual rendering
+
+
+================================================================================
+8. FULLSCREEN
+================================================================================
+
+  [100%] SDL_SetWindowFullscreen toggle        — Via View > Full Screen menu
+  [100%] Alt+Enter shortcut                   — Keyboard shortcut hint shown
+  [  0%] Fullscreen resolution selection      — Always uses desktop resolution
+  [  0%] Borderless fullscreen option         — g_ATOptions.mbFullScreenBorderless
+                                                stored but not applied
+
+
+================================================================================
+SUMMARY
+================================================================================
+
+Category                    Implemented    Total    Coverage
+------------------------------------------------------------
+Core display                     6            6      100%
+Scaling/aspect ratio             3            4       75%
+Filter modes                     3            5       60%
+Overscan                         1            3       33%
+Screen effects                   0            6        0%
+Compositor/overlay               1            5       20%
+VSync/frame timing               3            4       75%
+Fullscreen                       2            4       50%
+
+Core display pipeline is solid — frames render correctly with appropriate
+scaling. Main gaps are shader-based effects and advanced display options.

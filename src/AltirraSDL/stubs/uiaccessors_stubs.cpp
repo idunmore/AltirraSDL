@@ -1,0 +1,348 @@
+//	Altirra SDL3 frontend - UI accessor stubs
+//
+//	Provides implementations of all ATUIGetXxx/ATUISetXxx functions,
+//	g_kbdOpts, g_ATUIManager, and related symbols that settings.cpp
+//	and other emulation code reference.
+//
+//	State-storage functions use static variables so that settings.cpp
+//	can read/write them through the normal VDRegistryKey path.  UI
+//	action functions are no-ops until the ImGui UI implements them.
+
+#include <stdafx.h>
+#include <vd2/system/vdtypes.h>
+#include <vd2/system/vectors.h>
+#include <vd2/system/VDString.h>
+#include <vd2/system/vdstl.h>
+#include "uiaccessors.h"
+#include "uiconfirm.h"
+#include "uikeyboard.h"
+#include "uimenu.h"
+#include "uitypes.h"
+#include "simulator.h"
+
+extern ATSimulator g_sim;
+#include <at/atui/uimanager.h>
+
+// Forward declarations for types used in stub signatures
+class ATInputManager;
+class IATAsyncDispatcher;
+class IATDisplayPane;
+enum ATHardwareMode : uint32;
+enum ATMemoryMode : uint32;
+enum ATVideoStandard : uint32;
+
+// =========================================================================
+// Globals expected by settings.cpp
+// =========================================================================
+
+ATUIKeyboardOptions g_kbdOpts = {};
+ATUIManager g_ATUIManager;
+
+// ATUIManager stub methods
+static VDStringW s_customEffectPath;
+
+const wchar_t *ATUIManager::GetCustomEffectPath() const {
+	return s_customEffectPath.c_str();
+}
+
+void ATUIManager::SetCustomEffectPath(const wchar_t *s, bool) {
+	s_customEffectPath = s ? s : L"";
+}
+
+// =========================================================================
+// Display filter / stretch
+// =========================================================================
+
+static ATDisplayFilterMode s_displayFilterMode = kATDisplayFilterMode_AnySuitable;
+ATDisplayFilterMode ATUIGetDisplayFilterMode() { return s_displayFilterMode; }
+void ATUISetDisplayFilterMode(ATDisplayFilterMode mode) { s_displayFilterMode = mode; }
+
+static int s_viewFilterSharpness = 0;
+int ATUIGetViewFilterSharpness() { return s_viewFilterSharpness; }
+void ATUISetViewFilterSharpness(int v) { s_viewFilterSharpness = v; }
+
+static ATDisplayStretchMode s_displayStretchMode = kATDisplayStretchMode_PreserveAspectRatio;
+ATDisplayStretchMode ATUIGetDisplayStretchMode() { return s_displayStretchMode; }
+void ATUISetDisplayStretchMode(ATDisplayStretchMode mode) { s_displayStretchMode = mode; }
+
+// =========================================================================
+// Display indicators
+// =========================================================================
+
+static bool s_displayIndicators = true;
+bool ATUIGetDisplayIndicators() { return s_displayIndicators; }
+void ATUISetDisplayIndicators(bool v) { s_displayIndicators = v; }
+
+static bool s_displayPadIndicators = false;
+bool ATUIGetDisplayPadIndicators() { return s_displayPadIndicators; }
+void ATUISetDisplayPadIndicators(bool v) { s_displayPadIndicators = v; }
+
+static bool s_drawPadBounds = false;
+bool ATUIGetDrawPadBoundsEnabled() { return s_drawPadBounds; }
+void ATUISetDrawPadBoundsEnabled(bool v) { s_drawPadBounds = v; }
+
+static bool s_drawPadPointers = false;
+bool ATUIGetDrawPadPointersEnabled() { return s_drawPadPointers; }
+void ATUISetDrawPadPointersEnabled(bool v) { s_drawPadPointers = v; }
+
+// =========================================================================
+// Pointer / mouse
+// =========================================================================
+
+static bool s_pointerAutoHide = true;
+bool ATUIGetPointerAutoHide() { return s_pointerAutoHide; }
+void ATUISetPointerAutoHide(bool v) { s_pointerAutoHide = v; }
+
+static bool s_constrainMouseFS = false;
+bool ATUIGetConstrainMouseFullScreen() { return s_constrainMouseFS; }
+void ATUISetConstrainMouseFullScreen(bool v) { s_constrainMouseFS = v; }
+
+static bool s_targetPointerVisible = false;
+bool ATUIGetTargetPointerVisible() { return s_targetPointerVisible; }
+void ATUISetTargetPointerVisible(bool v) { s_targetPointerVisible = v; }
+
+static bool s_mouseAutoCapture = true;
+bool ATUIGetMouseAutoCapture() { return s_mouseAutoCapture; }
+void ATUISetMouseAutoCapture(bool v) { s_mouseAutoCapture = v; }
+
+static bool s_rawInput = false;
+bool ATUIGetRawInputEnabled() { return s_rawInput; }
+void ATUISetRawInputEnabled(bool v) { s_rawInput = v; }
+
+// =========================================================================
+// Display zoom / pan
+// =========================================================================
+
+static float s_displayZoom = 1.0f;
+float ATUIGetDisplayZoom() { return s_displayZoom; }
+void ATUISetDisplayZoom(float v) { s_displayZoom = v; }
+
+static vdfloat2 s_displayPan = {0, 0};
+vdfloat2 ATUIGetDisplayPanOffset() { return s_displayPan; }
+void ATUISetDisplayPanOffset(const vdfloat2& v) { s_displayPan = v; }
+
+// =========================================================================
+// Menu
+// =========================================================================
+
+static bool s_menuAutoHide = false;
+bool ATUIIsMenuAutoHideEnabled() { return s_menuAutoHide; }
+bool ATUIIsMenuAutoHideActive() { return false; }
+void ATUISetMenuAutoHideEnabled(bool v) { s_menuAutoHide = v; }
+bool ATUIIsMenuAutoHidden() { return false; }
+void ATUISetMenuAutoHidden(bool) {}
+void ATUISetMenuHidden(bool) {}
+void ATUISetMenuFullScreenHidden(bool) {}
+
+// =========================================================================
+// View / output
+// =========================================================================
+
+static VDStringA s_altOutputName;
+const char *ATUIGetCurrentAltOutputName() { return s_altOutputName.c_str(); }
+void ATUISetCurrentAltOutputName(const char *s) { s_altOutputName = s ? s : ""; }
+void ATUIToggleAltOutput(const char *) {}
+bool ATUIIsAltOutputAvailable() { return false; }
+
+bool ATUIIsXEPViewEnabled() { return false; }
+void ATUISetXEPViewEnabled(bool) {}
+
+static bool s_altViewEnabled = false;
+bool ATUIGetAltViewEnabled() { return s_altViewEnabled; }
+void ATUISetAltViewEnabled(bool v) { s_altViewEnabled = v; }
+
+sint32 ATUIGetCurrentAltViewIndex() { return -1; }
+void ATUISetAltViewByIndex(sint32) {}
+void ATUISelectPrevAltOutput() {}
+void ATUISelectNextAltOutput() {}
+
+static bool s_altViewAutoSwitch = true;
+bool ATUIGetAltViewAutoswitchingEnabled() { return s_altViewAutoSwitch; }
+void ATUISetAltViewAutoswitchingEnabled(bool v) { s_altViewAutoSwitch = v; }
+
+static bool s_showFPS = false;
+bool ATUIGetShowFPS() { return s_showFPS; }
+void ATUISetShowFPS(bool v) { s_showFPS = v; }
+
+// =========================================================================
+// Speed control
+// =========================================================================
+
+static float s_speedModifier = 0.0f;
+float ATUIGetSpeedModifier() { return s_speedModifier; }
+void ATUISetSpeedModifier(float v) { s_speedModifier = v; }
+
+static ATFrameRateMode s_frameRateMode = kATFrameRateMode_Hardware;
+ATFrameRateMode ATUIGetFrameRateMode() { return s_frameRateMode; }
+void ATUISetFrameRateMode(ATFrameRateMode mode) { s_frameRateMode = mode; }
+
+static bool s_vsyncAdaptive = false;
+bool ATUIGetFrameRateVSyncAdaptive() { return s_vsyncAdaptive; }
+void ATUISetFrameRateVSyncAdaptive(bool v) { s_vsyncAdaptive = v; }
+
+static bool s_turbo = false;
+static bool s_turboPulse = false;
+
+bool ATUIGetTurbo() { return s_turbo; }
+void ATUISetTurbo(bool v) {
+	s_turbo = v;
+	g_sim.SetTurboModeEnabled(v || s_turboPulse);
+}
+
+bool ATUIGetTurboPulse() { return s_turboPulse; }
+void ATUISetTurboPulse(bool v) {
+	s_turboPulse = v;
+	g_sim.SetTurboModeEnabled(s_turbo || v);
+}
+
+static bool s_slowMotion = false;
+bool ATUIGetSlowMotion() { return s_slowMotion; }
+void ATUISetSlowMotion(bool v) { s_slowMotion = v; }
+
+// =========================================================================
+// Fullscreen
+// =========================================================================
+
+static bool s_fullscreen = false;
+bool ATUIGetFullscreen() { return s_fullscreen; }
+bool ATUIGetDisplayFullscreen() { return s_fullscreen; }
+void ATSetFullscreen(bool v) { s_fullscreen = v; }
+
+// =========================================================================
+// System state
+// =========================================================================
+
+static bool s_pauseWhenInactive = true;
+bool ATUIGetPauseWhenInactive() { return s_pauseWhenInactive; }
+void ATUISetPauseWhenInactive(bool v) { s_pauseWhenInactive = v; }
+
+static uint32 s_bootUnloadMask = 0;
+uint32 ATUIGetBootUnloadStorageMask() { return s_bootUnloadMask; }
+void ATUISetBootUnloadStorageMask(uint32 v) { s_bootUnloadMask = v; }
+
+static VDStringA s_windowCaption;
+const char *ATUIGetWindowCaptionTemplate() { return s_windowCaption.c_str(); }
+void ATUISetWindowCaptionTemplate(const char *s) { s_windowCaption = s ? s : ""; }
+
+// =========================================================================
+// Enhanced text mode
+// =========================================================================
+
+static ATUIEnhancedTextMode s_enhTextMode = kATUIEnhancedTextMode_None;
+ATUIEnhancedTextMode ATUIGetEnhancedTextMode() { return s_enhTextMode; }
+void ATUISetEnhancedTextMode(ATUIEnhancedTextMode mode) { s_enhTextMode = mode; }
+
+// =========================================================================
+// Reset flags (uiconfirm.h)
+// =========================================================================
+
+static uint32 s_resetFlags = kATUIResetFlag_Default;
+uint32 ATUIGetResetFlags() { return s_resetFlags; }
+void ATUISetResetFlags(uint32 v) { s_resetFlags = v; }
+bool ATUIIsResetNeeded(uint32 flag) { return (s_resetFlags & flag) != 0; }
+void ATUIModifyResetFlag(uint32 flag, bool state) {
+	if (state) s_resetFlags |= flag; else s_resetFlags &= ~flag;
+}
+
+// =========================================================================
+// Recording status
+// =========================================================================
+
+ATUIRecordingStatus ATUIGetRecordingStatus() { return kATUIRecordingStatus_None; }
+
+// =========================================================================
+// Keyboard (uikeyboard.h)
+// =========================================================================
+
+static vdfastvector<uint32> s_customKeyMap;
+
+void ATUIGetCustomKeyMap(vdfastvector<uint32>& mappings) {
+	mappings = s_customKeyMap;
+}
+
+void ATUISetCustomKeyMap(const uint32 *mappings, size_t n) {
+	s_customKeyMap.assign(mappings, mappings + n);
+}
+
+void ATUIInitVirtualKeyMap(const ATUIKeyboardOptions&) {
+	// No-op on SDL3 — keyboard mapping is handled by input_sdl3.cpp
+}
+
+// =========================================================================
+// Port menus (uiportmenus.h) — all no-ops
+// =========================================================================
+
+void ATInitPortMenus(ATInputManager *) {}
+void ATUpdatePortMenus() {}
+void ATShutdownPortMenus() {}
+void ATReloadPortMenus() {}
+bool ATUIHandlePortMenuCommand(uint32) { return false; }
+
+// =========================================================================
+// Functions forward-declared in settings.cpp — no-ops for SDL3
+// =========================================================================
+
+void ATSyncCPUHistoryState() {}
+void ATUIUpdateSpeedTiming() {}
+void ATUIResizeDisplay() {}
+
+// =========================================================================
+// Misc UI functions — no-ops / simple stubs
+// =========================================================================
+
+IATDisplayPane *ATUIGetDisplayPane() { return nullptr; }
+bool ATUISwitchHardwareMode(VDGUIHandle, ATHardwareMode, bool) { return false; }
+void ATUISwitchMemoryMode(VDGUIHandle, ATMemoryMode) {}
+static bool s_driveSounds = true;
+bool ATUIGetDriveSoundsEnabled() { return s_driveSounds; }
+void ATUISetDriveSoundsEnabled(bool v) { s_driveSounds = v; }
+void ATUIRecalibrateLightPen() {}
+void ATUIActivatePanZoomTool() {}
+void ATUIOpenOnScreenKeyboard() {}
+void ATUIToggleHoldKeys() {}
+bool ATUICanManipulateWindows() { return false; }
+bool ATUIIsModalActive() { return false; }
+bool ATUIIsMouseCaptured() { return false; }
+
+VDGUIHandle ATUIGetMainWindow() { return nullptr; }
+VDGUIHandle ATUIGetNewPopupOwner() { return nullptr; }
+static bool s_appActive = true;
+bool ATUIGetAppActive() { return s_appActive; }
+void ATUISetAppActive(bool v) { s_appActive = v; }
+void ATUIExit(bool) {}
+
+bool ATUIGetDeviceButtonSupported(uint32) { return false; }
+bool ATUIGetDeviceButtonDepressed(uint32) { return false; }
+void ATUIActivateDeviceButton(uint32, bool) {}
+
+void ATUIBootImage(const wchar_t *) {}
+
+static IATAsyncDispatcher *s_dispatcher = nullptr;
+IATAsyncDispatcher *ATUIGetDispatcher() { return s_dispatcher; }
+void ATUISetDispatcher(IATAsyncDispatcher *d) { s_dispatcher = d; }
+
+void ATSetVideoStandard(ATVideoStandard) {}
+
+// ATUIGetManager — return our stub global
+ATUIManager& ATUIGetManager() { return g_ATUIManager; }
+
+// =========================================================================
+// Enum tables from debugger.cpp (excluded from SDL3 build)
+// =========================================================================
+
+#include <at/atcore/enumparseimpl.h>
+#include "debugger.h"
+
+AT_DEFINE_ENUM_TABLE_BEGIN(ATDebuggerSymbolLoadMode)
+	{ ATDebuggerSymbolLoadMode::Default, "default" },
+	{ ATDebuggerSymbolLoadMode::Disabled, "disabled" },
+	{ ATDebuggerSymbolLoadMode::Deferred, "deferred" },
+	{ ATDebuggerSymbolLoadMode::Enabled, "enabled" },
+AT_DEFINE_ENUM_TABLE_END(ATDebuggerSymbolLoadMode, ATDebuggerSymbolLoadMode::Default)
+
+AT_DEFINE_ENUM_TABLE_BEGIN(ATDebuggerScriptAutoLoadMode)
+	{ ATDebuggerScriptAutoLoadMode::Default, "default" },
+	{ ATDebuggerScriptAutoLoadMode::Disabled, "disabled" },
+	{ ATDebuggerScriptAutoLoadMode::AskToLoad, "asktoload" },
+	{ ATDebuggerScriptAutoLoadMode::Enabled, "enabled" },
+AT_DEFINE_ENUM_TABLE_END(ATDebuggerScriptAutoLoadMode, ATDebuggerScriptAutoLoadMode::Default)

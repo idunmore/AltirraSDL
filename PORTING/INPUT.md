@@ -182,8 +182,8 @@ constants that `ATInputCode` is based on.
 
 | File | Purpose |
 |------|---------|
-| `src/AltirraSDL/source/input_sdl3.cpp` | SDL3 event → ATInputCode translation and dispatch |
-| `src/AltirraSDL/h/input_sdl3.h` | Header for the above |
+| `src/AltirraSDL/source/input_sdl3.cpp` | SDL3 keyboard/mouse → POKEY keyboard matrix + ATInputManager |
+| `src/AltirraSDL/source/joystick_sdl3.cpp` | SDL3 gamepad → IATJoystickManager (button/axis mapping, hotplug) |
 
 ## Interface Dependency
 

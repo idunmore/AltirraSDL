@@ -1,0 +1,95 @@
+AltirraSDL — Input Handling Parity Checklist
+============================================
+Updated: 2026-04-01
+Reference: PORTING/INPUT.md vs actual input_sdl3.cpp + joystick_sdl3.cpp
+
+Legend:
+  [100%] Fully implemented
+  [ 50%] Partially implemented
+  [  0%] Not implemented
+
+
+================================================================================
+1. KEYBOARD INPUT (input_sdl3.cpp)
+================================================================================
+
+  [100%] SDL_EVENT_KEY_DOWN / KEY_UP handling  — Processed in main loop
+  [100%] SDL scancode → Atari KBCODE mapping  — Direct POKEY keyboard matrix path
+  [100%] SDL scancode → ATInputCode mapping   — For input manager controller mapping
+  [100%] ImGui keyboard capture check         — WantCaptureKeyboard guard
+  [100%] Modifier keys (Shift, Ctrl, Alt)     — Mapped to Atari Shift/Control/Option
+  [100%] Function keys (F1-F12)               — Mapped to emulator controls
+  [100%] Arrow keys                           — Mapped per ATUIKeyboardOptions mode
+  [100%] Special keys (Tab, Backspace, etc.)  — Full scancode table
+
+
+================================================================================
+2. GAMEPAD / JOYSTICK (joystick_sdl3.cpp)
+================================================================================
+
+  [100%] IATJoystickManager implementation    — ATJoystickManagerSDL3
+  [100%] SDL_EVENT_GAMEPAD_* handling         — Button/axis events processed
+  [100%] Gamepad button → Atari input mapping — XInput convention (A/B/X/Y/DPad)
+  [100%] Analog axis mapping                  — Left stick → joystick directions
+  [100%] Gamepad hotplug                      — SDL3 handles add/remove events
+  [100%] Multiple gamepad support             — Tracked by SDL device ID
+  [  0%] Rumble / haptic feedback             — SDL3 supports it, not wired
+  [  0%] Trigger axis as analog              — Could map to paddle input
+
+
+================================================================================
+3. MOUSE INPUT
+================================================================================
+
+  [100%] SDL_EVENT_MOUSE_MOTION              — Processed in main loop
+  [100%] SDL_EVENT_MOUSE_BUTTON_*            — Left/right/middle clicks
+  [100%] ImGui mouse capture check           — WantCaptureMouse guard
+  [  0%] Relative mouse mode (light pen)     — SDL_SetWindowRelativeMouseMode not used
+  [  0%] Mouse capture for paddle emulation  — ATUISetMouseAutoCapture stored but
+                                               not wired to actual SDL3 capture
+  [  0%] Mouse → light pen position mapping  — Needs coordinate transformation
+
+
+================================================================================
+4. INPUT MANAGER INTEGRATION
+================================================================================
+
+  [100%] ATInputManager receives key events    — Via POKEY direct path
+  [100%] ATInputManager receives gamepad       — Via IATJoystickManager
+  [  0%] Custom input mappings UI             — Placeholder in menu (disabled)
+  [  0%] Input map save/load                  — Settings category exists but UI missing
+  [  0%] Quick map cycling                    — Menu item placeholder (disabled)
+  [  0%] Port 1-4 assignment UI              — Menu items missing
+
+
+================================================================================
+5. TEXT INPUT
+================================================================================
+
+  [  0%] SDL_EVENT_TEXT_INPUT handling         — Not implemented
+                                                Needed for IME and dead key support
+                                                Currently using scancode path only
+
+
+================================================================================
+6. FILE DROP
+================================================================================
+
+  [100%] SDL_EVENT_DROP_FILE handling          — Loads dropped file with VRWSafe + cold reset
+
+
+================================================================================
+SUMMARY
+================================================================================
+
+Category                    Implemented    Total    Coverage
+------------------------------------------------------------
+Keyboard                         8            8      100%
+Gamepad/joystick                 5            7       71%
+Mouse                            3            6       50%
+Input manager integration        2            6       33%
+Text input                       0            1        0%
+File drop                        1            1      100%
+
+Core keyboard and gamepad input works well for daily use.
+Main gaps: mouse capture/light pen, input mapping UI, text input, file drop.

@@ -33,7 +33,8 @@ list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*/idevhdimage\\.cpp$")       # r
 list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*/midimate\\.cpp$")          # Win32 MIDI API (winmm.h)
 list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*/modemtcp\\.cpp$")          # Win32 networking (windows.h)
 list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*/profilerui\\.cpp$")        # Win32 profiler UI (w32assist.h)
-list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*/settings\\.cpp$")          # Win32 UI accessors (uiportmenus.h -> windows.h)
+# settings.cpp is now compiled for SDL3 — Win32 UI deps are satisfied by
+# stubs/uiaccessors_stubs.cpp and stub headers in stubs/.
 list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*/startuplogger\\.cpp$")     # Win32 only (windows.h)
 list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*/texteditor\\.cpp$")        # Win32 HWND/WndProc text editor widget
 list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*/vgmwriter\\.cpp$")         # requires sizeof(wchar_t)==2 (UTF-16 VGM metadata)
@@ -48,15 +49,24 @@ add_executable(AltirraSDL
     source/main_sdl3.cpp
     source/display_sdl3.cpp
     source/input_sdl3.cpp
+    source/joystick_sdl3.cpp
 
     # Dear ImGui UI
     source/ui_main.cpp
+    source/ui_system.cpp
+    source/ui_disk.cpp
+    source/ui_cassette.cpp
+    source/ui_display.cpp
+
+    # Registry persistence (filtered out by ui* regex, so add explicitly)
+    ${CMAKE_SOURCE_DIR}/src/Altirra/source/uiregistry.cpp
 
     # Stub implementations replacing Win32-only files
     stubs/console_stubs.cpp
     stubs/oshelper_stubs.cpp
-    stubs/joystick_stubs.cpp
+    # joystick_stubs.cpp replaced by source/joystick_sdl3.cpp
     stubs/uirender_stubs.cpp
+    stubs/uiaccessors_stubs.cpp
     stubs/win32_stubs.cpp
     stubs/device_stubs.cpp
 
@@ -74,8 +84,6 @@ target_include_directories(AltirraSDL PRIVATE
     ${CMAKE_SOURCE_DIR}/src/Altirra/h
     # Altirra source dir (for #include "foo.h" without path)
     ${CMAKE_SOURCE_DIR}/src/Altirra/source
-    # Stubs directory (overrides Win32 headers with portability stubs)
-    ${CMAKE_SOURCE_DIR}/src/AltirraSDL/stubs
     # SDL3 frontend headers
     ${CMAKE_SOURCE_DIR}/src/AltirraSDL/source
     # ATAudio headers
@@ -90,9 +98,11 @@ target_include_directories(AltirraSDL PRIVATE
     ${ALTIRRA_COMPAT_DIR}
 )
 
-# Altirra source precompiled header (each .cpp does #include <stdafx.h>)
-# Point to the Altirra project's own stdafx.h
+# Stubs directory MUST come before Altirra headers so that stub versions
+# of Win32-dependent headers (uiportmenus.h, at/atui/uimanager.h, etc.)
+# are found first.  The BEFORE keyword prepends to the include list.
 target_include_directories(AltirraSDL BEFORE PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/AltirraSDL/stubs
     ${CMAKE_SOURCE_DIR}/src/Altirra/h
 )
 

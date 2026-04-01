@@ -381,37 +381,44 @@ API and member types are unchanged since `mpHandle` is already `void*`.
 setter (`VDSetRegistryProvider`). The Windows build uses
 `VDGetDefaultRegistryProvider()` which accesses `HKEY_CURRENT_USER`.
 
-For the SDL3 build, implement `IVDRegistryProvider` backed by a JSON file
-stored in the SDL3 preferences directory:
+### Implementation (Actual)
 
-```cpp
-class VDRegistryProviderJSON : public IVDRegistryProvider {
-    // Stores all settings in a nested JSON object
-    // File location: SDL_GetPrefPath("Altirra", "Altirra") + "settings.json"
-    // Uses the existing vdjson library for parsing/serialization
-};
+The SDL3 build reuses `VDRegistryProviderMemory` (the existing in-memory
+provider) and persists settings to an INI-like text file using the **same
+format as Windows Altirra's portable mode**. This avoids writing a new
+JSON provider and leverages the existing, battle-tested `ATUILoadRegistry`
+/ `ATUISaveRegistry` functions from `uiregistry.cpp`.
+
+**File location:** `~/.config/altirra/settings.ini` (XDG Base Directory)
+
+**Format:** INI-like sections matching Windows portable mode:
+```ini
+; Altirra settings file. EDIT AT YOUR OWN RISK.
+
+[User\AltirraSDL]
+"Hardware mode" = 1
+"Video standard" = 0
+"BASIC enabled" = 1
+
+[User\AltirraSDL\Profiles\00000000]
+"Name" = "Default"
 ```
 
-Key design decisions:
+**Key files:**
+- `src/system/source/registry_sdl3.cpp` — Provider + load/save wrappers
+- `src/Altirra/source/uiregistry.cpp` — INI serialization (shared with Windows)
 
-- **Hierarchical keys** map to nested JSON objects
-- **Value types** (int, string, binary, bool) map directly to JSON types
-  (binary as base64-encoded string)
-- **Auto-save** on `CloseKey()` with write-on-modify to avoid data loss
-- **Lazy loading** on first access
-- **Thread safety** via mutex around all operations
+**Lifecycle:**
+1. `VDRegistryAppKey::setDefaultKey("AltirraSDL")` — set app key prefix
+2. `ATRegistryLoadFromDisk()` — load INI into `VDRegistryProviderMemory`
+3. `ATLoadSettings(...)` — read from memory provider into simulator
+4. *(emulator runs)*
+5. `ATSaveSettings(...)` — write simulator state into memory provider
+6. `ATRegistryFlushToDisk()` — serialize memory provider to INI file
 
 The `VDRegistryAppKey` and `VDRegistryKey` convenience classes work
-unchanged since they use the provider interface.
-
-### Integration Point
-
-During startup in the SDL3 frontend, before any settings are accessed:
-
-```cpp
-static VDRegistryProviderJSON sJsonProvider;
-VDSetRegistryProvider(&sJsonProvider);
-```
+unchanged since they use the provider interface. Settings files are
+cross-compatible with Windows Altirra's portable mode format.
 
 ## Atomics (atomic.h)
 

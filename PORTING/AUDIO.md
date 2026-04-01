@@ -57,43 +57,30 @@ OS Audio (PulseAudio/ALSA/CoreAudio/WASAPI)
 ### ATAudioOutputSDL3 Class
 
 ```cpp
-class ATAudioOutputSDL3 : public IATAudioOutput {
+class ATAudioOutputSDL3 final : public IATAudioOutput {
 public:
-    // IATAudioOutput (full interface -- 23 pure virtual methods)
+    ~ATAudioOutputSDL3();
+
+    // IATAudioOutput (full interface)
     void Init(ATScheduler& scheduler) override;
     void InitNativeAudio() override;
-    ATAudioApi GetApi() override;
-    void SetApi(ATAudioApi api) override;  // ignored on SDL3 (SDL picks best)
-    void SetAudioTap(IATAudioTap *tap) override;
-    ATUIAudioStatus GetAudioStatus() const override;
-    IATAudioMixer& AsMixer() override;
-    ATAudioSamplePool& GetPool() override;
-    void SetCyclesPerSecond(double cps, double repeatfactor) override;
-    bool GetMute() override;
-    void SetMute(bool mute) override;
-    float GetVolume() override;
-    void SetVolume(float vol) override;
-    float GetMixLevel(ATAudioMix mix) const override;
-    void SetMixLevel(ATAudioMix mix, float level) override;
-    int GetLatency() override;
-    void SetLatency(int ms) override;
-    int GetExtraBuffer() override;
-    void SetExtraBuffer(int ms) override;
-    void SetFiltersEnabled(bool enable) override;
-    void Pause() override;
-    void Resume() override;
+    // ... all 23 pure virtual methods implemented ...
     void WriteAudio(const float *left, const float *right,
                     uint32 count, bool pushAudio,
                     bool pushStereoAsAudio, uint64 timestamp) override;
 
 private:
-    SDL_AudioStream *mpStream = nullptr;
-    SDL_AudioDeviceID mDeviceID = 0;
-    ATAudioMixer mMixer;
+    SDL_AudioStream *mpStream = nullptr;  // owns device + stream
+    ATAudioMixerStub mMixer;              // stub (no sync source mixing yet)
     ATAudioSamplePool mPool;
+    IATAudioTap *mpAudioTap = nullptr;
     float mVolume = 1.0f;
+    float mMixLevels[kATAudioMixCount] {};
     int mLatencyMs = 40;
+    int mExtraBufferMs = 0;
+    int mMixingRate = 63920;   // cps / 28, updated by SetCyclesPerSecond
     bool mMuted = false;
+    bool mPaused = false;
 };
 ```
 
@@ -101,77 +88,86 @@ private:
 
 ```cpp
 void ATAudioOutputSDL3::InitNativeAudio() {
-    SDL_AudioSpec spec;
-    spec.freq = 44100;         // standard output rate
-    spec.format = SDL_AUDIO_F32;  // float samples (matches WriteAudio)
-    spec.channels = 2;         // stereo
+    SDL_AudioSpec spec {};
+    spec.freq = mMixingRate;       // POKEY rate (~63920 Hz NTSC)
+    spec.format = SDL_AUDIO_F32;   // float samples (matches WriteAudio)
+    spec.channels = 2;             // stereo
 
-    mpStream = SDL_CreateAudioStream(&spec, &spec);
-    mDeviceID = SDL_OpenAudioDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec);
-    SDL_BindAudioStream(mDeviceID, mpStream);
+    // SDL_OpenAudioDeviceStream creates device + stream + binding in one call.
+    // SDL3 handles resampling from POKEY rate to the device's native rate.
+    mpStream = SDL_OpenAudioDeviceStream(
+        SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr);
+
+    // The stream starts paused; resume immediately.
+    SDL_ResumeAudioStreamDevice(mpStream);
 }
 ```
+
+Called from `main_sdl3.cpp` after `ATLoadSettings()` so that audio
+configuration (latency, volume) is already applied.
 
 ### Audio Flow
 
 1. The scheduler ticks the POKEY emulator, which generates samples at ~64 kHz
    (machine clock / 28 cycles per sample).
 
-2. The mixer collects samples from all audio sources
-   (`IATSyncAudioSource::WriteAudio`), resamples from ~64 kHz to 44100 Hz,
-   and calls `IATAudioOutput::WriteAudio()` with interleaved float buffers.
+2. POKEY calls `IATAudioOutput::WriteAudio()` with separate left/right float
+   buffers at the POKEY mixing rate (~63,920 Hz NTSC, ~63,337 Hz PAL).
 
-3. `ATAudioOutputSDL3::WriteAudio()` pushes samples to the SDL3 audio stream:
+3. `ATAudioOutputSDL3::WriteAudio()` interleaves L/R, applies volume, and
+   pushes to the SDL3 audio stream:
 
 ```cpp
 void ATAudioOutputSDL3::WriteAudio(const float *left, const float *right,
-    uint32 count, bool pushAudio, bool pushStereoAsAudio, uint64 timestamp) {
-    // Interleave left/right into stereo buffer
-    float interleaved[2048];
-    for (uint32 i = 0; i < count && i < 1024; ++i) {
-        interleaved[i*2]   = left[i] * mVolume;
-        interleaved[i*2+1] = right[i] * mVolume;
+    uint32 count, ...) {
+    const float vol = mMuted ? 0.0f : mVolume;
+
+    // Interleave left/right into stereo, apply volume
+    float interleaved[kChunkSize * 2];
+    for (uint32 i = 0; i < count; ++i) {
+        interleaved[i*2]   = left[i] * vol;
+        interleaved[i*2+1] = (right ? right[i] : left[i]) * vol;
     }
 
     SDL_PutAudioStreamData(mpStream, interleaved, count * 2 * sizeof(float));
 }
 ```
 
-4. SDL3 pulls from the audio stream on its audio thread and delivers to the
-   OS audio subsystem.
+4. SDL3 resamples from the POKEY rate to the hardware output rate and delivers
+   to the OS audio subsystem on its audio thread.
+
+**Note on the mixer:** The Windows `ATAudioOutput` class implements both
+`IATAudioOutput` and `IATAudioMixer`, mixing additional sync audio sources
+(disk sounds, speaker clicks, cassette motor) into the output alongside
+POKEY. The SDL3 build currently uses a stub mixer that only passes POKEY
+audio through. Disk/speaker/cassette sound effects are not yet mixed in.
+
+### Dynamic Rate Changes
+
+When the video standard changes (NTSC ↔ PAL), `SetCyclesPerSecond()` is
+called with the new machine clock rate. The SDL3 implementation updates the
+stream's input format via `SDL_SetAudioStreamFormat()`, so SDL3 adjusts
+its resampling ratio automatically.
 
 ### Buffer Management
 
-SDL3 manages its own audio buffering internally. The `SetLatency()` method
-controls how much data we keep queued:
-
-```cpp
-void ATAudioOutputSDL3::SetLatency(int ms) {
-    mLatencyMs = ms;
-    // Adjust stream buffer: SDL3 handles this via internal buffering
-    // We control latency by monitoring SDL_GetAudioStreamQueued()
-    // and throttling WriteAudio if too far ahead
-}
-```
-
-Monitor `SDL_GetAudioStreamQueued()` to detect underflow (queue empty) or
-excessive latency (queue too full). The `GetAudioStatus()` method reports
-this to the emulator for adaptive timing.
+SDL3 manages its own audio buffering internally. The implementation monitors
+`SDL_GetAudioStreamQueued()` to track underflow and overflow events, reported
+through `GetAudioStatus()`.
 
 ### SetApi
 
 On Windows, the emulator lets users choose between WaveOut, DirectSound,
 XAudio2, and WASAPI. On SDL3, the audio backend is chosen automatically by
-SDL3 based on the platform. The `SetApi()` method becomes a no-op (or could
-hint via `SDL_SetHint` if needed).
+SDL3 based on the platform. The `SetApi()` method is a no-op.
 
 ### Sample Rate
 
 The POKEY synthesizes at the machine clock rate (~1.79 MHz / 28 = ~63,920
-Hz for NTSC). The mixer resamples to the output rate. SDL3's
-`SDL_CreateAudioStream` can also perform resampling if input and output specs
-differ, but since the mixer already handles this, pass matched specs to
-SDL3.
+Hz for NTSC). Unlike the Windows implementation (which resamples internally
+to 44100-48000 Hz before sending to the OS), the SDL3 implementation passes
+the native POKEY rate to SDL3 and lets SDL3's audio stream handle the
+resampling to the hardware output rate.
 
 ### Factory Function
 
