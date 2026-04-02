@@ -34,8 +34,9 @@ static void FormatTapeTime(char *buf, size_t bufSize, float seconds) {
 }
 
 void ATUIRenderCassetteControl(ATSimulator &sim, ATUIState &state, SDL_Window *window) {
-	ImGui::SetNextWindowSize(ImVec2(400, 130), ImGuiCond_FirstUseEver);
-	if (!ImGui::Begin("Cassette Tape Control", &state.showCassetteControl)) {
+	ImGui::SetNextWindowSize(ImVec2(400, 130), ImGuiCond_Appearing);
+	ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+	if (!ImGui::Begin("Cassette Tape Control", &state.showCassetteControl, ImGuiWindowFlags_NoSavedSettings)) {
 		ImGui::End();
 		return;
 	}

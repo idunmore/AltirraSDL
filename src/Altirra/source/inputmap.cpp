@@ -158,7 +158,17 @@ bool ATInputMap::Load(VDRegistryKey& key, const char *name) {
 
 	const uint32 *src = heap.data() + headerWords;
 
+#if WCHAR_MAX > 0xFFFF
+	// Non-Windows: wchar_t is 32-bit, but the binary format stores 16-bit
+	// characters packed two per uint32 (matching Windows wchar_t layout).
+	// Widen each uint16 to wchar_t.
+	mName.resize(nameLen);
+	const uint16 *nameSrc = (const uint16 *)src;
+	for (uint32 i = 0; i < nameLen; ++i)
+		mName[i] = (wchar_t)nameSrc[i];
+#else
 	mName.assign((const wchar_t *)src, (const wchar_t *)src + nameLen);
+#endif
 	src += nameWords;
 
 	mControllers.resize(ctrlCount);
@@ -192,10 +202,21 @@ void ATInputMap::Save(VDRegistryKey& key, const char *name) {
 	heap.push_back((uint32)mMappings.size());
 	heap.push_back(mSpecificInputUnit);
 
+	// The binary format stores the name as 16-bit characters packed two per
+	// uint32 word — matching the Windows wchar_t (2-byte) layout.
+	uint32 nameWords = ((uint32)mName.size() + 1) >> 1;
 	uint32 offset = (uint32)heap.size();
-	heap.resize(heap.size() + ((mName.size() + 1) >> 1), 0);
+	heap.resize(heap.size() + nameWords, 0);
 
+#if WCHAR_MAX > 0xFFFF
+	// Non-Windows: wchar_t is 32-bit.  Narrow each character to uint16
+	// before packing into the heap.
+	uint16 *nameDst = (uint16 *)&heap[offset];
+	for (size_t i = 0; i < mName.size(); ++i)
+		nameDst[i] = (uint16)mName[i];
+#else
 	mName.copy((wchar_t *)&heap[offset], mName.size());
+#endif
 
 	for(Controllers::const_iterator it(mControllers.begin()), itEnd(mControllers.end()); it != itEnd; ++it) {
 		const Controller& c = *it;

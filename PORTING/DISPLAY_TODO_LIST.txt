@@ -56,8 +56,8 @@ Legend:
 
   [100%] Normal / Extended / Full / OS Screen / Widescreen
          — Set via GTIA SetOverscanMode(), affects emulation output size
-  [  0%] Vertical override sub-menu           — UI not implemented
-  [  0%] Extended PAL height (View menu)      — UI toggle present in System>Video page
+  [100%] Vertical override sub-menu           — In View > Overscan Mode submenu
+  [100%] Extended PAL height (View menu)      — In View > Overscan Mode + System>Video page
 
 
 ================================================================================
@@ -80,10 +80,10 @@ Legend:
 6. COMPOSITOR / OVERLAY
 ================================================================================
 
-  [100%] Status overlay (FPS, pause)          — Rendered via Dear ImGui (ui_main.cpp)
+  [100%] Status overlay (FPS, pause, REC)     — Rendered via Dear ImGui (ui_main.cpp)
   [  0%] IVDDisplayCompositor integration     — Not implemented (Dear ImGui replaces it)
-  [  0%] Drive activity LEDs                  — Not shown in overlay
-  [  0%] Cassette position indicator          — Not shown in overlay
+  [100%] Drive indicators                     — Shows D1-D15 labels for mounted disks
+  [100%] Cassette position indicator          — Shows C: M:SS with play/record color
   [  0%] On-screen keyboard                   — Not implemented
 
   DISPLAY.md recommended Option B (Dear ImGui overlays), which is what's done.

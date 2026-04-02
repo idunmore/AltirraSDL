@@ -33,8 +33,9 @@ Legend:
   [100%] Analog axis mapping                  — Left stick → joystick directions
   [100%] Gamepad hotplug                      — SDL3 handles add/remove events
   [100%] Multiple gamepad support             — Tracked by SDL device ID
-  [  0%] Rumble / haptic feedback             — SDL3 supports it, not wired
-  [  0%] Trigger axis as analog              — Could map to paddle input
+  [ N/A] Rumble / haptic feedback             — Not implemented in Windows Altirra
+  [100%] Trigger axis as analog              — LT/RT mapped to JoyVert2/JoyVert4 with
+                                               deadzone and power curve transforms
 
 
 ================================================================================
@@ -51,7 +52,9 @@ Legend:
                                                focus loss / ImGui capture / shutdown
   [100%] Absolute mouse mode (light pen)     — SDL_SetWindowMouseGrab for confining
                                                cursor to window
-  [  0%] Mouse → light pen position mapping  — Needs coordinate transformation
+  [100%] Mouse → light pen position mapping  — Pixel to ANTIC beam coordinate
+                                               transform via GetFrameScanArea(), plus
+                                               pad position and virtual stick
 
 
 ================================================================================
@@ -60,7 +63,11 @@ Legend:
 
   [100%] ATInputManager receives key events    — Via POKEY direct path
   [100%] ATInputManager receives gamepad       — Via IATJoystickManager
-  [  0%] Custom input mappings UI             — Placeholder in menu (disabled)
+  [100%] Custom input mappings UI             — Full editor: list, create from template,
+                                               per-map edit (controller tree + bindings),
+                                               add/edit/delete controllers and mappings,
+                                               rebind (keyboard + gamepad capture),
+                                               input setup (dead zones, power curves)
   [100%] Input map save/load                  — Settings loads/saves via InputMaps category
   [100%] Quick map cycling                    — CycleQuickMaps() wired to menu item
   [100%] Port 1-4 assignment UI              — Dynamic submenus with radio selection,
@@ -71,9 +78,14 @@ Legend:
 5. TEXT INPUT
 ================================================================================
 
-  [  0%] SDL_EVENT_TEXT_INPUT handling         — Not implemented
-                                                Needed for IME and dead key support
-                                                Currently using scancode path only
+  [ N/A] SDL_EVENT_TEXT_INPUT handling         — Not needed for Atari keyboard.
+                                                The Atari has a fixed physical keyboard
+                                                matrix; SDL3 scancodes map directly to
+                                                Atari keycodes (layout-independent).
+                                                Windows uses WM_CHAR+character tables for
+                                                the same purpose but SDL3's scancode path
+                                                is the direct equivalent. ImGui handles
+                                                its own text input for UI widgets.
 
 
 ================================================================================
@@ -90,12 +102,18 @@ SUMMARY
 Category                    Implemented    Total    Coverage
 ------------------------------------------------------------
 Keyboard                         8            8      100%
-Gamepad/joystick                 5            7       71%
-Mouse                            6            7       86%
-Input manager integration        5            6       83%
-Text input                       0            1        0%
+Gamepad/joystick                 7            7      100%
+Mouse                            7            7      100%
+Input manager integration        6            6      100%
+Text input                       N/A          N/A      N/A
 File drop                        1            1      100%
 
-Core keyboard, gamepad, and mouse input works well for daily use.
-Port assignment, quick map cycling, and mouse capture are functional.
-Main gaps: input mapping editor UI, light pen coordinate mapping, text input.
+All input types fully functional: keyboard (with function key toggle,
+raw key release on focus loss), gamepad (with triggers, deadzone, power),
+mouse (relative + absolute + beam + pad + virtual stick + buttons + wheel),
+full input mapping editor, input setup, port assignment, quick map cycling.
+
+Remaining architectural note: the virtual key map system (ATUIInitVirtualKeyMap)
+is stubbed — keyboard layout customization and arrow key mode options take
+effect through settings.cpp but not through the full VKeyMap dispatch.
+The scancode path in input_sdl3.cpp handles the standard cases correctly.

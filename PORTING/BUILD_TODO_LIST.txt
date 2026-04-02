@@ -40,14 +40,13 @@ Legend:
            registry_sdl3.cpp                   — Settings persistence (INI format)
            text_sdl3.cpp                       — Text encoding (wchar_t <-> UTF-8)
            time_sdl3.cpp                       — High-res timer
-  [  0%] fileasync_sdl3.cpp                   — Not implemented (async file I/O)
-                                                Win32 version not compiled for SDL3;
-                                                may not be needed if no caller requires it
+  [100%] fileasync_sdl3.cpp                   — Synchronous buffered IVDFileAsync impl
+                                                using VDFile. Used by aviwriter.cpp for
+                                                video recording (AVI container writing).
   [ N/A] w32assist.cpp                        — Windows-only, not needed on SDL3
 
   BUILD.md DIVERGENCE: Doc lists thread_sdl3.cpp as a separate platform file.
   Actual: thread.cpp compiles cross-platform in COMMON_SOURCES.
-  Doc lists fileasync_sdl3.cpp; doesn't exist and isn't compiled.
 
 
 ================================================================================

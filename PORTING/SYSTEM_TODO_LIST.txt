@@ -64,10 +64,10 @@ Legend:
 4. ASYNC FILE I/O (fileasync.h)
 ================================================================================
 
-  [  0%] fileasync_sdl3.cpp                   — Not implemented
-  [ N/A] May not be needed                    — fileasync.cpp is only compiled on Win32;
-                                                check if any SDL3-compiled code calls
-                                                VDFileAsync. If not, this is safely N/A.
+  [100%] fileasync_sdl3.cpp                   — Implemented using synchronous buffered I/O
+                                                via VDFile (not SDL3 async I/O — overkill
+                                                for sequential AVI writing). Used by
+                                                aviwriter.cpp for video recording.
 
 
 ================================================================================
@@ -142,7 +142,7 @@ Category                    Implemented    Total    Coverage
 Threading                        5            5      100%
 File I/O                         9            9      100%
 Filesystem                       9           10       90%
-Async File I/O                   0            1     0%/N/A
+Async File I/O                   1            1      100%
 Configuration storage           10           10      100%
 Text encoding                    4            4      100%
 Date/Time                        2            2      100%
@@ -150,5 +150,5 @@ Error handling                   2            2      100%
 Debug helpers                    2            2      100%
 Atomics                          3            3      100%
 
-System library is essentially complete for the SDL3 build.
-Main question mark: fileasync (not needed?) and VDDirectoryIterator.
+System library is complete for the SDL3 build.
+Remaining minor gap: VDDirectoryIterator (filesystem iteration).

@@ -184,6 +184,7 @@ constants that `ATInputCode` is based on.
 |------|---------|
 | `src/AltirraSDL/source/input_sdl3.cpp` | SDL3 keyboard/mouse → POKEY keyboard matrix + ATInputManager |
 | `src/AltirraSDL/source/joystick_sdl3.cpp` | SDL3 gamepad → IATJoystickManager (button/axis mapping, hotplug) |
+| `src/AltirraSDL/source/ui_input.cpp` | Input Mappings editor + Input Setup dialog (Dear ImGui) |
 
 ## Interface Dependency
 

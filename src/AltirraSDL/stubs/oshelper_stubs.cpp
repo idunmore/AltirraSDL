@@ -16,6 +16,9 @@
 #include "../romdata/kernelxl_rom.h"
 #include "../romdata/nokernel_rom.h"
 
+// Embedded PCM audio samples for stock sounds (disk, speaker, printer, etc.)
+#include "../romdata/audio_samples.h"
+
 struct EmbeddedROM {
 	int resourceId;
 	const unsigned char *data;
@@ -26,6 +29,20 @@ static const EmbeddedROM kEmbeddedROMs[] = {
 	{ IDR_KERNEL,   kernel_rom,   kernel_rom_len },
 	{ IDR_KERNELXL, kernelxl_rom, kernelxl_rom_len },
 	{ IDR_NOKERNEL, nokernel_rom, nokernel_rom_len },
+};
+
+static const EmbeddedROM kEmbeddedAudioSamples[] = {
+	{ IDR_DISK_SPIN,            audio_disk_spin,            audio_disk_spin_len },
+	{ IDR_TRACK_STEP,           audio_track_step,           audio_track_step_len },
+	{ IDR_TRACK_STEP_2,         audio_track_step_2,         audio_track_step_2_len },
+	{ IDR_TRACK_STEP_3,         audio_track_step_3,         audio_track_step_3_len },
+	{ IDR_SPEAKER_STEP,         audio_speaker_click,        audio_speaker_click_len },
+	{ IDR_1030RELAY,            audio_1030relay,            audio_1030relay_len },
+	{ IDR_PRINTER_1029_PIN,     audio_printer_1029_pin,     audio_printer_1029_pin_len },
+	{ IDR_PRINTER_1029_PLATEN,  audio_printer_1029_platen,  audio_printer_1029_platen_len },
+	{ IDR_PRINTER_1029_RETRACT, audio_printer_1029_retract, audio_printer_1029_retract_len },
+	{ IDR_PRINTER_1029_HOME,    audio_printer_1029_home,    audio_printer_1029_home_len },
+	{ IDR_PRINTER_1025_FEED,    audio_printer_1025_feed,    audio_printer_1025_feed_len },
 };
 
 static const EmbeddedROM *FindROM(int resId) {
@@ -79,7 +96,14 @@ bool ATLoadKernelResourceLZPacked(int, vdfastvector<uint8>&) {
 	return false;
 }
 
-bool ATLoadMiscResource(int, vdfastvector<uint8>&) {
+bool ATLoadMiscResource(int id, vdfastvector<uint8>& buf) {
+	for (const auto& sample : kEmbeddedAudioSamples) {
+		if (sample.resourceId == id) {
+			buf.resize(sample.size);
+			memcpy(buf.data(), sample.data, sample.size);
+			return true;
+		}
+	}
 	return false;
 }
 

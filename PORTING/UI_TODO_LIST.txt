@@ -1,7 +1,7 @@
 AltirraSDL — Dear ImGui UI Parity Checklist
 ============================================
 Generated: 2026-04-01
-Updated:   2026-04-02
+Updated:   2026-04-02 (v2)
 Reference: Windows Altirra menu_default.txt + Altirra.rc (149 dialogs)
 
 Legend:
@@ -67,12 +67,13 @@ Files:
   [  0%] Calibrate...                     — Placeholder. Missing: display calibration
   [  0%] Display pane                     — Missing: dockable display pane
   [  0%] Printer Output pane              — Missing: dockable printer output
-  [  0%] Copy Frame to Clipboard          — Placeholder. Needs: framebuffer readback
-  [  0%] Save Frame...                    — Placeholder. Needs: framebuffer readback
+  [100%] Copy Frame to Clipboard          — SDL_SetClipboardData with BMP via SDL_IOFromDynamicMem
+  [100%] Save Frame...                    — SDL_RenderReadPixels + SDL_SaveBMP via file dialog
   [  0%] Text Selection submenu           — Missing: 7 items (Copy Text/Hex/Unicode, Paste, Select)
 
 1.3 SYSTEM MENU
-  [ 20%] Profiles submenu                 — Placeholder: Edit Profiles, Temporary Profile (disabled)
+  [100%] Profiles submenu                 — Edit Profiles dialog, Temporary Profile toggle,
+                                            quick profile switching list (visible profiles)
   [100%] Configure System...              — Opens 20-page config dialog
   [100%] Warm Reset                       — sim.WarmReset()
   [100%] Cold Reset                       — sim.ColdReset()
@@ -92,8 +93,12 @@ Files:
   [100%] Memory submenu                   — 15 sizes (8K-1088K, Rambo + Compy Shop variants)
 
 1.4 INPUT MENU
-  [  0%] Input Mappings...                — Placeholder (disabled). Missing: full input map editor
-  [  0%] Input Setup...                   — Placeholder (disabled). Missing: input device config
+  [100%] Input Mappings...                — Full list dialog: enable/disable, add, clone, delete,
+                                            rename, presets, quick map, reset all. Per-map edit dialog
+                                            with controller tree, add/edit/delete mappings, rebind,
+                                            create from template wizard. All controller types supported.
+  [100%] Input Setup...                   — Dead zone sliders (analog/digital), power curves,
+                                            trigger settings, live gamepad visualization.
   [100%] Cycle Quick Maps                 — Calls ATInputManager::CycleQuickMaps(), logs status
   [100%] Capture Mouse                    — Toggles SDL3 relative/grab mouse mode, enabled only
                                             when mouse is mapped. Releases on focus loss/ImGui.
@@ -128,11 +133,16 @@ Files:
 1.7 RECORD MENU
   [100%] Record Raw Audio...              — Saves raw 32-bit float PCM via ATAudioWriter
   [100%] Record Audio...                  — Saves 16-bit 44100Hz WAV via ATAudioWriter + resampling
-  [  0%] Record Video...                  — Placeholder (disabled). Needs: video encoder
+  [100%] Record Video...                  — ImGui settings dialog (codec, frame rate, scaling,
+                                            aspect ratio, resampling). Saves AVI via portable
+                                            ATVideoWriter + aviwriter. Encodings: Raw, RLE, ZMBV.
+                                            WMV/H.264 not available (requires Windows Media Foundation).
+                                            Settings persisted in registry. Video tap + audio tap
+                                            wired to GTIA and audio output. Pause/resume supported.
   [100%] Record SAP Type R...             — Saves SAP music file via ATSAPWriter
   [  0%] Record VGM...                    — Placeholder (disabled). Excluded from build (wchar_t)
-  [100%] Stop Recording                   — Tears down audio tap, finalizes file
-                                            Status overlay shows red "REC" indicator
+  [100%] Stop Recording                   — Tears down audio/video taps, finalizes file
+                                            Status overlay shows red "REC" / orange "REC PAUSED"
 
 1.8 TOOLS MENU
   [  0%] Disk Explorer...                 — Placeholder (disabled)
@@ -149,10 +159,10 @@ Files:
   [100%] Reset Window Layout              — Resets to 2x centered
 
 1.10 HELP MENU
-  [  0%] Contents                         — Placeholder (disabled)
+  [  0%] Contents                         — Placeholder (disabled) — needs help system
   [100%] About                            — Shows version, credits, license, OK button
-  [  0%] Change Log                       — Placeholder (disabled)
-  [  0%] Command-Line Help                — Placeholder (disabled)
+  [100%] Change Log                       — SDL3 port status and feature summary
+  [100%] Command-Line Help                — Usage, accepted file types, settings path
 
 
 ================================================================================
@@ -203,7 +213,7 @@ Files:
   [100%] Artifacting Phase/Sat/Sharpness  — Degree + percent sliders
   [100%] Color Matrix R-Y/G-Y/B-Y        — Shift (degrees) + Scale (percent) per channel
   [100%] Reset to Defaults button         — Restores default color settings
-  [  0%] Preset selection combo           — Missing: preset list from ATGetColorPresetCount()
+  [100%] Preset selection combo           — All presets from ATGetColorPresetCount(), auto-selects
   [  0%] Palette preview                  — Missing: visual color swatch display
 
 2.5 DISPLAY SETTINGS DIALOG (ui_display.cpp)
@@ -215,14 +225,25 @@ Files:
   [100%] Auto-Hide Mouse Pointer          — Toggle
 
 2.6 AUDIO OPTIONS DIALOG (IDD_AUDIO_OPTIONS)
-  [  0%] ENTIRE DIALOG MISSING            — Missing: Volume slider, Drive volume, Covox volume,
-                                            Latency slider, Extra buffer, Audio API selector,
-                                            Debug info checkbox, OK/Cancel buttons
-                                            Note: some settings are in Configure System > Audio
+  [100%] Volume slider                    — 0-200 ticks, dB display, real-time update
+  [100%] Drive volume slider              — 0-200 ticks, dB display, mix level applied
+  [100%] Covox volume slider              — 0-200 ticks, dB display, mix level applied
+  [100%] Latency slider                   — 10-500ms range
+  [100%] Extra buffer slider              — 20-500ms range
+  [ N/A] Audio API selector               — N/A on Linux (SDL3 only)
+  [100%] Debug info checkbox              — Toggle audio status display
+  [100%] OK button                        — Dismisses dialog
+                                            Accessible from Configure System > Audio > "Host audio options..."
 
 2.7 CARTRIDGE MAPPER SELECTION (IDD_CARTRIDGE_MAPPER)
-  [  0%] ENTIRE DIALOG MISSING            — Missing: mapper list, show all types, show details,
-                                            2600 warning, OK/Cancel
+  [100%] Mapper list table                — Multi-column (#, Name, Details), sorted by mapper number
+  [100%] Auto-detect recommended          — ATCartridgeAutodetectMode, asterisk/recommended labels
+  [100%] Show All checkbox                — Toggles full mapper list vs size-appropriate only
+  [100%] Show Details checkbox            — Toggles Details column
+  [100%] 2600 warning                     — Detects 2600 cartridges by NMI/RESET/IRQ vectors
+  [100%] Double-click to accept           — Selects and loads mapper
+  [100%] OK/Cancel buttons                — OK re-loads with chosen mapper, Cancel aborts
+  [100%] Boot/Open Image integration      — Unknown mapper during Boot/Open triggers dialog too
 
 2.8 CREATE DISK DIALOG (IDD_CREATE_DISK)
   [ 80%] Create Disk dialog               — Format combo (10 presets), sector count, sector size
@@ -234,8 +255,9 @@ Files:
                                             Add/Edit/Delete/Transfer/Update, Load/Save, OK
 
 2.10 COMPATIBILITY WARNING (IDD_COMPATIBILITY)
-  [  0%] ENTIRE DIALOG MISSING            — Missing: auto-adjust, boot anyway, pause buttons,
-                                            ignore checkboxes
+  [100%] Compatibility Warning dialog      — Auto-adjust, pause, boot anyway buttons, ignore
+                                            checkboxes. Triggered after boot via ATCompatCheck().
+                                            Uses ImGui dialog instead of Win32 modal dialog.
 
 2.11 REWIND DIALOG
   [  0%] ENTIRE DIALOG MISSING            — Missing: rewind timeline UI
@@ -251,10 +273,11 @@ Files:
   [100%] OK button                        — Dismisses dialog
 
 3.1 SYSTEM (Computer > System — IDD_CONFIGURE_SYSTEM)
-  [100%] Hardware type combo              — 6 models
-  [100%] Video standard combo             — NTSC/PAL/SECAM
-  [100%] CTIA mode checkbox               — Toggle CTIA/GTIA
-  [  0%] Toggle NTSC/PAL button           — Missing: convenience button (minor)
+  [100%] Hardware type combo              — 7 models (via ATUISwitchHardwareMode)
+  [100%] Video standard combo             — NTSC/PAL/SECAM/NTSC50/PAL60 (disabled in 5200)
+  [100%] CTIA mode checkbox               — Toggle CTIA/GTIA (with tooltip)
+  [100%] GTIA defect emulation combo      — None/Type 1/Type 2
+  [100%] Toggle NTSC/PAL button           — Convenience button (disabled in 5200)
 
 3.2 CPU (Computer > CPU — IDD_CONFIGURE_CPU)
   [100%] CPU mode radio buttons           — 10 modes (6502, 65C02, 8x 65C816 speeds)
@@ -267,19 +290,28 @@ Files:
   [100%] Shadow cartridges in fast RAM    — Checkbox
 
 3.3 FIRMWARE (Computer > Firmware — IDD_CONFIGURE_FIRMWARE)
-  [100%] Operating system ROM listbox     — Kernel ROM selection
-  [100%] BASIC enable checkbox            — "Enable internal BASIC"
-  [100%] BASIC ROM listbox                — BASIC ROM selection
+  [100%] Operating system ROM combo       — Kernel ROM selection (combo, filtered by hardware mode)
+  [100%] BASIC enable checkbox            — "Enable internal BASIC" (conditional cold reset)
+  [100%] BASIC ROM combo                  — BASIC ROM selection (combo with [Autoselect])
   [100%] Auto-Reload ROMs on Cold Reset   — Checkbox
-  [  0%] Firmware manager... button       — Missing: opens firmware management dialog
+  [100%] Firmware manager... button       — Full dialog: firmware list with Name/Type/Use for
+                                            columns, type category filter, Add (file dialog +
+                                            autodetect), Remove, Settings (edit name/type/path/
+                                            CRC32, OPTION key flag for XL/XEGS), Scan (directory
+                                            scan), Audit (known firmware CRC comparison), Set as
+                                            Default, Use for... (specific firmware assignment),
+                                            Clear All Custom. Grayed internal firmware. Thread-safe
+                                            file dialog callback.
 
 3.4 MEMORY (Computer > Memory — IDD_CONFIGURE_MEMORY)
-  [100%] Memory Size combo                — 13 sizes (8K-1088K)
+  [100%] Memory Size combo                — 13 sizes (via ATUISwitchMemoryMode with validation)
   [100%] Memory Clear Pattern combo       — 5 patterns
   [100%] Enable MapRAM (XL/XE only)       — Checkbox
-  [100%] Enable Ultimate1MB               — Checkbox
+  [100%] Enable Ultimate1MB               — Checkbox (cold reset)
   [100%] Enable bank register aliasing    — Checkbox (Axlon)
-  [100%] Enable floating I/O bus          — Checkbox
+  [100%] Enable floating I/O bus          — Checkbox (cold reset)
+  [100%] Axlon banked memory combo        — None/64K-4096K (disabled in 5200, cold reset)
+  [100%] 65C816 high memory banks combo   — Auto/None/4-16MB (disabled without 65C816, cold reset)
   [100%] Preserve extended memory         — Checkbox
 
 3.5 ACCELERATION (Computer > Acceleration — IDD_CONFIGURE_ACCELERATION)
@@ -296,6 +328,8 @@ Files:
   [100%] D: burst I/O                     — Checkbox
   [100%] PRT: burst I/O                   — Checkbox
   [100%] CIO burst transfers              — Checkbox
+  [100%] SIO accelerator mode             — Radio: Software patch/PBI patch/Both
+  [100%] CIO hook mode                    — Radio: Hardware/PBI
   [100%] SIO override detection           — Checkbox
 
 3.6 SPEED (Computer > Speed — IDD_CONFIGURE_SPEED)
@@ -310,18 +344,22 @@ Files:
   [100%] Program Load Mode combo          — 4 modes
   [100%] Randomize Memory on EXE Load     — Checkbox
   [100%] Randomize program load timing    — Checkbox
+  [100%] Power-on delay combo             — Auto/None/1s/2s/3s
   [100%] Unload cartridges on boot        — Checkbox (via storage mask)
   [100%] Unload disks on boot             — Checkbox (via storage mask)
   [100%] Unload tapes on boot             — Checkbox (via storage mask)
-  [  0%] Use Specific Seed button         — Missing: seed input UI
-  [  0%] Current/Next seed display        — Missing: seed value labels
+  [100%] Use Specific Seed button         — Input field + Use/Auto buttons
+  [100%] Current/Next seed display        — Shows current seed and locked/auto status
 
 3.8 VIDEO (Outputs > Video — IDD_CONFIGURE_VIDEO)
   [100%] Artifacting combo                — 7 modes
   [100%] Monitor Mode combo               — 6 modes
   [100%] Frame Blending                   — Checkbox
-  [100%] Interlace                        — Checkbox
-  [100%] Scanlines                        — Checkbox
+  [100%] Linear Frame Blending            — Checkbox
+  [100%] Mono Persistence                 — Checkbox
+  [100%] Interlace                        — Checkbox (+ ATUIResizeDisplay)
+  [100%] Scanlines                        — Checkbox (+ ATUIResizeDisplay)
+  [100%] PAL Phase combo                  — Phase 0/Phase 1
   [100%] Extended PAL Height              — Checkbox
 
 3.9 AUDIO (Outputs > Audio — IDD_CONFIGURE_AUDIO)
@@ -337,15 +375,18 @@ Files:
   [100%] Audio monitor                    — Checkbox
   [100%] Audio scope                      — Checkbox
   [  0%] Visualization combo              — Missing: audio visualization selector
-  [  0%] Host audio options... button     — Missing: opens IDD_AUDIO_OPTIONS
+  [100%] Host audio options... button     — Opens Audio Options dialog (volume, latency, etc.)
 
 3.10 DEVICES (Peripherals > Devices — IDD_CONFIGURE_DEVICES)
-  [ 10%] Devices page                     — Placeholder text shown. Missing: device tree,
-                                            Add/Remove/Settings buttons, device properties
+  [100%] Devices page                     — Device list with firmware status, Add (categorized
+                                            catalog popup), Remove, and Settings buttons.
+                                            Settings opens per-device config dialog (ui_devconfig.cpp)
+                                            with ~40 device-specific dialogs + generic fallback.
 
 3.11 KEYBOARD (Peripherals > Keyboard — IDD_CONFIGURE_KEYBOARD)
-  [100%] Arrow key mode combo             — 3 modes (InvertCtrl/AutoCtrl/DefaultCtrl)
-  [100%] Layout mode combo                — 3 modes (Natural/Raw/Custom)
+  [100%] Keyboard mode combo              — Cooked/Raw/Full Scan (mbRawKeys/mbFullRawKeys)
+  [100%] Arrow key mode combo             — 3 modes (+ ATUIInitVirtualKeyMap)
+  [100%] Layout mode combo                — 3 modes (+ ATUIInitVirtualKeyMap)
   [100%] Allow SHIFT on cold reset        — Checkbox
   [100%] Enable F1-F4 function keys       — Checkbox
   [100%] Share modifier host keys         — Checkbox
@@ -388,7 +429,7 @@ Files:
   [100%] Enable paddle pot noise          — Checkbox
   [100%] Use immediate analog updates     — Checkbox
   [ N/A] Use Raw Input API                — N/A on Linux
-  [  0%] Use immediate light pen updates  — Missing: checkbox
+  [100%] Use immediate light pen updates  — Checkbox via ATLightPenPort
 
 3.17 EASE OF USE (Emulator > Ease of Use — IDD_CONFIGURE_EASEOFUSE)
   [100%] Reset when changing cartridges   — Checkbox
@@ -407,37 +448,90 @@ Files:
 3.20 WORKAROUNDS (Emulator > Workarounds — IDD_CONFIGURE_WORKAROUNDS)
   [100%] Poll directories checkbox        — g_ATOptions.mbPollDirectories
 
-3.21 MISSING CONFIGURE SYSTEM PAGES (not yet implemented):
+3.21 COMPAT DB (Emulator > Compat DB — IDD_CONFIGURE_COMPATDB)
+  [100%] Show compatibility warnings   — Checkbox, g_ATOptions.mbCompatEnable
+  [100%] Use internal database         — Checkbox, g_ATOptions.mbCompatEnableInternalDB
+  [100%] Use external database         — Checkbox + path input, g_ATOptions.mbCompatEnableExternalDB
+  [100%] Browse button                 — SDL file dialog for .atcpengine files
+  [100%] Unmute all warnings button    — ATCompatUnmuteAllTitles wired
+
+3.22 ERROR HANDLING (Emulator > Error Handling — IDD_CONFIGURE_ERRORS)
+  [100%] Error mode combo              — Dialog/Debug/Pause/ColdReset via g_ATOptions.mErrorMode
+
+3.23 OVERVIEW (top-level — IDD_CONFIGURE_OVERVIEW)
+  [100%] Base system display           — Hardware mode, video standard, memory
+  [100%] OS firmware display           — Name + CRC32
+  [100%] Additional devices list       — From device manager
+  [100%] Mounted images display        — Disks + cartridges with CRC
+  [100%] Debugging options display     — Memory randomization, EXE fill
+  [100%] Firmware issues display       — Red warning for missing/invalid FW
+  [100%] Copy to Clipboard button      — ImGui clipboard integration
+
+3.24 RECOMMENDATIONS (top-level — IDD_CONFIGURE_ASSESSMENT)
+  [100%] Compatibility assessment      — Firmware, CPU, memory, BASIC, FP, PAL/NTSC, keyboard
+  [100%] Accuracy assessment           — SIO patch, burst, FP, video standard, keyboard
+  [100%] Performance assessment        — CPU history
+  [  0%] Clickable fix links           — Missing: command execution (Windows uses RTF links)
+
+3.25 REMAINING MISSING PAGES:
   [  0%] Debugger (IDD_CONFIGURE_DEBUGGER)     — Auto-load symbols, debug link, scripts
-  [  0%] Flash (IDD_CONFIGURE_FLASH)           — Flash chip type combos
-  [  0%] CompatDB (IDD_CONFIGURE_COMPATDB)     — Compat warnings, databases
-  [  0%] Overview (IDD_CONFIGURE_OVERVIEW)     — System config summary, copy to clipboard
-  [  0%] Assessment (IDD_CONFIGURE_ASSESSMENT) — Compatibility assessment
+                                                  (ATGetDebugger returns nullptr in SDL3)
   [ N/A] File Types (IDD_CONFIGURE_FILETYPES)  — Windows file associations
   [ N/A] Settings (IDD_CONFIGURE_SETTINGS)     — Registry/portable mode (Windows)
   [ N/A] Display 2 (IDD_CONFIGURE_DISPLAY2)    — D3D/fullscreen mode (Windows graphics API)
   [ N/A] UI (IDD_CONFIGURE_UI)                 — Partial N/A (dark theme, menu auto-hide)
 
+3.26 TREE STRUCTURE
+  [100%] Overview + Recommendations    — Top-level (matches Windows)
+  [100%] Enhanced Text under Outputs   — Moved from Emulator (matches Windows)
+  [100%] Flash under Media             — Moved from Emulator (matches Windows)
+  [100%] Compat DB under Emulator      — Added (matches Windows)
+  [100%] Error Handling under Emulator — Added (matches Windows)
+  [100%] Window Caption label          — Renamed from Caption (matches Windows)
+
 
 ================================================================================
-4. DEVICE CONFIGURATION DIALOGS (25 dialogs — all missing)
+4. DEVICE CONFIGURATION DIALOGS (ui_devconfig.cpp — ~40 dialogs implemented)
 ================================================================================
 
-  [  0%] IDD_DEVICE_1030MODEM             — 835/1030/XM301 modem: TCP, Telnet, baud rate
-  [  0%] IDD_DEVICE_1400XL                — 1400/1450XL modem options
-  [  0%] IDD_DEVICE_815                   — 815 disk drive: drive select, data inversion
-  [  0%] IDD_DEVICE_850                   — 850 interface: baud rate
-  [  0%] IDD_DEVICE_AMDC                  — Amdek AMDC-I/II: drives, DIP switches
-  [  0%] IDD_DEVICE_ATR8000               — ATR8000: drives, serial port
-  [  0%] IDD_DEVICE_BLACKBOX              — Black Box: DIP switches, RAM, SCSI
-  [  0%] IDD_DEVICE_COMPUTEREYES          — ComputerEyes: brightness
-  [  0%] IDD_DEVICE_CORVUS               — Corvus interface: controller port
-  [  0%] IDD_DEVICE_COVOX                — Covox: base address, channels
-  [  0%] IDD_DEVICE_CUSTOM               — Custom device: script path, hot reload
-  [  0%] IDD_DEVICE_DISKDRIVEFULL        — Disk drive: drive select
-  [  0%] IDD_DEVICE_DONGLE              — Joystick dongle: port, mapping
-  [  0%] IDD_DEVICE_GENERIC              — Generic device options
-  [  0%] + 11 more device dialogs
+  [100%] IDD_DEVICE_1030MODEM             — 835/1030/XM301/SX212/PocketModem: full network config
+  [100%] IDD_DEVICE_1400XL                — 1400/1450XL modem options (shared modem dialog)
+  [100%] IDD_DEVICE_815                   — 815 disk drive: drive pair + inversion
+  [100%] IDD_DEVICE_850                   — 850 interface: SIO level, throttling, baud rates
+  [100%] IDD_DEVICE_AMDC                  — Amdek AMDC-I/II: drives, DIP switches, external drives
+  [100%] IDD_DEVICE_ATR8000               — ATR8000: drive select + drive types (via Percom)
+  [100%] IDD_DEVICE_BLACKBOX              — Black Box: 8 DIP switches, sector size, RAM
+  [100%] IDD_DEVICE_BLACKBOXFLOPPY        — Black Box Floppy: 4 slots x 3 controls
+  [100%] IDD_DEVICE_COMPUTEREYES          — ComputerEyes: brightness slider
+  [100%] IDD_DEVICE_CORVUS               — Corvus interface: port selection
+  [100%] IDD_DEVICE_COVOX                — Covox: address range + channels
+  [100%] IDD_DEVICE_CUSTOM               — Custom device: path, hot reload, unsafe ops
+  [100%] IDD_DEVICE_DISKDRIVEFULL        — Disk drive full emu (18 types): drive select
+  [100%] IDD_DEVICE_DONGLE              — Joystick dongle: port + hex mapping
+  [100%] IDD_DEVICE_HAPPY810              — Happy 810: drive + auto-speed + RPM slider
+  [100%] IDD_DEVICE_HARDDISK             — Hard Disk: path, CHS geometry, read-only, SSD
+  [100%] IDD_DEVICE_HDVIRTFAT            — Virtual FAT16/32/SDFS: directory path
+  [100%] IDD_DEVICE_KARINMAXIDRIVE        — Karin Maxi Drive: HW version, drives, switches
+  [100%] IDD_DEVICE_KMKJZIDE             — KMK/JZ IDE: device ID + SDX
+  [100%] IDD_DEVICE_KMKJZIDE2            — KMK/JZ IDE v2: revision, ID, SDX, WP, NVRAM
+  [100%] IDD_DEVICE_MODEM                — Generic modem: full network + speed + terminal
+  [100%] IDD_DEVICE_MULTIPLEXER          — Multiplexer: host/client, address, port
+  [100%] IDD_DEVICE_MYIDE2               — MyIDE-II: CPLD version
+  [100%] IDD_DEVICE_NETSERIAL            — Network Serial: connect/listen, addr, port, baud
+  [100%] IDD_DEVICE_PARFILEWRITER        — Parallel File Writer: path + text mode
+  [100%] IDD_DEVICE_PCLINK               — PCLink: path + write + timestamps
+  [100%] IDD_DEVICE_PERCOM               — Percom RFD/AT/ATSPD: FDC type, drive types, ID
+  [100%] IDD_DEVICE_PIPESERIAL           — Pipe Serial: pipe name + baud rate
+  [100%] IDD_DEVICE_PRINTER              — 820/1025/1029: graphics, timing, sound
+  [100%] IDD_DEVICE_PRINTER_HLE          — P: port: translation mode
+  [100%] IDD_DEVICE_1020                 — 1020 Plotter: 4 pen colors
+  [100%] IDD_DEVICE_SIDE3               — SIDE 3: version, LED, recovery
+  [100%] IDD_DEVICE_SOUNDBOARD           — Sound Board: version + base address
+  [100%] IDD_DEVICE_VBXE                — VBXE: core version, base address, shared memory
+  [100%] IDD_DEVICE_VERONICA            — Veronica: V1/V2 version
+  [100%] IDD_DEVICE_VIDEOSTILLIMAGE     — Video Still Image: image path
+  [100%] IDD_DEVICE_XEP80               — XEP-80: joystick port
+  [100%] Generic fallback               — EnumProperties-based editor for unknown devices
 
 
 ================================================================================
@@ -513,28 +607,37 @@ SUMMARY
 
 Category                    Implemented    Total    Coverage
 ------------------------------------------------------------
-Menu items (leaf)             ~110          198       56%
-Standalone dialogs              5           20+      25%
-Configure System pages         20           28       71%
-Config page controls         ~145         ~210       69%
-Device config dialogs           0           25        0%
+Menu items (leaf)             ~120          198       61%
+Standalone dialogs              8           20+      40%
+Configure System pages         25           28       89%
+Config page controls         ~195         ~240       81%
+Device config dialogs          ~40          ~40      ~100%
 Debugger dialogs/panes          0           14        0%
 Input mapping dialogs           0            9        0%
 Color/effects dialogs           1           11        9%
 Misc dialogs                    0           12+       0%
 
-Core daily-use features are well covered: boot, open, disk mount/eject,
-cassette control (incl. export audio), system config, video/audio settings,
-reset, pause, warp speed, console switches, special cartridges, secondary
-cartridges, firmware save, audio/SAP recording, color adjustment, GTIA
-visualization. Menu ordering matches Windows menu_default.txt.
+Core daily-use features are well covered: boot (with full retry loop),
+open, disk mount/eject, cassette control (incl. auto-play + export audio),
+system config (with proper hardware mode switching, kernel/memory
+compatibility validation, conditional cold resets via Ease of Use flags),
+video/audio settings (NTSC50/PAL60, GTIA defect, PAL phase, linear blend,
+mono persistence), reset (with shift key cleanup), pause, warp speed,
+console switches, special cartridges (correct MegaCart mode), secondary
+cartridges, firmware save, audio/SAP/video recording (AVI: Raw/RLE/ZMBV),
+color adjustment, GTIA visualization, tooltips on config pages. Firmware
+page uses combos filtered by hardware mode with [Autoselect]; full Firmware
+Manager dialog with Add/Remove/Settings/Scan/Audit/Set as Default/Use for/
+Clear. All Ease of Use reset flags respected. SIO/CIO accelerator modes,
+Axlon memory, 65C816 high memory, power-on delay all configurable. ~40
+device configuration dialogs (ui_devconfig.cpp) cover all registered device
+types with correct property encoding verified against Windows.
 
 Remaining major areas:
   - Debugger (14+ panes/dialogs)
-  - Input mapping (9 dialogs)
-  - Device configuration (25 dialogs)
+  - Input mapping editor (9 dialogs — list dialog works, per-map editor missing)
   - Screen effects dialog (bloom, HDR, scanlines)
-  - Video recording
-  - Profile management
+  - Tape Editor dialog
+  - Custom keyboard layout editor
   - Rewind functionality
-  - Frame capture/copy
+  - Non-blocking confirmation dialog framework

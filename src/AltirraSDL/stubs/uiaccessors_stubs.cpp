@@ -19,6 +19,8 @@
 #include "uimenu.h"
 #include "uitypes.h"
 #include "simulator.h"
+#include "constants.h"
+#include "settings.h"
 
 extern ATSimulator g_sim;
 #include <at/atui/uimanager.h>
@@ -341,15 +343,150 @@ void ATUIReleaseMouse() {
 // =========================================================================
 
 IATDisplayPane *ATUIGetDisplayPane() { return nullptr; }
-bool ATUISwitchHardwareMode(VDGUIHandle, ATHardwareMode, bool) { return false; }
-void ATUISwitchMemoryMode(VDGUIHandle, ATMemoryMode) {}
+
+// ---------------------------------------------------------------------------
+// ATUISwitchHardwareMode — real implementation matching Windows main.cpp
+//
+// Handles: 5200 mode switching (unload all, default cart, 16K memory),
+// profile switching, incompatible kernel reset, NTSC enforcement for 5200,
+// and cold reset.
+// ---------------------------------------------------------------------------
+bool ATUISwitchHardwareMode(VDGUIHandle h, ATHardwareMode mode, bool switchProfiles) {
+	ATHardwareMode prevMode = g_sim.GetHardwareMode();
+	if (prevMode == mode)
+		return true;
+
+	ATDefaultProfile defaultProfile;
+	switch (mode) {
+		case kATHardwareMode_800:
+			defaultProfile = kATDefaultProfile_800;
+			break;
+		case kATHardwareMode_800XL:
+		case kATHardwareMode_130XE:
+		default:
+			defaultProfile = kATDefaultProfile_XL;
+			break;
+		case kATHardwareMode_5200:
+			defaultProfile = kATDefaultProfile_5200;
+			break;
+		case kATHardwareMode_XEGS:
+			defaultProfile = kATDefaultProfile_XEGS;
+			break;
+		case kATHardwareMode_1200XL:
+			defaultProfile = kATDefaultProfile_1200XL;
+			break;
+	}
+
+	const uint32 oldProfileId = ATSettingsGetCurrentProfileId();
+	const uint32 newProfileId = ATGetDefaultProfileId(defaultProfile);
+	const bool switchingProfile = switchProfiles && (newProfileId != kATProfileId_Invalid && newProfileId != oldProfileId);
+
+	// Switch profile if necessary
+	if (switchingProfile)
+		ATSettingsSwitchProfile(newProfileId);
+
+	// Check if we are switching to or from 5200 mode
+	const bool switching5200 = (mode == kATHardwareMode_5200 || prevMode == kATHardwareMode_5200);
+	if (switching5200) {
+		g_sim.UnloadAll();
+
+		// 5200 mode needs the default cart and 16K memory
+		if (mode == kATHardwareMode_5200) {
+			g_sim.LoadCartridge5200Default();
+			g_sim.SetMemoryMode(kATMemoryMode_16K);
+		}
+	}
+
+	g_sim.SetHardwareMode(mode);
+
+	// Check for incompatible kernel
+	switch (g_sim.GetKernelMode()) {
+		case kATKernelMode_Default:
+			break;
+		case kATKernelMode_XL:
+			if (!kATHardwareModeTraits[mode].mbRunsXLOS)
+				g_sim.SetKernel(0);
+			break;
+		case kATKernelMode_5200:
+			if (mode != kATHardwareMode_5200)
+				g_sim.SetKernel(0);
+			break;
+		default:
+			if (mode == kATHardwareMode_5200)
+				g_sim.SetKernel(0);
+			break;
+	}
+
+	// If we are in 5200 mode, we must be in NTSC
+	if (mode == kATHardwareMode_5200 && g_sim.GetVideoStandard() != kATVideoStandard_NTSC) {
+		g_sim.SetVideoStandard(kATVideoStandard_NTSC);
+		ATUIUpdateSpeedTiming();
+	}
+
+	g_sim.ColdReset();
+	return true;
+}
+
+// ---------------------------------------------------------------------------
+// ATUISwitchMemoryMode — real implementation matching Windows main.cpp
+//
+// Validates memory mode compatibility with hardware mode:
+// - 5200: only 16K allowed
+// - 800XL: no 48K/52K/8K/24K/32K/40K
+// - 1200XL/XEGS/130XE/1400XL: no 48K/52K/8K-40K
+// Cold resets after change.
+// ---------------------------------------------------------------------------
+void ATUISwitchMemoryMode(VDGUIHandle h, ATMemoryMode mode) {
+	if (g_sim.GetMemoryMode() == mode)
+		return;
+
+	switch (g_sim.GetHardwareMode()) {
+		case kATHardwareMode_5200:
+			if (mode != kATMemoryMode_16K)
+				return;
+			break;
+		case kATHardwareMode_800XL:
+			if (mode == kATMemoryMode_48K ||
+				mode == kATMemoryMode_52K ||
+				mode == kATMemoryMode_8K ||
+				mode == kATMemoryMode_24K ||
+				mode == kATMemoryMode_32K ||
+				mode == kATMemoryMode_40K)
+				return;
+			break;
+		case kATHardwareMode_1200XL:
+		case kATHardwareMode_XEGS:
+		case kATHardwareMode_130XE:
+		case kATHardwareMode_1400XL:
+			if (mode == kATMemoryMode_48K ||
+				mode == kATMemoryMode_52K ||
+				mode == kATMemoryMode_8K ||
+				mode == kATMemoryMode_16K ||
+				mode == kATMemoryMode_24K ||
+				mode == kATMemoryMode_32K ||
+				mode == kATMemoryMode_40K)
+				return;
+			break;
+	}
+
+	g_sim.SetMemoryMode(mode);
+	g_sim.ColdReset();
+}
 static bool s_driveSounds = true;
 bool ATUIGetDriveSoundsEnabled() { return s_driveSounds; }
 void ATUISetDriveSoundsEnabled(bool v) { s_driveSounds = v; }
 void ATUIRecalibrateLightPen() {}
 void ATUIActivatePanZoomTool() {}
 void ATUIOpenOnScreenKeyboard() {}
-void ATUIToggleHoldKeys() {}
+static bool s_holdKeysActive = false;
+void ATUIToggleHoldKeys() {
+	s_holdKeysActive = !s_holdKeysActive;
+
+	if (!s_holdKeysActive) {
+		g_sim.ClearPendingHeldKey();
+		g_sim.SetPendingHeldSwitches(0);
+	}
+}
 bool ATUICanManipulateWindows() { return false; }
 bool ATUIIsModalActive() { return false; }
 
@@ -370,7 +507,15 @@ static IATAsyncDispatcher *s_dispatcher = nullptr;
 IATAsyncDispatcher *ATUIGetDispatcher() { return s_dispatcher; }
 void ATUISetDispatcher(IATAsyncDispatcher *d) { s_dispatcher = d; }
 
-void ATSetVideoStandard(ATVideoStandard) {}
+void ATSetVideoStandard(ATVideoStandard vs) {
+	// Matches Windows main.cpp:2644 — set standard + update timing, NO cold reset.
+	// Cold reset is handled separately by the caller via ATUIConfirmResetComplete()
+	// only if kATUIResetFlag_VideoStandardChange is set.
+	if (g_sim.GetHardwareMode() == kATHardwareMode_5200)
+		return;
+	g_sim.SetVideoStandard(vs);
+	ATUIUpdateSpeedTiming();
+}
 
 // ATUIGetManager — return our stub global
 ATUIManager& ATUIGetManager() { return g_ATUIManager; }

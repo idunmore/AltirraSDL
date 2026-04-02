@@ -319,23 +319,24 @@ Note: Windows file sharing semantics (`kDenyRead`, `kDenyWrite`) have no
 exact POSIX equivalent. Use advisory locking via `fcntl(F_SETLK)` where
 needed, but document that enforcement is weaker on Unix.
 
-## Async File I/O (fileasync.h / fileasync.cpp)
+## Async File I/O (fileasync.h / fileasync_sdl3.cpp)
+
+**Status: Implemented.**
 
 `IVDFileAsync` is already a pure virtual interface with a factory function.
-Create a new implementation using SDL3's async I/O:
+The SDL3 implementation (`fileasync_sdl3.cpp`) uses synchronous buffered
+I/O via `VDFile` rather than SDL3's async I/O API.  All `Mode` variants
+behave identically (synchronous).  This is sufficient because the only
+caller is `aviwriter.cpp` (AVI container writing for video recording),
+which performs sequential writes with occasional seeks for header updates.
 
-```cpp
-// fileasync_sdl3.cpp
-// Implements IVDFileAsync using SDL_CreateAsyncIOQueue / SDL_ReadAsyncIO / SDL_WriteAsyncIO
-```
+The implementation provides a 64KB write buffer for the `FastWrite()` path
+and flushes on `FastWriteEnd()` or before random-access `Write()` calls.
+`Extend()` is a no-op (POSIX doesn't need pre-extension).  `Truncate()`
+and `SafeTruncateAndClose()` use `ftruncate()` via `VDFile::truncate()`.
 
-SDL3 async I/O uses io_uring on Linux and IoRing on Windows 11, with a
-thread-pool fallback. This is a good fit for `kModeAsynchronous`. For
-`kModeThreaded`, use a worker thread with synchronous I/O (same pattern as
-the existing Win32 implementation).
-
-The factory function `VDCreateFileAsync()` selects the implementation at
-runtime, so no interface changes are needed.
+The factory function `VDCreateFileAsync()` returns a `VDFileAsyncSDL3`
+instance regardless of the requested mode.
 
 ## Filesystem (filesys.h / filesys.cpp)
 
@@ -484,7 +485,7 @@ pool timer behavior.
 | `src/system/source/thread_sdl3.cpp` | VDThread, VDCriticalSection, VDSignal, VDSemaphore, VDRWLock, VDConditionVariable |
 | `src/system/source/file_sdl3.cpp` | VDFile (POSIX open/read/write/close) |
 | `src/system/source/filesys_sdl3.cpp` | Path operations, directory iteration, filesystem queries |
-| `src/system/source/fileasync_sdl3.cpp` | IVDFileAsync using SDL3 async I/O |
+| `src/system/source/fileasync_sdl3.cpp` | IVDFileAsync using synchronous buffered VDFile I/O |
 | `src/system/source/registry_sdl3.cpp` | IVDRegistryProvider backed by JSON file |
 | `src/ATCore/source/timerserviceimpl_sdl3.h` | IATTimerService using SDL3 timers |
 

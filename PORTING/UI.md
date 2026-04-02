@@ -336,8 +336,14 @@ void RenderDeviceConfig(ATPropertySet& props) {
 total volume (50+ dialogs). Once the first few are done, the rest are
 mechanical.
 
-**Strategy:** Create a helper layer that maps `ATPropertySet` entries
-to ImGui widgets automatically where possible, reducing per-dialog code.
+**Status:** IMPLEMENTED in `ui_devconfig.cpp` (~2,200 lines). All ~40
+registered device config tags have dedicated ImGui dialogs matching
+Windows property encodings. Generic fallback via `EnumProperties()` for
+unknown devices. Property values verified against Windows: 1-based XEP80
+port, MyIDE2 cpldver=2, 815 bit-shifted id, Covox best-match range,
+BlackBox Floppy/Printer HLE enum strings, 850Full per-port baud rates,
+1400XL simplified modem (no speed/SIO/check_rate). Settings button on
+Devices page, dangling-pointer guard on device removal.
 
 ### 4. Disk Management
 
@@ -382,8 +388,11 @@ code but are straightforward with ImGui.
   capture mode, read next SDL event
 - Keyboard layout as visual grid (optional, not essential for MVP)
 
-**Complexity:** MEDIUM. The hot-key capture widget needs special handling
-(modal key capture), but the data structures (`ATInputMap`) are reusable.
+**Status:** IMPLEMENTED in `ui_input.cpp`. Full editor with list dialog,
+create-from-template wizard, per-map edit (controller tree + bindings),
+add/edit/delete controllers and mappings, rebind with keyboard + gamepad
+capture, and Input Setup dialog (dead zones, analog power curves, live
+gamepad visualization). Keyboard layout customization not yet ported.
 
 ### 6. Display Settings
 
@@ -428,10 +437,17 @@ removed (SDL3 picks automatically).
 Lists available firmware by type (OS-A, OS-B, XL, BASIC, etc.), shows
 file paths, allows re-scanning.
 
-**ImGui approach:** List view with add/remove buttons, file dialog for
-browsing.
-
-**Complexity:** LOW-MEDIUM.
+**Status:** IMPLEMENTED in `ui_system.cpp` (firmware manager section,
+~400 lines). Full dialog matching Windows `IDD_FIRMWARE`:
+- Firmware list table with Name, Type, Use for, Default columns
+- Type category filter (Computer/Printers/Disk Drives/Hardware)
+- Internal firmware grayed out (non-editable, non-removable)
+- Add (SDL3 file dialog + `ATFirmwareAutodetect`, thread-safe)
+- Remove, Settings (edit name/type/CRC32/path, OPTION key flag)
+- Scan (directory scan with `VDDirectoryIterator`)
+- Audit (known firmware CRC comparison, ~92 entries, clippered table)
+- Set as Default, Use for... (specific firmware assignment menu)
+- Clear All Custom (with confirmation)
 
 ### 9. Debugger (14 files, ~10,000 lines)
 
@@ -699,16 +715,16 @@ These are required for basic use:
 | Display settings (filter, aspect) | 1 | ~150 | Must have |
 | Audio settings (volume, latency) | 1 | ~100 | Must have |
 | Disk drive management (mount/unmount) | 1 | ~300 | Must have |
-| Firmware manager (ROM paths) | 1 | ~200 | Must have |
+| Firmware manager (ROM paths) | 1 | ~400 | **DONE** |
 | **Tier 1 total** | **~8** | **~1,400** | |
 
 ### Tier 2: Comfortable Usage (Phase 6)
 
 | Component | Files | Est. Lines | Priority |
 |-----------|-------|-----------|----------|
-| Input configuration | 2 | ~500 | High |
+| Input configuration | 1 | ~2700 | **DONE** |
 | Keyboard customization | 1 | ~300 | High |
-| Common device configs (~10 most used) | 10 | ~500 | High |
+| Device configs (~40 dialogs) | 1 | ~2200 | **DONE** |
 | Setup wizard | 1 | ~200 | Medium |
 | Cheat system | 1 | ~100 | Medium |
 | **Tier 2 total** | **~15** | **~1,600** | |
@@ -734,7 +750,7 @@ These are required for basic use:
 
 | Component | Files | Est. Lines | Priority |
 |-----------|-------|-----------|----------|
-| Remaining device configs (~40) | 40 | ~2,000 | As needed |
+| ~~Remaining device configs~~ | -- | -- | **DONE** (ui_devconfig.cpp) |
 | Trace viewer | 1 | ~1,500 | Low |
 | Profiler | 1 | ~300 | Low |
 | Tape editor | 1 | ~800 | Low |
@@ -769,21 +785,18 @@ ImGui at the architectural level, not file-by-file.
 ```
 src/AltirraSDL/
     source/
-        ui_main.cpp          -- Menu bar, top-level orchestration
-        ui_settings.cpp      -- System config, display, audio settings
-        ui_input.cpp         -- Input/keyboard configuration
-        ui_devices.cpp       -- Device config dialogs (all 50+)
-        ui_disk.cpp          -- Disk drive management, disk explorer
-        ui_firmware.cpp      -- Firmware manager
-        ui_debugger.cpp      -- All debugger panes
-        ui_trace.cpp         -- Trace viewer
-        ui_profiler.cpp      -- Profiler
-        ui_tape.cpp          -- Tape editor
-        ui_overlay.cpp       -- Status overlay
-        ui_filebrowser.cpp   -- SDL3 file dialog wrappers
-        ui_helpers.cpp       -- Shared helpers (property set → ImGui)
-    h/
-        ui_state.h           -- Shared UI state (window visibility flags)
+        ui_main.cpp          -- Menu bar, deferred actions, status overlay,
+                                recording, about/changelog/cmdline dialogs
+        ui_main.h            -- ATUIState, deferred action types, declarations
+        ui_system.cpp        -- Configure System (20+ category pages),
+                                Firmware Manager (list/edit/scan/audit)
+        ui_display.cpp       -- Display Settings, Adjust Colors
+        ui_disk.cpp          -- Disk Drives dialog
+        ui_cassette.cpp      -- Cassette Tape Control
+        ui_input.cpp         -- Input Mappings dialog
+        ui_profiles.cpp      -- Profiles dialog
+        ui_cartmapper.cpp    -- Cartridge mapper selection
+        ui_devconfig.cpp     -- Per-device config dialogs (~40 types)
 ```
 
 ## Dependencies

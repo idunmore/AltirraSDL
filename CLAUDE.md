@@ -126,16 +126,9 @@ Detailed documentation lives in `PORTING/`:
 - The Windows `.sln` build is always preserved and must never break
 - SDL3 is the sole platform layer for non-Windows (no raw POSIX, ALSA, etc.)
 - Only two external dependencies: SDL3/SDL3_net and Dear ImGui
-
-**Implementation phases:**
-1. CMake build system (Windows validation)
-2. Header cleanup (`#ifdef` guards)
-3. System library SDL3 implementations
-4. Simulator library extraction
-5. Minimal SDL3 frontend (first pixels)
-6. Dear ImGui UI
-7. Debugger UI
-8. Network and remaining features
+- No stubs, no placeholders. When implementing, do full implementation of functionality, aim to make implementation complete and error free.
+- We need full equivalent implementaiton to Windows Altirra. Don't ommit anything.
+- After implementation, look for errors, bugs, mistakes. Fix if spotted. If some were identified, repeat, because maybe we didn't cover everything properly.
 
 ## Testing
 
@@ -145,12 +138,14 @@ Detailed documentation lives in `PORTING/`:
 
 ## Key Design Notes
 
+- Do not consider anything "lower priority" like Debugger or Tools. We aim for 100% coverage of Windows implementation, so we don't have low priority items.
 - The Windows build uses Win32 API throughout with no external dependencies (statically linked, no redistributables needed).
 - The VD2/VirtualDub2 libraries (Kasumi, Dita, Riza, Tessa, system) are legacy foundations; their headers use the `vd2/` namespace.
 - The `system` library uses `VDStringW` (wchar_t) for all file paths. On non-Windows, `_sdl3.cpp` files convert to UTF-8 at the OS boundary using `VDTextWToU8()` / `VDTextU8ToW()` from `text.h`.
 - Link errors during build usually mean an upstream project failed — always look for the first error.
 - Core emulation libraries (ATCPU, ATEmulation, ATDevices, ATIO, ATNetwork, ATDebugger, ATCompiler, ATVM, Kasumi, vdjson) contain zero Win32 API calls and compile unchanged on any platform once system library headers are cleaned up.
 - **Settings persistence:** The SDL3 build stores settings in `~/.config/altirra/settings.ini` using the same INI format as Windows Altirra's portable mode. `ATRegistryLoadFromDisk()` loads on startup, `ATRegistryFlushToDisk()` saves on exit. The `VDRegistryProviderMemory` provider is the in-memory backing store; `ATUILoadRegistry`/`ATUISaveRegistry` (from `uiregistry.cpp`) handle serialization.
+- Do not claim anything as NICHE, rare use-case. Do not depreciate any functionality implemented in the emulator. The whole emulator is a rare use-case and we aim for 100% compatibiltiy with Windows version.
 
 ## SDL3 Porting Pitfalls
 
@@ -229,6 +224,48 @@ layout).
 3. Do not add options that the Windows version doesn't show in that
    context
 4. Do not omit options that the Windows version does show
+
+### ImGui window positioning: config dialogs vs. debugger panes
+
+Dear ImGui draws everything onto the single SDL window canvas — there
+are no separate OS windows like Win32 `HWND` dialogs.  Saved positions
+in `imgui.ini` are absolute screen coordinates, so a dialog positioned
+in fullscreen can end up outside the visible area after restarting in a
+smaller window.
+
+Windows Altirra avoids this because most dialogs (including Configure
+System) do **not** save their position — they open at the OS default
+(centered on parent) every time.  Only a few tool windows (Firmware
+Manager, File Viewer) persist placement.
+
+The SDL3 build follows the same split:
+
+**Config/modal dialogs** — center on the main window every time they
+open, no position persistence:
+```cpp
+ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_Appearing);
+ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(),
+    ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+ImGui::Begin("Title", &open,
+    flags | ImGuiWindowFlags_NoSavedSettings);
+```
+- `ImGuiCond_Appearing` re-centers each time the dialog goes from
+  closed → open.
+- `ImGuiWindowFlags_NoSavedSettings` prevents `imgui.ini` from storing
+  the position (and from overriding the centering on subsequent opens).
+
+**Debugger/tool panes** — use normal `ImGui::Begin()` without
+`NoSavedSettings`, so `imgui.ini` persists their docked layout across
+sessions.
+
+**Main SDL window** — size, position, and fullscreen state are saved to
+`settings.ini` (under `Window Placement` key) on exit and restored on
+startup.  The windowed-mode geometry is cached on every resize/move
+event so it is preserved even when the user closes from fullscreen.
+
+**Rule:** Every new `ImGui::Begin()` call must follow one of these two
+patterns.  Config dialogs get centering + `NoSavedSettings`; persistent
+tool windows get plain `Begin()`.
 
 ### Understand API state machines before calling methods
 

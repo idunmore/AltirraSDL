@@ -23,9 +23,11 @@
 
 #include "display_sdl3_impl.h"
 #include "input_sdl3.h"
+#include "options.h"
 #include "ui_main.h"
 
 #include "simulator.h"
+#include "uikeyboard.h"
 #include <at/ataudio/audiooutput.h>
 #include "uiaccessors.h"
 #include "inputmanager.h"
@@ -44,6 +46,9 @@ static IATJoystickManager *g_pJoystickMgr = nullptr;
 static bool g_running = true;
 static bool g_winActive = true;
 static ATUIState g_uiState;
+
+// Forward declaration — defined in window placement section below
+void ATUpdateWindowedGeometry(SDL_Window *window);
 
 // =========================================================================
 // Frame pacing — matches Windows main.cpp timing architecture
@@ -133,7 +138,8 @@ static void HandleEvents() {
 		switch (ev.type) {
 		case SDL_EVENT_QUIT:
 		case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
-			g_running = false;
+			if (g_uiState.exitConfirmed || ATUIRequestExit(g_sim, g_uiState))
+				g_running = false;
 			break;
 
 		case SDL_EVENT_KEY_DOWN:
@@ -146,6 +152,9 @@ static void HandleEvents() {
 				if (ev.key.key == SDLK_F5 && (ev.key.mod & SDL_KMOD_SHIFT)) {
 					g_sim.ColdReset();
 					g_sim.Resume();
+					extern ATUIKeyboardOptions g_kbdOpts;
+					if (!g_kbdOpts.mbAllowShiftOnColdReset)
+						g_sim.GetPokey().SetShiftKeyState(false, true);
 				} else if (ev.key.key == SDLK_F5 && !(ev.key.mod & SDL_KMOD_SHIFT)) {
 					g_sim.WarmReset();
 					g_sim.Resume();
@@ -178,6 +187,74 @@ static void HandleEvents() {
 			}
 			break;
 
+		case SDL_EVENT_MOUSE_MOTION:
+			if (!ATUIWantCaptureMouse()) {
+				ATInputManager *im = g_sim.GetInputManager();
+				// Forward motion when captured, or in absolute mode without
+				// auto-capture (matches Windows OnMouseMove line 1400).
+				if (im && (ATUIIsMouseCaptured() ||
+					(!ATUIGetMouseAutoCapture() && im->IsMouseAbsoluteMode())))
+				{
+					if (im->IsMouseAbsoluteMode()) {
+						// Absolute mode: update beam, pad, and virtual stick positions
+						// from window pixel coordinates.
+						int winW, winH;
+						SDL_GetWindowSize(g_pWindow, &winW, &winH);
+
+						float mx = ev.motion.x;
+						float my = ev.motion.y;
+
+						// Pad position: map window area to [-0x10000, +0x10000]
+						if (winW > 1 && winH > 1) {
+							int padX = (int)((mx / (float)(winW - 1)) * 131072.0f - 0x10000);
+							int padY = (int)((my / (float)(winH - 1)) * 131072.0f - 0x10000);
+							im->SetMousePadPos(padX, padY);
+						}
+
+						// Beam position: map pixel to ANTIC beam coordinates.
+						// The texture covers the GTIA scan area; map pixel to
+						// scan area cycles, then normalize.
+						{
+							ATGTIAEmulator& gtia = g_sim.GetGTIA();
+							const vdrect32 scanArea(gtia.GetFrameScanArea());
+
+							float hcyc = (float)scanArea.left
+								+ (mx + 0.5f) * (float)scanArea.width() / (float)winW
+								- 0.5f;
+							float vcyc = (float)scanArea.top
+								+ (my + 0.5f) * (float)scanArea.height() / (float)winH
+								- 0.5f;
+
+							float xn = (hcyc - 128.0f) * (65536.0f / 94.0f);
+							float yn = (vcyc - 128.0f) * (65536.0f / 188.0f);
+
+							im->SetMouseBeamPos((int)xn, (int)yn);
+						}
+
+						// Virtual stick: normalized [-1, +1] with aspect correction
+						if (winW > 1 && winH > 1) {
+							float sizeX = (float)(winW - 1);
+							float sizeY = (float)(winH - 1);
+							float normX = mx / sizeX * 2.0f - 1.0f;
+							float normY = my / sizeY * 2.0f - 1.0f;
+
+							if (sizeX > sizeY)
+								normX *= sizeX / sizeY;
+							else if (sizeY > sizeX)
+								normY *= sizeY / sizeX;
+
+							im->SetMouseVirtualStickPos(
+								(int)(normX * 131072.0f),
+								(int)(normY * 131072.0f));
+						}
+					} else {
+						// Relative mode: forward deltas for paddle/trackball
+						im->OnMouseMove(0, (int)ev.motion.xrel, (int)ev.motion.yrel);
+					}
+				}
+			}
+			break;
+
 		case SDL_EVENT_MOUSE_BUTTON_DOWN:
 			if (!ATUIWantCaptureMouse()) {
 				// Middle-click releases mouse capture when MMB isn't mapped
@@ -197,7 +274,86 @@ static void HandleEvents() {
 					ATUIGetMouseAutoCapture() &&
 					!ATUIIsMouseCaptured()) {
 					ATUICaptureMouse();
+					break;
 				}
+
+				// Forward button to input manager when captured or absolute mode
+				ATInputManager *im = g_sim.GetInputManager();
+				if (im && (ATUIIsMouseCaptured() || im->IsMouseAbsoluteMode())) {
+					// In absolute mode, update position before the button press
+					// (matches Windows OnMouseDown which calls UpdateMousePosition)
+					if (im->IsMouseAbsoluteMode()) {
+						int winW, winH;
+						SDL_GetWindowSize(g_pWindow, &winW, &winH);
+						if (winW > 1 && winH > 1) {
+							float mx = ev.button.x;
+							float my = ev.button.y;
+							int padX = (int)((mx / (float)(winW - 1)) * 131072.0f - 0x10000);
+							int padY = (int)((my / (float)(winH - 1)) * 131072.0f - 0x10000);
+							im->SetMousePadPos(padX, padY);
+
+							ATGTIAEmulator& gtia = g_sim.GetGTIA();
+							const vdrect32 scanArea(gtia.GetFrameScanArea());
+							float hcyc = (float)scanArea.left + (mx + 0.5f) * (float)scanArea.width() / (float)winW - 0.5f;
+							float vcyc = (float)scanArea.top + (my + 0.5f) * (float)scanArea.height() / (float)winH - 0.5f;
+							im->SetMouseBeamPos((int)((hcyc - 128.0f) * (65536.0f / 94.0f)),
+								(int)((vcyc - 128.0f) * (65536.0f / 188.0f)));
+						}
+					}
+
+					uint32 code = 0;
+					switch (ev.button.button) {
+						case SDL_BUTTON_LEFT:   code = kATInputCode_MouseLMB; break;
+						case SDL_BUTTON_MIDDLE: code = kATInputCode_MouseMMB; break;
+						case SDL_BUTTON_RIGHT:  code = kATInputCode_MouseRMB; break;
+						case SDL_BUTTON_X1:     code = kATInputCode_MouseX1B; break;
+						case SDL_BUTTON_X2:     code = kATInputCode_MouseX2B; break;
+					}
+					if (code)
+						im->OnButtonDown(0, code);
+				}
+			}
+			break;
+
+		case SDL_EVENT_MOUSE_BUTTON_UP:
+			if (!ATUIWantCaptureMouse()) {
+				ATInputManager *im = g_sim.GetInputManager();
+				if (im && (ATUIIsMouseCaptured() || im->IsMouseAbsoluteMode())) {
+					uint32 code = 0;
+					switch (ev.button.button) {
+						case SDL_BUTTON_LEFT:   code = kATInputCode_MouseLMB; break;
+						case SDL_BUTTON_MIDDLE: code = kATInputCode_MouseMMB; break;
+						case SDL_BUTTON_RIGHT:  code = kATInputCode_MouseRMB; break;
+						case SDL_BUTTON_X1:     code = kATInputCode_MouseX1B; break;
+						case SDL_BUTTON_X2:     code = kATInputCode_MouseX2B; break;
+					}
+					if (code)
+						im->OnButtonUp(0, code);
+				}
+			}
+			break;
+
+		case SDL_EVENT_MOUSE_WHEEL:
+			// Mouse wheel is always forwarded to input manager (matches
+			// Windows which doesn't require capture for wheel events).
+			if (!ATUIWantCaptureMouse()) {
+				ATInputManager *im = g_sim.GetInputManager();
+				if (im) {
+					if (ev.wheel.y != 0)
+						im->OnMouseWheel(0, ev.wheel.y);
+					if (ev.wheel.x != 0)
+						im->OnMouseHWheel(0, ev.wheel.x);
+				}
+			}
+			break;
+
+		case SDL_EVENT_WINDOW_MOUSE_LEAVE:
+			// Reset virtual stick to center when mouse leaves window
+			// (matches Windows OnMouseLeave)
+			{
+				ATInputManager *im = g_sim.GetInputManager();
+				if (im)
+					im->SetMouseVirtualStickPos(0, 0);
 			}
 			break;
 
@@ -216,17 +372,19 @@ static void HandleEvents() {
 		case SDL_EVENT_DROP_FILE: {
 			const char *file = ev.drop.data;
 			if (file) {
-				VDStringW widePath = VDTextU8ToW(file, -1);
-				ATImageLoadContext ctx {};
-				if (g_sim.Load(widePath.c_str(), kATMediaWriteMode_VRWSafe, &ctx)) {
-					ATAddMRU(widePath.c_str());
-					g_sim.ColdReset();
-					g_sim.Resume();
-				} else
-					fprintf(stderr, "Warning: Could not load dropped file '%s'\n", file);
+				// If firmware manager is open, route drop there (matches Windows OnDropFiles)
+				if (!ATUIFirmwareManagerHandleDrop(file)) {
+					// Otherwise boot image (matches Windows drag-and-drop behavior)
+					ATUIPushDeferred(kATDeferred_BootImage, file);
+				}
 			}
 			break;
 		}
+
+		case SDL_EVENT_WINDOW_RESIZED:
+		case SDL_EVENT_WINDOW_MOVED:
+			ATUpdateWindowedGeometry(g_pWindow);
+			break;
 
 		case SDL_EVENT_WINDOW_FOCUS_GAINED:
 			g_winActive = true;
@@ -236,6 +394,17 @@ static void HandleEvents() {
 			g_winActive = false;
 			// Release all held keys/buttons to prevent stuck input
 			ATInputSDL3_ReleaseAllKeys();
+			// Release held mouse buttons in input manager
+			{
+				ATInputManager *im = g_sim.GetInputManager();
+				if (im) {
+					im->OnButtonUp(0, kATInputCode_MouseLMB);
+					im->OnButtonUp(0, kATInputCode_MouseMMB);
+					im->OnButtonUp(0, kATInputCode_MouseRMB);
+					im->OnButtonUp(0, kATInputCode_MouseX1B);
+					im->OnButtonUp(0, kATInputCode_MouseX2B);
+				}
+			}
 			// Release mouse capture on focus loss
 			ATUIReleaseMouse();
 			break;
@@ -312,6 +481,63 @@ static void UpdatePacerRate() {
 }
 
 // =========================================================================
+// Window placement persistence
+// =========================================================================
+
+// Cache the last windowed-mode geometry so we can save it even when
+// the window is currently fullscreen (SDL3 doesn't expose the "normal"
+// placement the way Win32 GetWindowPlacement does).
+static int s_lastWindowedX = 0;
+static int s_lastWindowedY = 0;
+static int s_lastWindowedW = 0;
+static int s_lastWindowedH = 0;
+
+void ATUpdateWindowedGeometry(SDL_Window *window) {
+	if ((SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) == 0) {
+		SDL_GetWindowPosition(window, &s_lastWindowedX, &s_lastWindowedY);
+		SDL_GetWindowSize(window, &s_lastWindowedW, &s_lastWindowedH);
+	}
+}
+
+static void ATSaveWindowPlacement(SDL_Window *window) {
+	// Capture current windowed geometry one last time before saving
+	ATUpdateWindowedGeometry(window);
+
+	VDRegistryAppKey key("Window Placement", true);
+
+	bool fullscreen = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
+	key.setBool("Fullscreen", fullscreen);
+
+	if (s_lastWindowedW > 0 && s_lastWindowedH > 0) {
+		key.setInt("X", s_lastWindowedX);
+		key.setInt("Y", s_lastWindowedY);
+		key.setInt("Width", s_lastWindowedW);
+		key.setInt("Height", s_lastWindowedH);
+	}
+}
+
+static void ATRestoreWindowPlacement(SDL_Window *window) {
+	VDRegistryAppKey key("Window Placement", false);
+
+	int w = key.getInt("Width", 0);
+	int h = key.getInt("Height", 0);
+
+	if (w > 0 && h > 0) {
+		SDL_SetWindowSize(window, w, h);
+
+		int x = key.getInt("X", SDL_WINDOWPOS_CENTERED);
+		int y = key.getInt("Y", SDL_WINDOWPOS_CENTERED);
+		SDL_SetWindowPosition(window, x, y);
+	}
+
+	// Seed the cached windowed geometry before entering fullscreen
+	ATUpdateWindowedGeometry(window);
+
+	if (key.getBool("Fullscreen", false))
+		SDL_SetWindowFullscreen(window, true);
+}
+
+// =========================================================================
 // Main
 // =========================================================================
 
@@ -332,6 +558,9 @@ int main(int argc, char *argv[]) {
 	const int kScale = 2;
 	g_pWindow = SDL_CreateWindow("AltirraSDL", 384*kScale, 240*kScale, SDL_WINDOW_RESIZABLE);
 	if (!g_pWindow) { fprintf(stderr, "CreateWindow: %s\n", SDL_GetError()); SDL_Quit(); return 1; }
+
+	// Restore saved window size, position, and fullscreen state
+	ATRestoreWindowPlacement(g_pWindow);
 
 	g_pRenderer = SDL_CreateRenderer(g_pWindow, nullptr);
 	if (!g_pRenderer) { fprintf(stderr, "CreateRenderer: %s\n", SDL_GetError()); SDL_DestroyWindow(g_pWindow); SDL_Quit(); return 1; }
@@ -393,14 +622,13 @@ int main(int argc, char *argv[]) {
 	g_sim.GetAudioOutput()->InitNativeAudio();
 
 	if (argc > 1) {
-		VDStringW widePath = VDTextU8ToW(argv[1], -1);
-		ATImageLoadContext ctx {};
-		if (!g_sim.Load(widePath.c_str(), kATMediaWriteMode_RO, &ctx))
-			fprintf(stderr, "Warning: Could not load '%s'\n", argv[1]);
+		// Push as deferred boot action so it goes through the full retry loop
+		// with hardware mode auto-switching, BASIC conflict detection, etc.
+		ATUIPushDeferred(kATDeferred_BootImage, argv[1]);
+	} else {
+		g_sim.ColdReset();
+		g_sim.Resume();
 	}
-
-	g_sim.ColdReset();
-	g_sim.Resume();
 
 	g_pacer.Init();
 	UpdatePacerRate();
@@ -495,6 +723,9 @@ int main(int argc, char *argv[]) {
 
 	// Release mouse capture before shutdown
 	ATUIReleaseMouse();
+
+	// Save window placement before shutdown
+	ATSaveWindowPlacement(g_pWindow);
 
 	// Save settings before shutdown
 	extern void ATRegistryFlushToDisk();

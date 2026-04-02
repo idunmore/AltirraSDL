@@ -23,6 +23,7 @@
 #include "gtia.h"
 #include "simulator.h"
 #include "uiaccessors.h"
+#include "uikeyboard.h"
 
 // -------------------------------------------------------------------------
 // SDL scancode → Atari KBCODE mapping (POKEY direct path)
@@ -92,11 +93,8 @@ static uint8 SDLScancodeToAtari(SDL_Scancode sc, bool shift, bool ctrl) {
 	case SDL_SCANCODE_TAB:     return 0x2C;
 	case SDL_SCANCODE_ESCAPE:  return 0x1C;
 
-	// Function keys → Atari function keys
-	case SDL_SCANCODE_F1:      return 0x03;
-	case SDL_SCANCODE_F2:      return 0x04;
-	case SDL_SCANCODE_F3:      return 0x06;
-	case SDL_SCANCODE_F6:      return 0x11;   // Atari Help key (XL/XE) — matches Windows mapping
+	// F6 = Atari Help key (XL/XE) — always available
+	case SDL_SCANCODE_F6:      return 0x11;
 	case SDL_SCANCODE_DELETE:  return 0x34;
 
 	case SDL_SCANCODE_CAPSLOCK:  return 0x3C;
@@ -259,7 +257,13 @@ public:
 			g_sim.GetGTIA().SetConsoleSwitch(0x04, state);
 			break;
 		case kATInputTrigger_ColdReset:
-			if (state) { g_sim.ColdReset(); g_sim.Resume(); }
+			if (state) {
+				extern ATUIKeyboardOptions g_kbdOpts;
+				g_sim.ColdReset();
+				g_sim.Resume();
+				if (!g_kbdOpts.mbAllowShiftOnColdReset)
+					g_sim.GetPokey().SetShiftKeyState(false, true);
+			}
 			break;
 		case kATInputTrigger_WarmReset:
 			if (state) { g_sim.WarmReset(); g_sim.Resume(); }
@@ -297,9 +301,17 @@ void ATInputSDL3_Init(ATPokeyEmulator *pokey, ATInputManager *inputMgr, ATGTIAEm
 // buttons, not keyboard keys.  They must be held (down on press, up on
 // release) for proper behavior.
 //
-// F2 = Start, F3 = Select, F4 = Option — matches Windows Altirra defaults.
+// F2 = Start, F3 = Select, F4 = Option — but only when function keys
+// are NOT enabled (mbEnableFunctionKeys).  When function keys are enabled,
+// F1-F4 map to Atari 1200XL function keys instead (handled via POKEY path).
 static bool HandleConsoleSwitch(SDL_Scancode sc, bool down) {
 	if (!g_inputState.mpGTIA)
+		return false;
+
+	// When 1200XL function keys are enabled, F2/F3/F4 are Atari keys,
+	// not console switches.  Let them fall through to the POKEY path.
+	extern ATUIKeyboardOptions g_kbdOpts;
+	if (g_kbdOpts.mbEnableFunctionKeys)
 		return false;
 
 	switch (sc) {
@@ -318,16 +330,53 @@ static bool HandleConsoleSwitch(SDL_Scancode sc, bool down) {
 }
 
 void ATInputSDL3_HandleKeyDown(const SDL_KeyboardEvent& ev) {
+	extern ATUIKeyboardOptions g_kbdOpts;
+	const bool alt = (ev.mod & SDL_KMOD_ALT) != 0;
+
+	// Path 1: Route through ATInputManager for input mapping FIRST.
+	// Windows only sends to input manager when Alt is NOT held (line 2222)
+	// to prevent Alt+key shortcuts from triggering input mappings.
+	bool consumedByInputMap = false;
+	if (g_inputState.mpInputManager && !alt) {
+		uint32 inputCode = SDLScancodeToInputCode(ev.scancode);
+		if (inputCode != kATInputCode_None) {
+			// Always send to input manager (it may or may not have a mapping).
+			// If the key IS mapped and overlap is disabled, consume it —
+			// don't send to POKEY or console switches (matches Windows).
+			bool mapped = g_inputState.mpInputManager->IsInputMapped(0, inputCode);
+			g_inputState.mpInputManager->OnButtonDown(0, inputCode);
+			if (mapped && !g_kbdOpts.mbAllowInputMapOverlap)
+				consumedByInputMap = true;
+		}
+	}
+
+	if (consumedByInputMap)
+		return;
+
 	// Console switches (F2=Start, F3=Select, F4=Option)
+	// When mbEnableFunctionKeys is on, HandleConsoleSwitch returns false
+	// and F2/F3/F4 fall through to the function key POKEY path below.
 	if (HandleConsoleSwitch(ev.scancode, true))
 		return;
 
-	// Path 1: Route through ATInputManager for input mapping
-	// (arrow keys as joystick, etc.)
-	if (g_inputState.mpInputManager) {
-		uint32 inputCode = SDLScancodeToInputCode(ev.scancode);
-		if (inputCode != kATInputCode_None)
-			g_inputState.mpInputManager->OnButtonDown(0, inputCode);
+	// 1200XL function keys (F1-F4) — only when mbEnableFunctionKeys is ON.
+	if (g_kbdOpts.mbEnableFunctionKeys && g_inputState.mpPokey) {
+		uint8 fkeyCode = 0xFF;
+		switch (ev.scancode) {
+		case SDL_SCANCODE_F1: fkeyCode = 0x03; break;
+		case SDL_SCANCODE_F2: fkeyCode = 0x04; break;
+		case SDL_SCANCODE_F3: fkeyCode = 0x13; break;
+		case SDL_SCANCODE_F4: fkeyCode = 0x14; break;
+		default: break;
+		}
+		if (fkeyCode != 0xFF) {
+			bool shift = (ev.mod & SDL_KMOD_SHIFT) != 0;
+			bool ctrl  = (ev.mod & SDL_KMOD_CTRL) != 0;
+			if (ctrl)  fkeyCode |= 0x80;
+			if (shift) fkeyCode |= 0x40;
+			g_inputState.mpPokey->PushKey(fkeyCode, ev.repeat, true, false, true);
+			return;
+		}
 	}
 
 	// Path 2: Direct POKEY path for Atari keyboard typing
@@ -342,6 +391,33 @@ void ATInputSDL3_HandleKeyDown(const SDL_KeyboardEvent& ev) {
 		return;
 	}
 
+	// Exclude Ctrl/Shift from POKEY path when they're input-mapped.
+	// This prevents e.g. Left Ctrl (joystick fire) from also activating
+	// Atari Ctrl.  Matches Windows ExcludeMappedCtrlShiftState().
+	if (g_inputState.mpInputManager && !g_kbdOpts.mbAllowInputMapModifierOverlap) {
+		if (shift) {
+			bool lshiftBound = g_inputState.mpInputManager->IsInputMapped(0, kATInputCode_KeyLShift);
+			bool rshiftBound = g_inputState.mpInputManager->IsInputMapped(0, kATInputCode_KeyRShift);
+			if (lshiftBound || rshiftBound) {
+				// Shift is only considered held if an UN-mapped shift key is down.
+				// SDL3 doesn't tell us which shift key is held in the mod flags,
+				// so check individual scancodes via SDL_GetKeyboardState.
+				const bool *keys = SDL_GetKeyboardState(nullptr);
+				shift = (!lshiftBound && keys[SDL_SCANCODE_LSHIFT])
+					 || (!rshiftBound && keys[SDL_SCANCODE_RSHIFT]);
+			}
+		}
+		if (ctrl) {
+			bool lctrlBound = g_inputState.mpInputManager->IsInputMapped(0, kATInputCode_KeyLControl);
+			bool rctrlBound = g_inputState.mpInputManager->IsInputMapped(0, kATInputCode_KeyRControl);
+			if (lctrlBound || rctrlBound) {
+				const bool *keys = SDL_GetKeyboardState(nullptr);
+				ctrl = (!lctrlBound && keys[SDL_SCANCODE_LCTRL])
+					|| (!rctrlBound && keys[SDL_SCANCODE_RCTRL]);
+			}
+		}
+	}
+
 	// Update POKEY shift/ctrl register state (important for software that
 	// reads these independently of key presses, e.g. raw keyboard mode)
 	g_inputState.mpPokey->SetShiftKeyState(shift, true);
@@ -353,20 +429,20 @@ void ATInputSDL3_HandleKeyDown(const SDL_KeyboardEvent& ev) {
 	if (ctrl)  atariCode |= 0x80;
 	if (shift) atariCode |= 0x40;
 
-	g_inputState.mpPokey->PushKey(atariCode, false, true, false, true);
+	g_inputState.mpPokey->PushKey(atariCode, ev.repeat, true, false, true);
 }
 
 void ATInputSDL3_HandleKeyUp(const SDL_KeyboardEvent& ev) {
-	// Console switches
-	if (HandleConsoleSwitch(ev.scancode, false))
-		return;
-
-	// Route key release through ATInputManager
+	// Release through ATInputManager FIRST (matches Windows ProcessKeyUp
+	// which releases input-mapped keys before handling console switches).
 	if (g_inputState.mpInputManager) {
 		uint32 inputCode = SDLScancodeToInputCode(ev.scancode);
 		if (inputCode != kATInputCode_None)
 			g_inputState.mpInputManager->OnButtonUp(0, inputCode);
 	}
+
+	// Console switches
+	HandleConsoleSwitch(ev.scancode, false);
 }
 
 void ATInputSDL3_ReleaseAllKeys() {
@@ -377,9 +453,13 @@ void ATInputSDL3_ReleaseAllKeys() {
 		g_inputState.mpInputManager->ReleaseButtons(0, kATInputCode_JoyClass - 1);
 
 	// Release shift/ctrl/raw keys in POKEY
+	// ReleaseAllRawKeys ensures raw keyboard keys don't stick on focus loss
+	// (matches Windows OnForceKeysUp)
+	extern ATUIKeyboardOptions g_kbdOpts;
 	if (g_inputState.mpPokey) {
-		g_inputState.mpPokey->SetShiftKeyState(false, true);
+		g_inputState.mpPokey->SetShiftKeyState(false, !g_kbdOpts.mbFullRawKeys);
 		g_inputState.mpPokey->SetControlKeyState(false);
+		g_inputState.mpPokey->ReleaseAllRawKeys(!g_kbdOpts.mbFullRawKeys);
 	}
 
 	// Release console switches

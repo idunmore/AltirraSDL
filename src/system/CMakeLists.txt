@@ -61,6 +61,7 @@ else()
         source/debug_sdl3.cpp
         source/error_sdl3.cpp
         source/file_sdl3.cpp
+        source/fileasync_sdl3.cpp
         source/filesys_sdl3.cpp
         source/registry_sdl3.cpp
         source/text_sdl3.cpp

@@ -22,6 +22,7 @@ set(CMAKE_DEPENDS_DEPENDENCY_FILES
   "/home/ilm/Documents/GitHub/AltirraSDL/src/system/source/error_sdl3.cpp" "src/system/CMakeFiles/system.dir/source/error_sdl3.cpp.o" "gcc" "src/system/CMakeFiles/system.dir/source/error_sdl3.cpp.o.d"
   "/home/ilm/Documents/GitHub/AltirraSDL/src/system/source/event.cpp" "src/system/CMakeFiles/system.dir/source/event.cpp.o" "gcc" "src/system/CMakeFiles/system.dir/source/event.cpp.o.d"
   "/home/ilm/Documents/GitHub/AltirraSDL/src/system/source/file_sdl3.cpp" "src/system/CMakeFiles/system.dir/source/file_sdl3.cpp.o" "gcc" "src/system/CMakeFiles/system.dir/source/file_sdl3.cpp.o.d"
+  "/home/ilm/Documents/GitHub/AltirraSDL/src/system/source/fileasync_sdl3.cpp" "src/system/CMakeFiles/system.dir/source/fileasync_sdl3.cpp.o" "gcc" "src/system/CMakeFiles/system.dir/source/fileasync_sdl3.cpp.o.d"
   "/home/ilm/Documents/GitHub/AltirraSDL/src/system/source/filestream.cpp" "src/system/CMakeFiles/system.dir/source/filestream.cpp.o" "gcc" "src/system/CMakeFiles/system.dir/source/filestream.cpp.o.d"
   "/home/ilm/Documents/GitHub/AltirraSDL/src/system/source/filesys_sdl3.cpp" "src/system/CMakeFiles/system.dir/source/filesys_sdl3.cpp.o" "gcc" "src/system/CMakeFiles/system.dir/source/filesys_sdl3.cpp.o.d"
   "/home/ilm/Documents/GitHub/AltirraSDL/src/system/source/function.cpp" "src/system/CMakeFiles/system.dir/source/function.cpp.o" "gcc" "src/system/CMakeFiles/system.dir/source/function.cpp.o.d"

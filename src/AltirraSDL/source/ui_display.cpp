@@ -10,6 +10,7 @@
 #include "gtia.h"
 #include "uiaccessors.h"
 #include "uitypes.h"
+#include <vd2/system/text.h>
 
 extern ATSimulator g_sim;
 
@@ -36,8 +37,9 @@ static const char *kStretchLabels[] = {
 };
 
 void ATUIRenderDisplaySettings(ATSimulator &sim, ATUIState &state) {
-	ImGui::SetNextWindowSize(ImVec2(400, 340), ImGuiCond_FirstUseEver);
-	if (!ImGui::Begin("Display Settings", &state.showDisplaySettings)) {
+	ImGui::SetNextWindowSize(ImVec2(400, 340), ImGuiCond_Appearing);
+	ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+	if (!ImGui::Begin("Display Settings", &state.showDisplaySettings, ImGuiWindowFlags_NoSavedSettings)) {
 		ImGui::End();
 		return;
 	}
@@ -107,8 +109,9 @@ static bool SliderDegrees(const char *label, float *v, float vmin, float vmax) {
 }
 
 void ATUIRenderAdjustColors(ATSimulator &sim, ATUIState &state) {
-	ImGui::SetNextWindowSize(ImVec2(480, 600), ImGuiCond_FirstUseEver);
-	if (!ImGui::Begin("Adjust Colors", &state.showAdjustColors)) {
+	ImGui::SetNextWindowSize(ImVec2(480, 600), ImGuiCond_Appearing);
+	ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+	if (!ImGui::Begin("Adjust Colors", &state.showAdjustColors, ImGuiWindowFlags_NoSavedSettings)) {
 		ImGui::End();
 		return;
 	}
@@ -121,6 +124,35 @@ void ATUIRenderAdjustColors(ATSimulator &sim, ATUIState &state) {
 	ATNamedColorParams *params = isPAL ? &settings.mPALParams : &settings.mNTSCParams;
 
 	bool changed = false;
+
+	// Preset selection
+	{
+		uint32 presetCount = ATGetColorPresetCount();
+		sint32 curPresetIdx = -1;
+		if (!params->mPresetTag.empty())
+			curPresetIdx = ATGetColorPresetIndexByTag(params->mPresetTag.c_str());
+
+		// Build display: "(Custom)" + all presets
+		int comboIdx = (curPresetIdx >= 0) ? (curPresetIdx + 1) : 0;
+		VDStringA curLabel = (comboIdx == 0) ? VDStringA("(Custom)")
+			: VDTextWToU8(VDStringW(ATGetColorPresetNameByIndex(curPresetIdx)));
+		if (ImGui::BeginCombo("Preset", curLabel.c_str())) {
+			if (ImGui::Selectable("(Custom)", comboIdx == 0))
+				comboIdx = 0;
+			for (uint32 i = 0; i < presetCount; ++i) {
+				VDStringA name = VDTextWToU8(VDStringW(ATGetColorPresetNameByIndex(i)));
+				bool selected = ((int)i + 1 == comboIdx);
+				if (ImGui::Selectable(name.c_str(), selected)) {
+					ATColorParams preset = ATGetColorPresetByIndex(i);
+					params->mPresetTag = ATGetColorPresetTagByIndex(i);
+					// Copy preset values to current params, preserving non-preset fields
+					(ATColorParams &)*params = preset;
+					changed = true;
+				}
+			}
+			ImGui::EndCombo();
+		}
+	}
 
 	// Shared NTSC/PAL toggle
 	{

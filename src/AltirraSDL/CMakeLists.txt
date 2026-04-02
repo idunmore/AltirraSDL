@@ -51,12 +51,20 @@ add_executable(AltirraSDL
     source/input_sdl3.cpp
     source/joystick_sdl3.cpp
 
+    # Video recording (AVI: Raw/RLE/ZMBV)
+    source/videowriter_sdl3.cpp
+    ${CMAKE_SOURCE_DIR}/src/Altirra/source/aviwriter.cpp
+
     # Dear ImGui UI
     source/ui_main.cpp
+    source/ui_cartmapper.cpp
     source/ui_system.cpp
     source/ui_disk.cpp
     source/ui_cassette.cpp
     source/ui_display.cpp
+    source/ui_input.cpp
+    source/ui_profiles.cpp
+    source/ui_devconfig.cpp
 
     # Registry persistence (filtered out by ui* regex, so add explicitly)
     ${CMAKE_SOURCE_DIR}/src/Altirra/source/uiregistry.cpp

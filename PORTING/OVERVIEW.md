@@ -166,6 +166,7 @@ build system file.
 | `src/system/source/*_sdl3.cpp` | SDL3 implementations of system library (thread, file, filesys, fileasync, registry) |
 | `src/ATAudio/source/audiooutput_sdl3.cpp` | SDL3 audio output implementing `IATAudioOutput` |
 | `src/ATNetworkSockets/source/*_sdl3.cpp` | SDL3_net socket implementation |
+| `src/AltirraSDL/source/videowriter_sdl3.cpp` | Portable video recording (Raw/RLE/ZMBV AVI via aviwriter.cpp) |
 | `src/AltirraSDL/` | New frontend project with SDL3 main loop, Dear ImGui UI, SDL3 display, SDL3 input |
 | `CMakeLists.txt` | CMake build system for cross-platform compilation |
 

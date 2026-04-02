@@ -466,6 +466,30 @@ source/file_sdl3.cpp.s:
 	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/system/CMakeFiles/system.dir/build.make src/system/CMakeFiles/system.dir/source/file_sdl3.cpp.s
 .PHONY : source/file_sdl3.cpp.s
 
+source/fileasync_sdl3.o: source/fileasync_sdl3.cpp.o
+.PHONY : source/fileasync_sdl3.o
+
+# target to build an object file
+source/fileasync_sdl3.cpp.o:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/system/CMakeFiles/system.dir/build.make src/system/CMakeFiles/system.dir/source/fileasync_sdl3.cpp.o
+.PHONY : source/fileasync_sdl3.cpp.o
+
+source/fileasync_sdl3.i: source/fileasync_sdl3.cpp.i
+.PHONY : source/fileasync_sdl3.i
+
+# target to preprocess a source file
+source/fileasync_sdl3.cpp.i:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/system/CMakeFiles/system.dir/build.make src/system/CMakeFiles/system.dir/source/fileasync_sdl3.cpp.i
+.PHONY : source/fileasync_sdl3.cpp.i
+
+source/fileasync_sdl3.s: source/fileasync_sdl3.cpp.s
+.PHONY : source/fileasync_sdl3.s
+
+# target to generate assembly for a file
+source/fileasync_sdl3.cpp.s:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/system/CMakeFiles/system.dir/build.make src/system/CMakeFiles/system.dir/source/fileasync_sdl3.cpp.s
+.PHONY : source/fileasync_sdl3.cpp.s
+
 source/filestream.o: source/filestream.cpp.o
 .PHONY : source/filestream.o
 
@@ -1117,6 +1141,9 @@ help:
 	@echo "... source/file_sdl3.o"
 	@echo "... source/file_sdl3.i"
 	@echo "... source/file_sdl3.s"
+	@echo "... source/fileasync_sdl3.o"
+	@echo "... source/fileasync_sdl3.i"
+	@echo "... source/fileasync_sdl3.s"
 	@echo "... source/filestream.o"
 	@echo "... source/filestream.i"
 	@echo "... source/filestream.s"

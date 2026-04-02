@@ -256,7 +256,7 @@ use `#if VD_OS_WINDOWS` only when a single file must handle both platforms
 | system/thread | `thread.cpp` | `thread.cpp` (cross-platform via `#ifdef`) |
 | system/file | `file.cpp` | `file_sdl3.cpp` |
 | system/filesys | `filesys.cpp` | `filesys_sdl3.cpp` |
-| system/fileasync | `fileasync.cpp` | *(not compiled — not needed)* |
+| system/fileasync | `fileasync.cpp` | `fileasync_sdl3.cpp` (sync buffered I/O for AVI writing) |
 | system/registry | `registry.cpp` | `registry_sdl3.cpp` |
 | system/text | `text.cpp` | `text_sdl3.cpp` (wchar_t encoding) |
 | system/date | `date.cpp` | `date_sdl3.cpp` |
@@ -327,7 +327,9 @@ From `src/Altirra/source/`, the non-UI files needed by any frontend:
 - Other emulation-support files
 
 Exclude: All `ui*.cpp`, `main.cpp`, `uidbg*.cpp`, `oshelper.cpp`,
-`joystick.cpp` (Win32 joystick), `videowriter.cpp`, `console.cpp`.
+`joystick.cpp` (Win32 joystick), `videowriter.cpp` (replaced by
+`videowriter_sdl3.cpp`), `console.cpp`. Note: `aviwriter.cpp` is
+included explicitly — it is platform-portable (uses `IVDFileAsync`).
 
 ## Kernel ROM
 

@@ -754,6 +754,30 @@ __/Altirra/source/autosavemanager.cpp.s:
 	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/__/Altirra/source/autosavemanager.cpp.s
 .PHONY : __/Altirra/source/autosavemanager.cpp.s
 
+__/Altirra/source/aviwriter.o: __/Altirra/source/aviwriter.cpp.o
+.PHONY : __/Altirra/source/aviwriter.o
+
+# target to build an object file
+__/Altirra/source/aviwriter.cpp.o:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/__/Altirra/source/aviwriter.cpp.o
+.PHONY : __/Altirra/source/aviwriter.cpp.o
+
+__/Altirra/source/aviwriter.i: __/Altirra/source/aviwriter.cpp.i
+.PHONY : __/Altirra/source/aviwriter.i
+
+# target to preprocess a source file
+__/Altirra/source/aviwriter.cpp.i:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/__/Altirra/source/aviwriter.cpp.i
+.PHONY : __/Altirra/source/aviwriter.cpp.i
+
+__/Altirra/source/aviwriter.s: __/Altirra/source/aviwriter.cpp.s
+.PHONY : __/Altirra/source/aviwriter.s
+
+# target to generate assembly for a file
+__/Altirra/source/aviwriter.cpp.s:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/__/Altirra/source/aviwriter.cpp.s
+.PHONY : __/Altirra/source/aviwriter.cpp.s
+
 __/Altirra/source/bit3.o: __/Altirra/source/bit3.cpp.o
 .PHONY : __/Altirra/source/bit3.o
 
@@ -4738,6 +4762,30 @@ source/main_sdl3.cpp.s:
 	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/main_sdl3.cpp.s
 .PHONY : source/main_sdl3.cpp.s
 
+source/ui_cartmapper.o: source/ui_cartmapper.cpp.o
+.PHONY : source/ui_cartmapper.o
+
+# target to build an object file
+source/ui_cartmapper.cpp.o:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/ui_cartmapper.cpp.o
+.PHONY : source/ui_cartmapper.cpp.o
+
+source/ui_cartmapper.i: source/ui_cartmapper.cpp.i
+.PHONY : source/ui_cartmapper.i
+
+# target to preprocess a source file
+source/ui_cartmapper.cpp.i:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/ui_cartmapper.cpp.i
+.PHONY : source/ui_cartmapper.cpp.i
+
+source/ui_cartmapper.s: source/ui_cartmapper.cpp.s
+.PHONY : source/ui_cartmapper.s
+
+# target to generate assembly for a file
+source/ui_cartmapper.cpp.s:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/ui_cartmapper.cpp.s
+.PHONY : source/ui_cartmapper.cpp.s
+
 source/ui_cassette.o: source/ui_cassette.cpp.o
 .PHONY : source/ui_cassette.o
 
@@ -4761,6 +4809,30 @@ source/ui_cassette.s: source/ui_cassette.cpp.s
 source/ui_cassette.cpp.s:
 	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/ui_cassette.cpp.s
 .PHONY : source/ui_cassette.cpp.s
+
+source/ui_devconfig.o: source/ui_devconfig.cpp.o
+.PHONY : source/ui_devconfig.o
+
+# target to build an object file
+source/ui_devconfig.cpp.o:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/ui_devconfig.cpp.o
+.PHONY : source/ui_devconfig.cpp.o
+
+source/ui_devconfig.i: source/ui_devconfig.cpp.i
+.PHONY : source/ui_devconfig.i
+
+# target to preprocess a source file
+source/ui_devconfig.cpp.i:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/ui_devconfig.cpp.i
+.PHONY : source/ui_devconfig.cpp.i
+
+source/ui_devconfig.s: source/ui_devconfig.cpp.s
+.PHONY : source/ui_devconfig.s
+
+# target to generate assembly for a file
+source/ui_devconfig.cpp.s:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/ui_devconfig.cpp.s
+.PHONY : source/ui_devconfig.cpp.s
 
 source/ui_disk.o: source/ui_disk.cpp.o
 .PHONY : source/ui_disk.o
@@ -4810,6 +4882,30 @@ source/ui_display.cpp.s:
 	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/ui_display.cpp.s
 .PHONY : source/ui_display.cpp.s
 
+source/ui_input.o: source/ui_input.cpp.o
+.PHONY : source/ui_input.o
+
+# target to build an object file
+source/ui_input.cpp.o:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/ui_input.cpp.o
+.PHONY : source/ui_input.cpp.o
+
+source/ui_input.i: source/ui_input.cpp.i
+.PHONY : source/ui_input.i
+
+# target to preprocess a source file
+source/ui_input.cpp.i:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/ui_input.cpp.i
+.PHONY : source/ui_input.cpp.i
+
+source/ui_input.s: source/ui_input.cpp.s
+.PHONY : source/ui_input.s
+
+# target to generate assembly for a file
+source/ui_input.cpp.s:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/ui_input.cpp.s
+.PHONY : source/ui_input.cpp.s
+
 source/ui_main.o: source/ui_main.cpp.o
 .PHONY : source/ui_main.o
 
@@ -4834,6 +4930,30 @@ source/ui_main.cpp.s:
 	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/ui_main.cpp.s
 .PHONY : source/ui_main.cpp.s
 
+source/ui_profiles.o: source/ui_profiles.cpp.o
+.PHONY : source/ui_profiles.o
+
+# target to build an object file
+source/ui_profiles.cpp.o:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/ui_profiles.cpp.o
+.PHONY : source/ui_profiles.cpp.o
+
+source/ui_profiles.i: source/ui_profiles.cpp.i
+.PHONY : source/ui_profiles.i
+
+# target to preprocess a source file
+source/ui_profiles.cpp.i:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/ui_profiles.cpp.i
+.PHONY : source/ui_profiles.cpp.i
+
+source/ui_profiles.s: source/ui_profiles.cpp.s
+.PHONY : source/ui_profiles.s
+
+# target to generate assembly for a file
+source/ui_profiles.cpp.s:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/ui_profiles.cpp.s
+.PHONY : source/ui_profiles.cpp.s
+
 source/ui_system.o: source/ui_system.cpp.o
 .PHONY : source/ui_system.o
 
@@ -4857,6 +4977,30 @@ source/ui_system.s: source/ui_system.cpp.s
 source/ui_system.cpp.s:
 	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/ui_system.cpp.s
 .PHONY : source/ui_system.cpp.s
+
+source/videowriter_sdl3.o: source/videowriter_sdl3.cpp.o
+.PHONY : source/videowriter_sdl3.o
+
+# target to build an object file
+source/videowriter_sdl3.cpp.o:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/videowriter_sdl3.cpp.o
+.PHONY : source/videowriter_sdl3.cpp.o
+
+source/videowriter_sdl3.i: source/videowriter_sdl3.cpp.i
+.PHONY : source/videowriter_sdl3.i
+
+# target to preprocess a source file
+source/videowriter_sdl3.cpp.i:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/videowriter_sdl3.cpp.i
+.PHONY : source/videowriter_sdl3.cpp.i
+
+source/videowriter_sdl3.s: source/videowriter_sdl3.cpp.s
+.PHONY : source/videowriter_sdl3.s
+
+# target to generate assembly for a file
+source/videowriter_sdl3.cpp.s:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/videowriter_sdl3.cpp.s
+.PHONY : source/videowriter_sdl3.cpp.s
 
 stubs/console_stubs.o: stubs/console_stubs.cpp.o
 .PHONY : stubs/console_stubs.o
@@ -5089,6 +5233,9 @@ help:
 	@echo "... __/Altirra/source/autosavemanager.o"
 	@echo "... __/Altirra/source/autosavemanager.i"
 	@echo "... __/Altirra/source/autosavemanager.s"
+	@echo "... __/Altirra/source/aviwriter.o"
+	@echo "... __/Altirra/source/aviwriter.i"
+	@echo "... __/Altirra/source/aviwriter.s"
 	@echo "... __/Altirra/source/bit3.o"
 	@echo "... __/Altirra/source/bit3.i"
 	@echo "... __/Altirra/source/bit3.s"
@@ -5587,21 +5734,36 @@ help:
 	@echo "... source/main_sdl3.o"
 	@echo "... source/main_sdl3.i"
 	@echo "... source/main_sdl3.s"
+	@echo "... source/ui_cartmapper.o"
+	@echo "... source/ui_cartmapper.i"
+	@echo "... source/ui_cartmapper.s"
 	@echo "... source/ui_cassette.o"
 	@echo "... source/ui_cassette.i"
 	@echo "... source/ui_cassette.s"
+	@echo "... source/ui_devconfig.o"
+	@echo "... source/ui_devconfig.i"
+	@echo "... source/ui_devconfig.s"
 	@echo "... source/ui_disk.o"
 	@echo "... source/ui_disk.i"
 	@echo "... source/ui_disk.s"
 	@echo "... source/ui_display.o"
 	@echo "... source/ui_display.i"
 	@echo "... source/ui_display.s"
+	@echo "... source/ui_input.o"
+	@echo "... source/ui_input.i"
+	@echo "... source/ui_input.s"
 	@echo "... source/ui_main.o"
 	@echo "... source/ui_main.i"
 	@echo "... source/ui_main.s"
+	@echo "... source/ui_profiles.o"
+	@echo "... source/ui_profiles.i"
+	@echo "... source/ui_profiles.s"
 	@echo "... source/ui_system.o"
 	@echo "... source/ui_system.i"
 	@echo "... source/ui_system.s"
+	@echo "... source/videowriter_sdl3.o"
+	@echo "... source/videowriter_sdl3.i"
+	@echo "... source/videowriter_sdl3.s"
 	@echo "... stubs/console_stubs.o"
 	@echo "... stubs/console_stubs.i"
 	@echo "... stubs/console_stubs.s"

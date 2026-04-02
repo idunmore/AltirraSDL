@@ -27,6 +27,8 @@ file(REMOVE_RECURSE
   "CMakeFiles/system.dir/source/event.cpp.o.d"
   "CMakeFiles/system.dir/source/file_sdl3.cpp.o"
   "CMakeFiles/system.dir/source/file_sdl3.cpp.o.d"
+  "CMakeFiles/system.dir/source/fileasync_sdl3.cpp.o"
+  "CMakeFiles/system.dir/source/fileasync_sdl3.cpp.o.d"
   "CMakeFiles/system.dir/source/filestream.cpp.o"
   "CMakeFiles/system.dir/source/filestream.cpp.o.d"
   "CMakeFiles/system.dir/source/filesys_sdl3.cpp.o"

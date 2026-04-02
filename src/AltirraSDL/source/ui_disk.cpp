@@ -57,8 +57,9 @@ static void RenderCreateDiskDialog() {
 	if (!g_createDiskState.show)
 		return;
 
-	ImGui::SetNextWindowSize(ImVec2(420, 260), ImGuiCond_FirstUseEver);
-	if (!ImGui::Begin("Create Disk", &g_createDiskState.show)) {
+	ImGui::SetNextWindowSize(ImVec2(420, 260), ImGuiCond_Appearing);
+	ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+	if (!ImGui::Begin("Create Disk", &g_createDiskState.show, ImGuiWindowFlags_NoSavedSettings)) {
 		ImGui::End();
 		return;
 	}
@@ -224,8 +225,9 @@ static int GetWriteModeIndex(ATDiskInterface& di) {
 // =========================================================================
 
 void ATUIRenderDiskManager(ATSimulator &sim, ATUIState &state, SDL_Window *window) {
-	ImGui::SetNextWindowSize(ImVec2(720, 460), ImGuiCond_FirstUseEver);
-	if (!ImGui::Begin("Disk drives", &state.showDiskManager)) {
+	ImGui::SetNextWindowSize(ImVec2(720, 460), ImGuiCond_Appearing);
+	ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+	if (!ImGui::Begin("Disk drives", &state.showDiskManager, ImGuiWindowFlags_NoSavedSettings)) {
 		ImGui::End();
 		return;
 	}

@@ -562,10 +562,24 @@ src/system/CMakeFiles/system.dir/source/file_sdl3.cpp.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/system.dir/source/file_sdl3.cpp.s"
 	cd /home/ilm/Documents/GitHub/AltirraSDL/build/src/system && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/ilm/Documents/GitHub/AltirraSDL/src/system/source/file_sdl3.cpp -o CMakeFiles/system.dir/source/file_sdl3.cpp.s
 
+src/system/CMakeFiles/system.dir/source/fileasync_sdl3.cpp.o: src/system/CMakeFiles/system.dir/flags.make
+src/system/CMakeFiles/system.dir/source/fileasync_sdl3.cpp.o: /home/ilm/Documents/GitHub/AltirraSDL/src/system/source/fileasync_sdl3.cpp
+src/system/CMakeFiles/system.dir/source/fileasync_sdl3.cpp.o: src/system/CMakeFiles/system.dir/compiler_depend.ts
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/ilm/Documents/GitHub/AltirraSDL/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_36) "Building CXX object src/system/CMakeFiles/system.dir/source/fileasync_sdl3.cpp.o"
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build/src/system && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT src/system/CMakeFiles/system.dir/source/fileasync_sdl3.cpp.o -MF CMakeFiles/system.dir/source/fileasync_sdl3.cpp.o.d -o CMakeFiles/system.dir/source/fileasync_sdl3.cpp.o -c /home/ilm/Documents/GitHub/AltirraSDL/src/system/source/fileasync_sdl3.cpp
+
+src/system/CMakeFiles/system.dir/source/fileasync_sdl3.cpp.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing CXX source to CMakeFiles/system.dir/source/fileasync_sdl3.cpp.i"
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build/src/system && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/ilm/Documents/GitHub/AltirraSDL/src/system/source/fileasync_sdl3.cpp > CMakeFiles/system.dir/source/fileasync_sdl3.cpp.i
+
+src/system/CMakeFiles/system.dir/source/fileasync_sdl3.cpp.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/system.dir/source/fileasync_sdl3.cpp.s"
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build/src/system && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/ilm/Documents/GitHub/AltirraSDL/src/system/source/fileasync_sdl3.cpp -o CMakeFiles/system.dir/source/fileasync_sdl3.cpp.s
+
 src/system/CMakeFiles/system.dir/source/filesys_sdl3.cpp.o: src/system/CMakeFiles/system.dir/flags.make
 src/system/CMakeFiles/system.dir/source/filesys_sdl3.cpp.o: /home/ilm/Documents/GitHub/AltirraSDL/src/system/source/filesys_sdl3.cpp
 src/system/CMakeFiles/system.dir/source/filesys_sdl3.cpp.o: src/system/CMakeFiles/system.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/ilm/Documents/GitHub/AltirraSDL/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_36) "Building CXX object src/system/CMakeFiles/system.dir/source/filesys_sdl3.cpp.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/ilm/Documents/GitHub/AltirraSDL/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_37) "Building CXX object src/system/CMakeFiles/system.dir/source/filesys_sdl3.cpp.o"
 	cd /home/ilm/Documents/GitHub/AltirraSDL/build/src/system && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT src/system/CMakeFiles/system.dir/source/filesys_sdl3.cpp.o -MF CMakeFiles/system.dir/source/filesys_sdl3.cpp.o.d -o CMakeFiles/system.dir/source/filesys_sdl3.cpp.o -c /home/ilm/Documents/GitHub/AltirraSDL/src/system/source/filesys_sdl3.cpp
 
 src/system/CMakeFiles/system.dir/source/filesys_sdl3.cpp.i: cmake_force
@@ -579,7 +593,7 @@ src/system/CMakeFiles/system.dir/source/filesys_sdl3.cpp.s: cmake_force
 src/system/CMakeFiles/system.dir/source/registry_sdl3.cpp.o: src/system/CMakeFiles/system.dir/flags.make
 src/system/CMakeFiles/system.dir/source/registry_sdl3.cpp.o: /home/ilm/Documents/GitHub/AltirraSDL/src/system/source/registry_sdl3.cpp
 src/system/CMakeFiles/system.dir/source/registry_sdl3.cpp.o: src/system/CMakeFiles/system.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/ilm/Documents/GitHub/AltirraSDL/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_37) "Building CXX object src/system/CMakeFiles/system.dir/source/registry_sdl3.cpp.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/ilm/Documents/GitHub/AltirraSDL/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_38) "Building CXX object src/system/CMakeFiles/system.dir/source/registry_sdl3.cpp.o"
 	cd /home/ilm/Documents/GitHub/AltirraSDL/build/src/system && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT src/system/CMakeFiles/system.dir/source/registry_sdl3.cpp.o -MF CMakeFiles/system.dir/source/registry_sdl3.cpp.o.d -o CMakeFiles/system.dir/source/registry_sdl3.cpp.o -c /home/ilm/Documents/GitHub/AltirraSDL/src/system/source/registry_sdl3.cpp
 
 src/system/CMakeFiles/system.dir/source/registry_sdl3.cpp.i: cmake_force
@@ -593,7 +607,7 @@ src/system/CMakeFiles/system.dir/source/registry_sdl3.cpp.s: cmake_force
 src/system/CMakeFiles/system.dir/source/text_sdl3.cpp.o: src/system/CMakeFiles/system.dir/flags.make
 src/system/CMakeFiles/system.dir/source/text_sdl3.cpp.o: /home/ilm/Documents/GitHub/AltirraSDL/src/system/source/text_sdl3.cpp
 src/system/CMakeFiles/system.dir/source/text_sdl3.cpp.o: src/system/CMakeFiles/system.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/ilm/Documents/GitHub/AltirraSDL/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_38) "Building CXX object src/system/CMakeFiles/system.dir/source/text_sdl3.cpp.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/ilm/Documents/GitHub/AltirraSDL/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_39) "Building CXX object src/system/CMakeFiles/system.dir/source/text_sdl3.cpp.o"
 	cd /home/ilm/Documents/GitHub/AltirraSDL/build/src/system && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT src/system/CMakeFiles/system.dir/source/text_sdl3.cpp.o -MF CMakeFiles/system.dir/source/text_sdl3.cpp.o.d -o CMakeFiles/system.dir/source/text_sdl3.cpp.o -c /home/ilm/Documents/GitHub/AltirraSDL/src/system/source/text_sdl3.cpp
 
 src/system/CMakeFiles/system.dir/source/text_sdl3.cpp.i: cmake_force
@@ -607,7 +621,7 @@ src/system/CMakeFiles/system.dir/source/text_sdl3.cpp.s: cmake_force
 src/system/CMakeFiles/system.dir/source/time_sdl3.cpp.o: src/system/CMakeFiles/system.dir/flags.make
 src/system/CMakeFiles/system.dir/source/time_sdl3.cpp.o: /home/ilm/Documents/GitHub/AltirraSDL/src/system/source/time_sdl3.cpp
 src/system/CMakeFiles/system.dir/source/time_sdl3.cpp.o: src/system/CMakeFiles/system.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/ilm/Documents/GitHub/AltirraSDL/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_39) "Building CXX object src/system/CMakeFiles/system.dir/source/time_sdl3.cpp.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/ilm/Documents/GitHub/AltirraSDL/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_40) "Building CXX object src/system/CMakeFiles/system.dir/source/time_sdl3.cpp.o"
 	cd /home/ilm/Documents/GitHub/AltirraSDL/build/src/system && /usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT src/system/CMakeFiles/system.dir/source/time_sdl3.cpp.o -MF CMakeFiles/system.dir/source/time_sdl3.cpp.o.d -o CMakeFiles/system.dir/source/time_sdl3.cpp.o -c /home/ilm/Documents/GitHub/AltirraSDL/src/system/source/time_sdl3.cpp
 
 src/system/CMakeFiles/system.dir/source/time_sdl3.cpp.i: cmake_force
@@ -655,6 +669,7 @@ system_OBJECTS = \
 "CMakeFiles/system.dir/source/debug_sdl3.cpp.o" \
 "CMakeFiles/system.dir/source/error_sdl3.cpp.o" \
 "CMakeFiles/system.dir/source/file_sdl3.cpp.o" \
+"CMakeFiles/system.dir/source/fileasync_sdl3.cpp.o" \
 "CMakeFiles/system.dir/source/filesys_sdl3.cpp.o" \
 "CMakeFiles/system.dir/source/registry_sdl3.cpp.o" \
 "CMakeFiles/system.dir/source/text_sdl3.cpp.o" \
@@ -698,13 +713,14 @@ src/system/libsystem.a: src/system/CMakeFiles/system.dir/source/date_sdl3.cpp.o
 src/system/libsystem.a: src/system/CMakeFiles/system.dir/source/debug_sdl3.cpp.o
 src/system/libsystem.a: src/system/CMakeFiles/system.dir/source/error_sdl3.cpp.o
 src/system/libsystem.a: src/system/CMakeFiles/system.dir/source/file_sdl3.cpp.o
+src/system/libsystem.a: src/system/CMakeFiles/system.dir/source/fileasync_sdl3.cpp.o
 src/system/libsystem.a: src/system/CMakeFiles/system.dir/source/filesys_sdl3.cpp.o
 src/system/libsystem.a: src/system/CMakeFiles/system.dir/source/registry_sdl3.cpp.o
 src/system/libsystem.a: src/system/CMakeFiles/system.dir/source/text_sdl3.cpp.o
 src/system/libsystem.a: src/system/CMakeFiles/system.dir/source/time_sdl3.cpp.o
 src/system/libsystem.a: src/system/CMakeFiles/system.dir/build.make
 src/system/libsystem.a: src/system/CMakeFiles/system.dir/link.txt
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --bold --progress-dir=/home/ilm/Documents/GitHub/AltirraSDL/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_40) "Linking CXX static library libsystem.a"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --bold --progress-dir=/home/ilm/Documents/GitHub/AltirraSDL/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_41) "Linking CXX static library libsystem.a"
 	cd /home/ilm/Documents/GitHub/AltirraSDL/build/src/system && $(CMAKE_COMMAND) -P CMakeFiles/system.dir/cmake_clean_target.cmake
 	cd /home/ilm/Documents/GitHub/AltirraSDL/build/src/system && $(CMAKE_COMMAND) -E cmake_link_script CMakeFiles/system.dir/link.txt --verbose=$(VERBOSE)
 
