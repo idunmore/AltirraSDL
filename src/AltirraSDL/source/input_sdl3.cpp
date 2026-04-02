@@ -20,6 +20,9 @@
 #include <at/ataudio/pokey.h>
 #include "inputmanager.h"
 #include "inputdefs.h"
+#include "gtia.h"
+#include "simulator.h"
+#include "uiaccessors.h"
 
 // -------------------------------------------------------------------------
 // SDL scancode → Atari KBCODE mapping (POKEY direct path)
@@ -40,8 +43,8 @@ static uint8 SDLScancodeToAtari(SDL_Scancode sc, bool shift, bool ctrl) {
 	case SDL_SCANCODE_8:       return 0x35;
 	case SDL_SCANCODE_9:       return 0x30;
 	case SDL_SCANCODE_0:       return 0x32;
-	case SDL_SCANCODE_MINUS:   return 0x38;
-	case SDL_SCANCODE_EQUALS:  return 0x3A;
+	case SDL_SCANCODE_MINUS:   return 0x0E;
+	case SDL_SCANCODE_EQUALS:  return 0x0F;
 
 	// Row 1: QWERTYUIOP
 	case SDL_SCANCODE_Q:       return 0x2F;
@@ -54,8 +57,8 @@ static uint8 SDLScancodeToAtari(SDL_Scancode sc, bool shift, bool ctrl) {
 	case SDL_SCANCODE_I:       return 0x0D;
 	case SDL_SCANCODE_O:       return 0x08;
 	case SDL_SCANCODE_P:       return 0x0A;
-	case SDL_SCANCODE_LEFTBRACKET:  return 0x60;
-	case SDL_SCANCODE_RIGHTBRACKET: return 0x60;
+	case SDL_SCANCODE_LEFTBRACKET:  return 0x0E;  // maps to Atari - key position
+	case SDL_SCANCODE_RIGHTBRACKET: return 0x0F;  // maps to Atari = key position
 
 	// Row 2: ASDFGHJKL
 	case SDL_SCANCODE_A:       return 0x3F;
@@ -68,7 +71,7 @@ static uint8 SDLScancodeToAtari(SDL_Scancode sc, bool shift, bool ctrl) {
 	case SDL_SCANCODE_K:       return 0x05;
 	case SDL_SCANCODE_L:       return 0x00;
 	case SDL_SCANCODE_SEMICOLON:   return 0x02;
-	case SDL_SCANCODE_APOSTROPHE:  return 0x02;
+	case SDL_SCANCODE_APOSTROPHE:  return 0x06;  // maps to Atari + key position
 
 	// Row 3: ZXCVBNM
 	case SDL_SCANCODE_Z:       return 0x17;
@@ -93,10 +96,13 @@ static uint8 SDLScancodeToAtari(SDL_Scancode sc, bool shift, bool ctrl) {
 	case SDL_SCANCODE_F1:      return 0x03;
 	case SDL_SCANCODE_F2:      return 0x04;
 	case SDL_SCANCODE_F3:      return 0x06;
-	case SDL_SCANCODE_F5:      return 0x14;
+	case SDL_SCANCODE_F6:      return 0x11;   // Atari Help key (XL/XE) — matches Windows mapping
 	case SDL_SCANCODE_DELETE:  return 0x34;
 
-	case SDL_SCANCODE_CAPSLOCK: return 0x3C;
+	case SDL_SCANCODE_CAPSLOCK:  return 0x3C;
+	case SDL_SCANCODE_BACKSLASH: return 0x07;  // maps to Atari * key position
+	case SDL_SCANCODE_GRAVE:    return 0x27;   // maps to Atari Inverse Video / Fuji key
+	case SDL_SCANCODE_END:      return 0x27;   // alternate mapping for Fuji key (matches Windows)
 
 	default: return 0xFF;
 	}
@@ -230,19 +236,92 @@ static uint32 SDLScancodeToInputCode(SDL_Scancode sc) {
 // Input state
 // -------------------------------------------------------------------------
 
+// -------------------------------------------------------------------------
+// Console callback — routes input-mapped console triggers (Start, Select,
+// Option from gamepad) to GTIA console switches.
+// Without this, gamepad buttons mapped to kATInputTrigger_Start etc.
+// would have no effect.
+// -------------------------------------------------------------------------
+
+extern ATSimulator g_sim;
+
+class ATInputConsoleCallbackSDL3 : public IATInputConsoleCallback {
+public:
+	void SetConsoleTrigger(uint32 id, bool state) override {
+		switch (id) {
+		case kATInputTrigger_Start:
+			g_sim.GetGTIA().SetConsoleSwitch(0x01, state);
+			break;
+		case kATInputTrigger_Select:
+			g_sim.GetGTIA().SetConsoleSwitch(0x02, state);
+			break;
+		case kATInputTrigger_Option:
+			g_sim.GetGTIA().SetConsoleSwitch(0x04, state);
+			break;
+		case kATInputTrigger_ColdReset:
+			if (state) { g_sim.ColdReset(); g_sim.Resume(); }
+			break;
+		case kATInputTrigger_WarmReset:
+			if (state) { g_sim.WarmReset(); g_sim.Resume(); }
+			break;
+		case kATInputTrigger_Turbo:
+			ATUISetTurboPulse(state);
+			break;
+		default:
+			break;
+		}
+	}
+};
+
+static ATInputConsoleCallbackSDL3 g_consoleCallback;
+
 struct ATInputStateSDL3 {
 	ATPokeyEmulator *mpPokey = nullptr;
 	ATInputManager *mpInputManager = nullptr;
+	ATGTIAEmulator *mpGTIA = nullptr;
 };
 
 static ATInputStateSDL3 g_inputState;
 
-void ATInputSDL3_Init(ATPokeyEmulator *pokey, ATInputManager *inputMgr) {
+void ATInputSDL3_Init(ATPokeyEmulator *pokey, ATInputManager *inputMgr, ATGTIAEmulator *gtia) {
 	g_inputState.mpPokey = pokey;
 	g_inputState.mpInputManager = inputMgr;
+	g_inputState.mpGTIA = gtia;
+
+	// Register console callback so gamepad Start/Select/Option work
+	if (inputMgr)
+		inputMgr->SetConsoleCallback(&g_consoleCallback);
+}
+
+// Handle console switches (Start/Select/Option) — these are PIA/GTIA
+// buttons, not keyboard keys.  They must be held (down on press, up on
+// release) for proper behavior.
+//
+// F2 = Start, F3 = Select, F4 = Option — matches Windows Altirra defaults.
+static bool HandleConsoleSwitch(SDL_Scancode sc, bool down) {
+	if (!g_inputState.mpGTIA)
+		return false;
+
+	switch (sc) {
+	case SDL_SCANCODE_F2:
+		g_inputState.mpGTIA->SetConsoleSwitch(0x01, down);
+		return true;
+	case SDL_SCANCODE_F3:
+		g_inputState.mpGTIA->SetConsoleSwitch(0x02, down);
+		return true;
+	case SDL_SCANCODE_F4:
+		g_inputState.mpGTIA->SetConsoleSwitch(0x04, down);
+		return true;
+	default:
+		return false;
+	}
 }
 
 void ATInputSDL3_HandleKeyDown(const SDL_KeyboardEvent& ev) {
+	// Console switches (F2=Start, F3=Select, F4=Option)
+	if (HandleConsoleSwitch(ev.scancode, true))
+		return;
+
 	// Path 1: Route through ATInputManager for input mapping
 	// (arrow keys as joystick, etc.)
 	if (g_inputState.mpInputManager) {
@@ -257,11 +336,16 @@ void ATInputSDL3_HandleKeyDown(const SDL_KeyboardEvent& ev) {
 	bool shift = (ev.mod & SDL_KMOD_SHIFT) != 0;
 	bool ctrl  = (ev.mod & SDL_KMOD_CTRL) != 0;
 
-	// Handle Break
-	if (ev.scancode == SDL_SCANCODE_PAUSE || ev.scancode == SDL_SCANCODE_F8) {
+	// Handle Break (Pause/Break key only — F8 is QuickSaveState)
+	if (ev.scancode == SDL_SCANCODE_PAUSE) {
 		g_inputState.mpPokey->PushBreak();
 		return;
 	}
+
+	// Update POKEY shift/ctrl register state (important for software that
+	// reads these independently of key presses, e.g. raw keyboard mode)
+	g_inputState.mpPokey->SetShiftKeyState(shift, true);
+	g_inputState.mpPokey->SetControlKeyState(ctrl);
 
 	uint8 atariCode = SDLScancodeToAtari(ev.scancode, shift, ctrl);
 	if (atariCode == 0xFF) return;
@@ -273,10 +357,32 @@ void ATInputSDL3_HandleKeyDown(const SDL_KeyboardEvent& ev) {
 }
 
 void ATInputSDL3_HandleKeyUp(const SDL_KeyboardEvent& ev) {
+	// Console switches
+	if (HandleConsoleSwitch(ev.scancode, false))
+		return;
+
 	// Route key release through ATInputManager
 	if (g_inputState.mpInputManager) {
 		uint32 inputCode = SDLScancodeToInputCode(ev.scancode);
 		if (inputCode != kATInputCode_None)
 			g_inputState.mpInputManager->OnButtonUp(0, inputCode);
 	}
+}
+
+void ATInputSDL3_ReleaseAllKeys() {
+	// Release all keyboard buttons in ATInputManager to prevent stuck
+	// joystick directions when ImGui captures keyboard or window loses focus.
+	// Matches Windows OnDeactivate: im->ReleaseButtons(0, kATInputCode_JoyClass-1)
+	if (g_inputState.mpInputManager)
+		g_inputState.mpInputManager->ReleaseButtons(0, kATInputCode_JoyClass - 1);
+
+	// Release shift/ctrl/raw keys in POKEY
+	if (g_inputState.mpPokey) {
+		g_inputState.mpPokey->SetShiftKeyState(false, true);
+		g_inputState.mpPokey->SetControlKeyState(false);
+	}
+
+	// Release console switches
+	if (g_inputState.mpGTIA)
+		g_inputState.mpGTIA->SetConsoleSwitch(0x07, false);
 }

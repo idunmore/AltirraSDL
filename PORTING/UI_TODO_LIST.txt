@@ -1,7 +1,7 @@
 AltirraSDL — Dear ImGui UI Parity Checklist
 ============================================
 Generated: 2026-04-01
-Updated:   2026-04-01
+Updated:   2026-04-02
 Reference: Windows Altirra menu_default.txt + Altirra.rc (149 dialogs)
 
 Legend:
@@ -12,11 +12,12 @@ Legend:
   [ N/A] Not applicable to SDL3/Linux (Windows-only feature)
 
 Files:
-  ui_main.cpp      — Menu bar, About dialog, status overlay, render orchestrator
+  ui_main.cpp      — Menu bar, About dialog, status overlay, recording, render orchestrator
   ui_main.h        — ATUIState struct, declarations
   ui_system.cpp    — Configure System (20 category pages)
   ui_disk.cpp      — Disk Drives dialog
   ui_cassette.cpp  — Cassette Tape Control dialog
+  ui_display.cpp   — Display Settings dialog, Adjust Colors dialog
 
 
 ================================================================================
@@ -31,72 +32,76 @@ Files:
   [100%] Attach Disk submenu              — Rotate Down/Up + per-drive D1-D8 attach
                                             Shows current image name in menu label
   [100%] Detach Disk submenu              — All + per-drive D1-D8 detach
-  [ 80%] Cassette submenu                 — Has: Tape Control, New Tape, Load, Unload, Save
-                                            Placeholder: Tape Editor, Export Audio Tape
+  [ 90%] Cassette submenu                 — Has: Tape Control, New Tape, Load, Unload, Save,
+                                            Export Audio Tape. Placeholder: Tape Editor
   [100%] Load State...                    — SDL file dialog, loads .atstate2/.atstate
   [100%] Save State...                    — SDL save dialog, sim.SaveState()
   [100%] Quick Load State                 — F7 hint, in-memory via ApplySnapshot
   [100%] Quick Save State                 — F8 hint, in-memory via CreateSnapshot
-  [  0%] Attach Special Cartridge         — Missing: 20-item submenu (MaxFlash, SIC, TheCart, etc.)
-  [  0%] Secondary Cartridge              — Missing: Attach/Detach second cart slot
+  [100%] Attach Special Cartridge         — 19 types + BASIC (SuperCharger3D, MaxFlash, JAtariCart,
+                                            DCart, SIC, MegaCart, TheCart)
+  [100%] Secondary Cartridge              — Attach (SDL file dialog) + Detach
   [100%] Attach Cartridge...              — SDL file dialog, loads + cold resets
   [100%] Detach Cartridge                 — Unloads + cold resets, grayed when none
-  [  0%] Save Firmware submenu            — Missing: Save Cart, IDE Flash, U1MB, Rapidus
+  [100%] Save Firmware submenu            — Save Cartridge (.car/.bin/.rom), IDE Main Flash,
+                                            IDE SDX Flash, Ultimate1MB Flash, Rapidus Flash
+                                            (all grayed when storage not present)
   [100%] Exit                             — Pushes SDL_EVENT_QUIT
 
 1.2 VIEW MENU
   [100%] Full Screen                      — SDL_SetWindowFullscreen toggle
   [100%] Filter Mode submenu              — 5 modes + Next Mode cycling
   [100%] Filter Sharpness submenu         — 5 levels (Softer/Soft/Normal/Sharp/Sharper)
-  [100%] Stretch Mode submenu             — 5 modes
-  [ 70%] Overscan Mode submenu            — Has: 5 modes.
-                                            Missing: Vertical Override sub-submenu (5 items),
-                                            Extended PAL Height, Indicator Margin
+  [100%] Video Frame submenu              — 5 stretch modes (matching Windows names), Pan/Zoom
+                                            reset controls
+  [100%] Overscan Mode submenu            — 5 modes + Vertical Override sub-submenu (5 items) +
+                                            Extended PAL Height toggle
   [100%] Vertical Sync                    — Toggle via SDL_SetRenderVSync
   [100%] Show FPS                         — Toggle with status overlay
-  [  0%] Video Outputs submenu            — Missing: multi-output switching
-  [  0%] Adjust Colors...                 — Missing: complex color calibration dialog (55 controls)
-  [  0%] Adjust Screen Effects...         — Missing: bloom, HDR, scanlines, mask, distortion
-  [  0%] Customize HUD...                 — Missing: HUD layout editor
-  [  0%] Calibrate...                     — Missing: display calibration
+  [100%] Video Outputs submenu            — Computer Output, Next Output, Auto-Switch toggle
+  [100%] Adjust Colors...                 — Full dialog: hue, brightness, contrast, saturation,
+                                            gamma, artifacting, color matrix, luma ramp, color
+                                            matching mode, PAL quirks, reset to defaults
+  [  0%] Adjust Screen Effects...         — Placeholder. Needs: bloom, HDR, scanlines, mask, distortion
+  [  0%] Customize HUD...                 — Placeholder. Missing: HUD layout editor
+  [  0%] Calibrate...                     — Placeholder. Missing: display calibration
   [  0%] Display pane                     — Missing: dockable display pane
   [  0%] Printer Output pane              — Missing: dockable printer output
-  [  0%] Copy Frame to Clipboard          — Missing: frame capture
-  [  0%] Copy Frame (True Aspect)         — Missing: frame capture with aspect
-  [  0%] Save Frame...                    — Missing: frame save to file
-  [  0%] Save Frame (True Aspect)...      — Missing: frame save with aspect
+  [  0%] Copy Frame to Clipboard          — Placeholder. Needs: framebuffer readback
+  [  0%] Save Frame...                    — Placeholder. Needs: framebuffer readback
   [  0%] Text Selection submenu           — Missing: 7 items (Copy Text/Hex/Unicode, Paste, Select)
 
 1.3 SYSTEM MENU
-  [  0%] Profiles submenu                 — Missing: profile management
+  [ 20%] Profiles submenu                 — Placeholder: Edit Profiles, Temporary Profile (disabled)
   [100%] Configure System...              — Opens 20-page config dialog
   [100%] Warm Reset                       — sim.WarmReset()
   [100%] Cold Reset                       — sim.ColdReset()
   [100%] Cold Reset (Computer Only)       — sim.ColdResetComputerOnly()
   [100%] Pause                            — Toggle with F9 hint
-  [ 80%] Speed submenu                    — Has: Turbo, SlowMo, 1x/2x/4x/8x
-                                            Note: Windows has "Warp Speed" as top-level toggle
+  [100%] Warp Speed                       — Toggle (matches Windows top-level item)
   [100%] Pause When Inactive              — Toggle
+  [ 20%] Rewind submenu                   — Placeholder: Quick Rewind, Rewind dialog (disabled)
+  [100%] Power-On Delay submenu           — Auto/None/1/2/3s
   [100%] Hold Keys For Reset              — ATUIToggleHoldKeys()
-  [  0%] Rewind submenu                   — Missing: Quick Rewind, Rewind dialog
-  [ 80%] Power-On Delay submenu           — Has: None/1/2/3s. Missing: "Auto" option
+  [100%] Internal BASIC                   — Toggle
+  [100%] Auto-Boot Tape (Hold Start)      — Toggle
   [100%] Console Switches submenu         — Keyboard Present, Force Self-Test, Cart Switch,
                                             all ATDeviceButton items shown when supported
   [100%] Video Standard submenu           — NTSC/PAL/SECAM
-  [100%] Hardware Mode submenu            — 6 hardware models
-  [100%] Memory submenu                   — 7 common sizes
-  [100%] Internal BASIC                   — Toggle
-  [100%] Auto-Boot Tape (Hold Start)      — Toggle
+  [100%] Hardware Mode submenu            — 7 hardware models (added 1400XL)
+  [100%] Memory submenu                   — 15 sizes (8K-1088K, Rambo + Compy Shop variants)
 
 1.4 INPUT MENU
   [  0%] Input Mappings...                — Placeholder (disabled). Missing: full input map editor
   [  0%] Input Setup...                   — Placeholder (disabled). Missing: input device config
-  [  0%] Cycle Quick Maps                 — Missing: quick map cycling
-  [  0%] Capture Mouse                    — Placeholder (disabled)
-  [100%] Auto-Capture Mouse               — Toggle
+  [100%] Cycle Quick Maps                 — Calls ATInputManager::CycleQuickMaps(), logs status
+  [100%] Capture Mouse                    — Toggles SDL3 relative/grab mouse mode, enabled only
+                                            when mouse is mapped. Releases on focus loss/ImGui.
+  [100%] Auto-Capture Mouse               — Toggle, grayed when mouse not mapped (matches Windows)
   [  0%] Light Pen/Gun...                 — Placeholder (disabled)
   [  0%] Recalibrate Light Pen/Gun        — Placeholder (disabled)
-  [  0%] Port 1-4 submenus               — Missing: controller port assignment
+  [100%] Port 1-4 submenus               — Dynamic radio menus populated from ATInputManager,
+                                            "None" + per-port input maps, activate/deactivate
 
 1.5 CHEAT MENU
   [  0%] Cheater...                       — Placeholder (disabled)
@@ -109,6 +114,8 @@ Files:
   [ 30%] Window submenu                   — Placeholders for Console/Registers/Disassembly/Memory/
                                             Call Stack/History/Watch 1-4/Memory 1-4/
                                             Breakpoints/Targets/Debug Display (all disabled)
+  [100%] Visualization submenu            — GTIA analysis modes: None/Layers/Colors/Display List
+                                            + Cycle GTIA Visualization
   [ 30%] Options submenu                  — Placeholders for Auto-Reload ROMs, Randomize Memory,
                                             Break at EXE Run, Change Font (all disabled)
   [  0%] Run/Break                        — Placeholder (disabled)
@@ -119,26 +126,27 @@ Files:
   [  0%] Performance Analyzer...          — Placeholder (disabled)
 
 1.7 RECORD MENU
-  [ 20%] Record Raw Audio...              — Placeholder (disabled, grayed when recording)
-  [ 20%] Record Audio...                  — Placeholder (disabled, grayed when recording)
-  [ 20%] Record Video...                  — Placeholder (disabled, grayed when recording)
-  [ 20%] Record SAP Type R...             — Placeholder (disabled, grayed when recording)
-  [ 20%] Record VGM...                    — Placeholder (disabled, grayed when recording)
-  [ 20%] Stop                             — Placeholder (enabled only when recording)
-  [ 20%] Pause/Resume                     — Placeholder (enabled only when recording)
+  [100%] Record Raw Audio...              — Saves raw 32-bit float PCM via ATAudioWriter
+  [100%] Record Audio...                  — Saves 16-bit 44100Hz WAV via ATAudioWriter + resampling
+  [  0%] Record Video...                  — Placeholder (disabled). Needs: video encoder
+  [100%] Record SAP Type R...             — Saves SAP music file via ATSAPWriter
+  [  0%] Record VGM...                    — Placeholder (disabled). Excluded from build (wchar_t)
+  [100%] Stop Recording                   — Tears down audio tap, finalizes file
+                                            Status overlay shows red "REC" indicator
 
 1.8 TOOLS MENU
   [  0%] Disk Explorer...                 — Placeholder (disabled)
   [  0%] Convert SAP to EXE...            — Placeholder (disabled)
   [  0%] Export ROM set...                — Placeholder (disabled)
   [  0%] Analyze tape decoding...         — Placeholder (disabled)
+  [  0%] First Time Setup...              — Placeholder (disabled)
   [  0%] Keyboard Shortcuts...            — Placeholder (disabled)
+  [  0%] Compatibility Database...        — Placeholder (disabled)
   [  0%] Advanced Configuration...        — Placeholder (disabled)
 
 1.9 WINDOW MENU
-  [  0%] Close                            — Placeholder (disabled)
-  [  0%] Undock                           — Placeholder (disabled)
   [100%] Adjust Window Size               — Submenu: 1x/2x/3x/4x sizes, calls SDL_SetWindowSize
+  [100%] Reset Window Layout              — Resets to 2x centered
 
 1.10 HELP MENU
   [  0%] Contents                         — Placeholder (disabled)
@@ -183,30 +191,53 @@ Files:
   [100%] Title, description, license      — Basic info shown
   [100%] OK button                        — Dismisses dialog
 
-2.4 AUDIO OPTIONS DIALOG (IDD_AUDIO_OPTIONS)
+2.4 ADJUST COLORS DIALOG (ui_display.cpp — IDD_ADJUST_COLORS)
+  [100%] Share NTSC/PAL toggle            — Checkbox with active standard indicator
+  [100%] Luma Ramp mode combo             — Linear/XL
+  [100%] Color Matching mode combo        — None/sRGB/Adobe RGB/Gamma 2.2/Gamma 2.4
+  [100%] PAL quirks checkbox              — Toggle
+  [100%] Hue Start/Range sliders          — Degree-based sliders
+  [100%] Brightness/Contrast/Saturation   — Percent-based sliders
+  [100%] Gamma slider                     — Direct float slider (0.50-2.60)
+  [100%] Intensity Scale slider           — Percent-based slider
+  [100%] Artifacting Phase/Sat/Sharpness  — Degree + percent sliders
+  [100%] Color Matrix R-Y/G-Y/B-Y        — Shift (degrees) + Scale (percent) per channel
+  [100%] Reset to Defaults button         — Restores default color settings
+  [  0%] Preset selection combo           — Missing: preset list from ATGetColorPresetCount()
+  [  0%] Palette preview                  — Missing: visual color swatch display
+
+2.5 DISPLAY SETTINGS DIALOG (ui_display.cpp)
+  [100%] Filter Mode combo                — 5 modes
+  [100%] Stretch Mode combo               — 5 modes
+  [100%] Overscan Mode combo              — 5 modes
+  [100%] Show FPS checkbox                — Toggle
+  [100%] Show Indicators checkbox         — Toggle
+  [100%] Auto-Hide Mouse Pointer          — Toggle
+
+2.6 AUDIO OPTIONS DIALOG (IDD_AUDIO_OPTIONS)
   [  0%] ENTIRE DIALOG MISSING            — Missing: Volume slider, Drive volume, Covox volume,
                                             Latency slider, Extra buffer, Audio API selector,
                                             Debug info checkbox, OK/Cancel buttons
                                             Note: some settings are in Configure System > Audio
 
-2.5 CARTRIDGE MAPPER SELECTION (IDD_CARTRIDGE_MAPPER)
+2.7 CARTRIDGE MAPPER SELECTION (IDD_CARTRIDGE_MAPPER)
   [  0%] ENTIRE DIALOG MISSING            — Missing: mapper list, show all types, show details,
                                             2600 warning, OK/Cancel
 
-2.6 CREATE DISK DIALOG (IDD_CREATE_DISK)
+2.8 CREATE DISK DIALOG (IDD_CREATE_DISK)
   [ 80%] Create Disk dialog               — Format combo (10 presets), sector count, sector size
                                             radio (128/256/512), boot sector count. Missing: filesystem combo
 
-2.7 CHEATER DIALOG (IDD_CHEATER)
+2.9 CHEATER DIALOG (IDD_CHEATER)
   [  0%] ENTIRE DIALOG MISSING            — Missing: search results list, active cheats list,
                                             value type (8/16-bit), search mode/value,
                                             Add/Edit/Delete/Transfer/Update, Load/Save, OK
 
-2.8 COMPATIBILITY WARNING (IDD_COMPATIBILITY)
+2.10 COMPATIBILITY WARNING (IDD_COMPATIBILITY)
   [  0%] ENTIRE DIALOG MISSING            — Missing: auto-adjust, boot anyway, pause buttons,
                                             ignore checkboxes
 
-2.9 REWIND DIALOG
+2.11 REWIND DIALOG
   [  0%] ENTIRE DIALOG MISSING            — Missing: rewind timeline UI
 
 
@@ -482,30 +513,28 @@ SUMMARY
 
 Category                    Implemented    Total    Coverage
 ------------------------------------------------------------
-Menu items (leaf)              58          198       29%
-Standalone dialogs              3           20+      15%
+Menu items (leaf)             ~110          198       56%
+Standalone dialogs              5           20+      25%
 Configure System pages         20           28       71%
 Config page controls         ~145         ~210       69%
 Device config dialogs           0           25        0%
 Debugger dialogs/panes          0           14        0%
 Input mapping dialogs           0            9        0%
-Color/effects dialogs           0           11        0%
+Color/effects dialogs           1           11        9%
 Misc dialogs                    0           12+       0%
 
-Core daily-use features (boot, open, disk mount/eject, cassette control,
-system config, video/audio settings, reset, pause, speed, console switches)
-are well covered. Menu structure now has Record and Window menus (placeholder).
-Configure System has 20 of 28 pages including 5 new pages (Devices placeholder,
-Media Defaults, Enhanced Text, Caption, Workarounds) and Speed page completion
-(frame rate, VSync).
+Core daily-use features are well covered: boot, open, disk mount/eject,
+cassette control (incl. export audio), system config, video/audio settings,
+reset, pause, warp speed, console switches, special cartridges, secondary
+cartridges, firmware save, audio/SAP recording, color adjustment, GTIA
+visualization. Menu ordering matches Windows menu_default.txt.
 
 Remaining major areas:
   - Debugger (14+ panes/dialogs)
   - Input mapping (9 dialogs)
   - Device configuration (25 dialogs)
-  - Color/effects calibration (8+ dialogs)
-  - State save/load
-  - Recording (audio/video)
-  - MRU (recently booted)
-  - Special cartridges
+  - Screen effects dialog (bloom, HDR, scanlines)
+  - Video recording
   - Profile management
+  - Rewind functionality
+  - Frame capture/copy

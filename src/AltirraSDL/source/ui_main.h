@@ -34,12 +34,20 @@ bool ATUIWantCaptureMouse();
 void ATUIRenderFrame(ATSimulator &sim, VDVideoDisplaySDL3 &display,
 	SDL_Renderer *renderer, ATUIState &state);
 
+// Process deferred file dialog results on main thread (call each frame)
+void ATUIPollDeferredActions();
+
 // MRU list (shared with main loop for file drop)
 void ATAddMRU(const wchar_t *path);
 
 // Quick save state (F7 load, F8 save)
 void ATUIQuickSaveState();
 void ATUIQuickLoadState();
+
+// Mouse capture — SDL3 implementation (defined in uiaccessors_stubs.cpp)
+void ATUISetMouseCaptureWindow(SDL_Window *window);
+void ATUICaptureMouse();
+void ATUIReleaseMouse();
 
 // Dialog render functions (each in its own .cpp file)
 void ATUIRenderSystemConfig(ATSimulator &sim, ATUIState &state);

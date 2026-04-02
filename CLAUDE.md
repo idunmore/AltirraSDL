@@ -229,3 +229,63 @@ layout).
 3. Do not add options that the Windows version doesn't show in that
    context
 4. Do not omit options that the Windows version does show
+
+### Understand API state machines before calling methods
+
+The simulator has independent state axes (running/paused, hardware
+state, media state).  Methods like `ColdReset()` change hardware state
+but do **not** change running state — an emulator that was paused stays
+paused after reset.  Calling a method without understanding which state
+axes it touches leads to inconsistent states.
+
+**Rule:** Before calling any simulator or hardware API, understand what
+state it changes and what it leaves unchanged.  If the intended user
+action requires multiple state changes, make all of them explicitly.
+
+### Assume all callbacks are called from arbitrary threads
+
+Any API that accepts a callback — file dialogs, audio streams, network
+I/O, timers — may invoke it from a thread other than the caller's.
+The emulator core is single-threaded and not safe for concurrent
+access.
+
+**Rule:** Callbacks from external APIs must never directly mutate
+shared state.  Capture only plain data (paths, indices, flags) and
+hand it to the main thread via a thread-safe mechanism.  Process the
+results synchronously in the main loop.
+
+### Every acquired state must have a release path for all exit scenarios
+
+If code acquires stateful resources on an event (key press → joystick
+direction, mouse capture, console switch hold), the corresponding
+release must fire on **every** exit path: normal release, focus loss,
+UI overlay capture, error, shutdown.  Missing any one path causes
+stuck state.
+
+**Rule:** When implementing any press/release, capture/release, or
+acquire/release pattern, enumerate all the ways the release event can
+be lost and add explicit cleanup for each.
+
+### Never guess hardware-specific constants
+
+Atari hardware encodings (keyboard scancodes, register bit layouts,
+PIA port assignments) are non-obvious and don't follow intuitive
+patterns.  Values guessed from documentation, memory, or apparent
+patterns are wrong more often than right.
+
+**Rule:** Every hardware-facing constant must be traced to an
+authoritative source — the existing codebase, a hardware reference
+manual, or a verified test.  If two sources disagree, test on real
+hardware or use the value from the battle-tested Windows implementation.
+
+### Keep UI representation and behaviour in sync
+
+When the UI displays information to the user (shortcut hints, status
+indicators, enabled/disabled states), it creates a contract.  If the
+displayed information doesn't match actual behaviour, users will report
+bugs even when the underlying functionality is correct.
+
+**Rule:** Any user-visible text or state that implies functionality
+(keyboard shortcut labels, checkbox states, enabled menu items) must be
+backed by working code.  When changing behaviour, update the display.
+When changing the display, update behaviour.

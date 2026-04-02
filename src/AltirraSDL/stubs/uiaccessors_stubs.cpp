@@ -269,7 +269,10 @@ void ATUIInitVirtualKeyMap(const ATUIKeyboardOptions&) {
 }
 
 // =========================================================================
-// Port menus (uiportmenus.h) — all no-ops
+// Port menus — SDL3 ImGui port menus are rendered inline in ui_main.cpp.
+// These stubs satisfy the linker for code that calls the Win32 port menu
+// functions (e.g. settings.cpp after profile switch).  The SDL3 UI
+// re-queries ATInputManager directly each frame, so no-ops are fine.
 // =========================================================================
 
 void ATInitPortMenus(ATInputManager *) {}
@@ -287,6 +290,53 @@ void ATUIUpdateSpeedTiming() {}
 void ATUIResizeDisplay() {}
 
 // =========================================================================
+// Mouse capture — real SDL3 implementation
+// =========================================================================
+
+#include <SDL3/SDL.h>
+#include "inputmanager.h"
+
+// The SDL3 window pointer, set by ATUISetMouseCaptureWindow() from main.
+static SDL_Window *s_pMouseCaptureWindow = nullptr;
+static bool s_mouseCaptured = false;
+
+void ATUISetMouseCaptureWindow(SDL_Window *window) {
+	s_pMouseCaptureWindow = window;
+}
+
+bool ATUIIsMouseCaptured() {
+	return s_mouseCaptured;
+}
+
+void ATUICaptureMouse() {
+	if (s_mouseCaptured || !s_pMouseCaptureWindow)
+		return;
+
+	ATInputManager *im = g_sim.GetInputManager();
+	if (!im || !im->IsMouseMapped() || !g_sim.IsRunning())
+		return;
+
+	s_mouseCaptured = true;
+
+	if (im->IsMouseAbsoluteMode()) {
+		// Absolute mode (light pen): confine cursor to window
+		SDL_SetWindowMouseGrab(s_pMouseCaptureWindow, true);
+	} else {
+		// Relative mode (paddle/mouse): hide cursor and use relative motion
+		SDL_SetWindowRelativeMouseMode(s_pMouseCaptureWindow, true);
+	}
+}
+
+void ATUIReleaseMouse() {
+	if (!s_mouseCaptured || !s_pMouseCaptureWindow)
+		return;
+
+	s_mouseCaptured = false;
+	SDL_SetWindowRelativeMouseMode(s_pMouseCaptureWindow, false);
+	SDL_SetWindowMouseGrab(s_pMouseCaptureWindow, false);
+}
+
+// =========================================================================
 // Misc UI functions — no-ops / simple stubs
 // =========================================================================
 
@@ -302,7 +352,6 @@ void ATUIOpenOnScreenKeyboard() {}
 void ATUIToggleHoldKeys() {}
 bool ATUICanManipulateWindows() { return false; }
 bool ATUIIsModalActive() { return false; }
-bool ATUIIsMouseCaptured() { return false; }
 
 VDGUIHandle ATUIGetMainWindow() { return nullptr; }
 VDGUIHandle ATUIGetNewPopupOwner() { return nullptr; }

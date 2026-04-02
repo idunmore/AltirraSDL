@@ -37,8 +37,63 @@
 #include <at/ataudio/pokey.h>
 #include "uiaccessors.h"
 #include "uitypes.h"
+#include <vd2/system/strutil.h>
+#include "inputmanager.h"
+#include "inputmap.h"
 
 extern ATSimulator g_sim;
+
+// =========================================================================
+// Deferred action queue — thread-safe handoff from file dialog callbacks
+//
+// SDL3 file dialog callbacks may run on a background thread (platform-
+// dependent).  All simulator mutations must happen on the main thread.
+// Callbacks push VDStringW paths here; the main loop drains the queue
+// each frame via ATUIPollDeferredActions().
+// =========================================================================
+
+#include <mutex>
+#include <vector>
+
+enum ATDeferredActionType {
+	kATDeferred_BootImage,
+	kATDeferred_OpenImage,
+	kATDeferred_AttachCartridge,
+	kATDeferred_AttachSecondaryCartridge,
+	kATDeferred_AttachDisk,        // uses mInt for drive index
+	kATDeferred_LoadState,
+	kATDeferred_SaveState,
+	kATDeferred_SaveCassette,
+	kATDeferred_ExportCassetteAudio,
+	kATDeferred_SaveCartridge,
+	kATDeferred_SaveFirmware,      // uses mInt for firmware index
+	kATDeferred_LoadCassette,
+	kATDeferred_StartRecordRaw,
+	kATDeferred_StartRecordWAV,
+	kATDeferred_StartRecordSAP,
+};
+
+struct ATDeferredAction {
+	ATDeferredActionType type;
+	VDStringW path;
+	int mInt = 0;
+};
+
+static std::mutex g_deferredMutex;
+static std::vector<ATDeferredAction> g_deferredActions;
+
+static void ATUIPushDeferred(ATDeferredActionType type, const char *utf8path, int extra = 0) {
+	ATDeferredAction action;
+	action.type = type;
+	action.path = VDTextU8ToW(utf8path, -1);
+	action.mInt = extra;
+
+	std::lock_guard<std::mutex> lock(g_deferredMutex);
+	g_deferredActions.push_back(std::move(action));
+}
+
+// Called from main loop each frame — processes deferred file dialog results.
+void ATUIPollDeferredActions();
 
 // =========================================================================
 // MRU (Most Recently Used) list — same registry format as Windows
@@ -112,68 +167,29 @@ static void ATClearMRU() {
 
 static void BootImageCallback(void *, const char * const *filelist, int) {
 	if (!filelist || !filelist[0]) return;
-	VDStringW widePath = VDTextU8ToW(filelist[0], -1);
-	ATImageLoadContext ctx {};
-	if (!g_sim.Load(widePath.c_str(), kATMediaWriteMode_RO, &ctx))
-		fprintf(stderr, "[AltirraSDL] Warning: could not load '%s'\n", filelist[0]);
-	else {
-		ATAddMRU(widePath.c_str());
-		g_sim.ColdReset();
-		fprintf(stderr, "[AltirraSDL] Loaded: %s\n", filelist[0]);
-	}
+	ATUIPushDeferred(kATDeferred_BootImage, filelist[0]);
 }
 
 static void OpenImageCallback(void *, const char * const *filelist, int) {
 	if (!filelist || !filelist[0]) return;
-	VDStringW widePath = VDTextU8ToW(filelist[0], -1);
-	ATImageLoadContext ctx {};
-	if (!g_sim.Load(widePath.c_str(), kATMediaWriteMode_RO, &ctx))
-		fprintf(stderr, "[AltirraSDL] Warning: could not load '%s'\n", filelist[0]);
-	else {
-		ATAddMRU(widePath.c_str());
-		fprintf(stderr, "[AltirraSDL] Opened: %s (no reset)\n", filelist[0]);
-	}
+	ATUIPushDeferred(kATDeferred_OpenImage, filelist[0]);
 }
 
 static void CartridgeAttachCallback(void *, const char * const *filelist, int) {
 	if (!filelist || !filelist[0]) return;
-	VDStringW widePath = VDTextU8ToW(filelist[0], -1);
-	ATCartLoadContext ctx {};
-	if (!g_sim.LoadCartridge(0, widePath.c_str(), &ctx))
-		fprintf(stderr, "[AltirraSDL] Warning: could not load cartridge '%s'\n", filelist[0]);
-	else {
-		g_sim.ColdReset();
-		fprintf(stderr, "[AltirraSDL] Cartridge loaded: %s\n", filelist[0]);
-	}
+	ATUIPushDeferred(kATDeferred_AttachCartridge, filelist[0]);
 }
 
 // Per-drive attach callback — drive index in userdata
 static void AttachDiskCallback(void *userdata, const char * const *filelist, int) {
 	int driveIdx = (int)(intptr_t)userdata;
 	if (!filelist || !filelist[0] || driveIdx < 0 || driveIdx >= 15) return;
-	VDStringW widePath = VDTextU8ToW(filelist[0], -1);
-	try {
-		g_sim.GetDiskInterface(driveIdx).LoadDisk(widePath.c_str());
-		fprintf(stderr, "[AltirraSDL] Attached D%d: %s\n", driveIdx + 1, filelist[0]);
-	} catch (...) {
-		fprintf(stderr, "[AltirraSDL] Failed to attach D%d: %s\n", driveIdx + 1, filelist[0]);
-	}
+	ATUIPushDeferred(kATDeferred_AttachDisk, filelist[0], driveIdx);
 }
 
 static void CassetteSaveCallback(void *, const char * const *filelist, int) {
 	if (!filelist || !filelist[0]) return;
-	VDStringW widePath = VDTextU8ToW(filelist[0], -1);
-	try {
-		IATCassetteImage *image = g_sim.GetCassette().GetImage();
-		if (!image) return;
-		VDFileStream fs(widePath.c_str(), nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kCreateAlways);
-		ATSaveCassetteImageCAS(fs, image);
-		g_sim.GetCassette().SetImagePersistent(widePath.c_str());
-		g_sim.GetCassette().SetImageClean();
-		fprintf(stderr, "[AltirraSDL] Cassette saved: %s\n", filelist[0]);
-	} catch (...) {
-		fprintf(stderr, "[AltirraSDL] Failed to save cassette: %s\n", filelist[0]);
-	}
+	ATUIPushDeferred(kATDeferred_SaveCassette, filelist[0]);
 }
 
 // =========================================================================
@@ -184,23 +200,12 @@ static vdrefptr<IATSerializable> g_pQuickSaveState;
 
 static void SaveStateCallback(void *, const char * const *filelist, int) {
 	if (!filelist || !filelist[0]) return;
-	VDStringW widePath = VDTextU8ToW(filelist[0], -1);
-	try {
-		g_sim.SaveState(widePath.c_str());
-		fprintf(stderr, "[AltirraSDL] State saved: %s\n", filelist[0]);
-	} catch (...) {
-		fprintf(stderr, "[AltirraSDL] Failed to save state: %s\n", filelist[0]);
-	}
+	ATUIPushDeferred(kATDeferred_SaveState, filelist[0]);
 }
 
 static void LoadStateCallback(void *, const char * const *filelist, int) {
 	if (!filelist || !filelist[0]) return;
-	VDStringW widePath = VDTextU8ToW(filelist[0], -1);
-	ATImageLoadContext ctx {};
-	if (!g_sim.Load(widePath.c_str(), kATMediaWriteMode_RO, &ctx))
-		fprintf(stderr, "[AltirraSDL] Failed to load state: %s\n", filelist[0]);
-	else
-		fprintf(stderr, "[AltirraSDL] State loaded: %s\n", filelist[0]);
+	ATUIPushDeferred(kATDeferred_LoadState, filelist[0]);
 }
 
 void ATUIQuickSaveState() {
@@ -218,6 +223,7 @@ void ATUIQuickLoadState() {
 		return;
 	try {
 		g_sim.ApplySnapshot(*g_pQuickSaveState, nullptr);
+		g_sim.Resume();
 		fprintf(stderr, "[AltirraSDL] Quick load state applied\n");
 	} catch (...) {
 		fprintf(stderr, "[AltirraSDL] Quick load failed\n");
@@ -295,6 +301,122 @@ static void ATUIStopRecording() {
 
 	if (wasRecording)
 		fprintf(stderr, "[AltirraSDL] Recording stopped\n");
+}
+
+// =========================================================================
+// Deferred action execution (main thread only)
+// =========================================================================
+
+void ATUIPollDeferredActions() {
+	std::vector<ATDeferredAction> actions;
+	{
+		std::lock_guard<std::mutex> lock(g_deferredMutex);
+		actions.swap(g_deferredActions);
+	}
+
+	for (auto& a : actions) {
+		try {
+			switch (a.type) {
+			case kATDeferred_BootImage: {
+				ATImageLoadContext ctx {};
+				if (g_sim.Load(a.path.c_str(), kATMediaWriteMode_RO, &ctx)) {
+					ATAddMRU(a.path.c_str());
+					g_sim.ColdReset();
+					g_sim.Resume();
+				}
+				break;
+			}
+			case kATDeferred_OpenImage: {
+				ATImageLoadContext ctx {};
+				if (g_sim.Load(a.path.c_str(), kATMediaWriteMode_RO, &ctx)) {
+					ATAddMRU(a.path.c_str());
+					g_sim.Resume();
+				}
+				break;
+			}
+			case kATDeferred_AttachCartridge: {
+				ATCartLoadContext ctx {};
+				if (g_sim.LoadCartridge(0, a.path.c_str(), &ctx)) {
+					g_sim.ColdReset();
+					g_sim.Resume();
+				}
+				break;
+			}
+			case kATDeferred_AttachSecondaryCartridge: {
+				ATCartLoadContext ctx {};
+				if (g_sim.LoadCartridge(1, a.path.c_str(), &ctx)) {
+					g_sim.ColdReset();
+					g_sim.Resume();
+				}
+				break;
+			}
+			case kATDeferred_AttachDisk: {
+				int idx = a.mInt;
+				if (idx >= 0 && idx < 15)
+					g_sim.GetDiskInterface(idx).LoadDisk(a.path.c_str());
+				break;
+			}
+			case kATDeferred_LoadState: {
+				ATImageLoadContext ctx {};
+				if (g_sim.Load(a.path.c_str(), kATMediaWriteMode_RO, &ctx))
+					g_sim.Resume();
+				break;
+			}
+			case kATDeferred_SaveState:
+				g_sim.SaveState(a.path.c_str());
+				break;
+			case kATDeferred_SaveCassette: {
+				IATCassetteImage *image = g_sim.GetCassette().GetImage();
+				if (image) {
+					VDFileStream fs(a.path.c_str(), nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kCreateAlways);
+					ATSaveCassetteImageCAS(fs, image);
+					g_sim.GetCassette().SetImagePersistent(a.path.c_str());
+					g_sim.GetCassette().SetImageClean();
+				}
+				break;
+			}
+			case kATDeferred_ExportCassetteAudio: {
+				IATCassetteImage *image = g_sim.GetCassette().GetImage();
+				if (image) {
+					VDFileStream f(a.path.c_str(), nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kCreateAlways);
+					ATSaveCassetteImageWAV(f, image);
+					g_sim.GetCassette().SetImageClean();
+				}
+				break;
+			}
+			case kATDeferred_SaveCartridge: {
+				ATCartridgeEmulator *cart = g_sim.GetCartridge(0);
+				if (cart && cart->GetMode()) {
+					VDStringA u8 = VDTextWToU8(a.path);
+					const char *ext = strrchr(u8.c_str(), '.');
+					bool includeHeader = true;
+					if (ext && (strcasecmp(ext, ".bin") == 0 || strcasecmp(ext, ".rom") == 0))
+						includeHeader = false;
+					cart->Save(a.path.c_str(), includeHeader);
+				}
+				break;
+			}
+			case kATDeferred_SaveFirmware:
+				g_sim.SaveStorage((ATStorageId)(kATStorageId_Firmware + a.mInt), a.path.c_str());
+				break;
+			case kATDeferred_LoadCassette:
+				g_sim.GetCassette().Load(a.path.c_str());
+				break;
+			case kATDeferred_StartRecordRaw:
+				ATUIStartAudioRecording(a.path.c_str(), true);
+				break;
+			case kATDeferred_StartRecordWAV:
+				ATUIStartAudioRecording(a.path.c_str(), false);
+				break;
+			case kATDeferred_StartRecordSAP:
+				ATUIStartSAPRecording(a.path.c_str());
+				break;
+			}
+		} catch (...) {
+			VDStringA u8 = VDTextWToU8(a.path);
+			fprintf(stderr, "[AltirraSDL] Deferred action %d failed for: %s\n", a.type, u8.c_str());
+		}
+	}
 }
 
 // =========================================================================
@@ -396,6 +518,7 @@ static void RenderFileMenu(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 				if (g_sim.Load(wpath.c_str(), kATMediaWriteMode_RO, &ctx)) {
 					ATAddMRU(wpath.c_str());
 					g_sim.ColdReset();
+					g_sim.Resume();
 				}
 			}
 			if (ImGui::IsItemHovered())
@@ -496,10 +619,8 @@ static void RenderFileMenu(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 				{ "Cassette Images", "cas;wav" }, { "All Files", "*" },
 			};
 			SDL_ShowOpenFileDialog([](void *, const char * const *fl, int) {
-				if (fl && fl[0]) {
-					VDStringW p = VDTextU8ToW(fl[0], -1);
-					g_sim.GetCassette().Load(p.c_str());
-				}
+				if (fl && fl[0])
+					ATUIPushDeferred(kATDeferred_LoadCassette, fl[0]);
 			}, nullptr, window, casFilters, 2, nullptr, false);
 		}
 
@@ -516,20 +637,8 @@ static void RenderFileMenu(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 				{ "WAV Audio", "wav" }, { "All Files", "*" },
 			};
 			SDL_ShowSaveFileDialog([](void *, const char * const *fl, int) {
-				if (fl && fl[0]) {
-					VDStringW p = VDTextU8ToW(fl[0], -1);
-					try {
-						IATCassetteImage *image = g_sim.GetCassette().GetImage();
-						if (image) {
-							VDFileStream f(p.c_str(), nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kCreateAlways);
-							ATSaveCassetteImageWAV(f, image);
-							g_sim.GetCassette().SetImageClean();
-							fprintf(stderr, "[AltirraSDL] Exported cassette audio: %s\n", fl[0]);
-						}
-					} catch (...) {
-						fprintf(stderr, "[AltirraSDL] Failed to export cassette audio\n");
-					}
-				}
+				if (fl && fl[0])
+					ATUIPushDeferred(kATDeferred_ExportCassetteAudio, fl[0]);
 			}, nullptr, window, wavFilters, 1, nullptr);
 		}
 		ImGui::EndMenu();
@@ -586,6 +695,7 @@ static void RenderFileMenu(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 			if (ImGui::MenuItem(sc.label)) {
 				sim.LoadNewCartridge(sc.mode);
 				sim.ColdReset();
+				sim.Resume();
 			}
 		}
 
@@ -594,6 +704,7 @@ static void RenderFileMenu(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 		if (ImGui::MenuItem("BASIC")) {
 			sim.LoadCartridgeBASIC();
 			sim.ColdReset();
+			sim.Resume();
 		}
 
 		ImGui::EndMenu();
@@ -603,17 +714,14 @@ static void RenderFileMenu(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 	if (ImGui::BeginMenu("Secondary Cartridge")) {
 		if (ImGui::MenuItem("Attach..."))
 			SDL_ShowOpenFileDialog([](void *, const char * const *fl, int) {
-				if (fl && fl[0]) {
-					VDStringW p = VDTextU8ToW(fl[0], -1);
-					ATCartLoadContext ctx {};
-					if (g_sim.LoadCartridge(1, p.c_str(), &ctx))
-						g_sim.ColdReset();
-				}
+				if (fl && fl[0])
+					ATUIPushDeferred(kATDeferred_AttachSecondaryCartridge, fl[0]);
 			}, nullptr, window, kCartFilters, 2, nullptr, false);
 
 		if (ImGui::MenuItem("Detach", nullptr, false, sim.IsCartridgeAttached(1))) {
 			sim.UnloadCartridge(1);
 			sim.ColdReset();
+			sim.Resume();
 		}
 		ImGui::EndMenu();
 	}
@@ -624,6 +732,7 @@ static void RenderFileMenu(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 	if (ImGui::MenuItem("Detach Cartridge", nullptr, false, sim.IsCartridgeAttached(0))) {
 		sim.UnloadCartridge(0);
 		sim.ColdReset();
+		sim.Resume();
 	}
 
 	// Save Firmware submenu
@@ -635,23 +744,8 @@ static void RenderFileMenu(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 				{ "All Files", "*" },
 			};
 			SDL_ShowSaveFileDialog([](void *, const char * const *fl, int) {
-				if (fl && fl[0]) {
-					VDStringW p = VDTextU8ToW(fl[0], -1);
-					try {
-						ATCartridgeEmulator *cart = g_sim.GetCartridge(0);
-						if (cart && cart->GetMode()) {
-							// Determine header inclusion from file extension
-							bool includeHeader = true;
-							const char *ext = strrchr(fl[0], '.');
-							if (ext && (strcasecmp(ext, ".bin") == 0 || strcasecmp(ext, ".rom") == 0))
-								includeHeader = false;
-							cart->Save(p.c_str(), includeHeader);
-							fprintf(stderr, "[AltirraSDL] Cartridge saved: %s\n", fl[0]);
-						}
-					} catch (...) {
-						fprintf(stderr, "[AltirraSDL] Failed to save cartridge\n");
-					}
-				}
+				if (fl && fl[0])
+					ATUIPushDeferred(kATDeferred_SaveCartridge, fl[0]);
 			}, nullptr, window, cartSaveFilters, 3, nullptr);
 		}
 
@@ -660,16 +754,10 @@ static void RenderFileMenu(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 			static const SDL_DialogFileFilter fwFilters[] = {
 				{ "Firmware Images", "bin;rom" }, { "All Files", "*" },
 			};
-			SDL_ShowSaveFileDialog([](void *, const char * const *fl, int) {
-				if (fl && fl[0]) {
-					VDStringW p = VDTextU8ToW(fl[0], -1);
-					try {
-						g_sim.SaveStorage((ATStorageId)kATStorageId_Firmware, p.c_str());
-					} catch (...) {
-						fprintf(stderr, "[AltirraSDL] Failed to save firmware\n");
-					}
-				}
-			}, nullptr, window, fwFilters, 2, nullptr);
+			SDL_ShowSaveFileDialog([](void *ud, const char * const *fl, int) {
+				if (fl && fl[0])
+					ATUIPushDeferred(kATDeferred_SaveFirmware, fl[0], (int)(intptr_t)ud);
+			}, (void *)(intptr_t)0, window, fwFilters, 2, nullptr);
 		}
 
 		if (ImGui::MenuItem("Save KMK/JZ IDE SDX Flash...", nullptr, false,
@@ -677,16 +765,10 @@ static void RenderFileMenu(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 			static const SDL_DialogFileFilter fwFilters[] = {
 				{ "Firmware Images", "bin;rom" }, { "All Files", "*" },
 			};
-			SDL_ShowSaveFileDialog([](void *, const char * const *fl, int) {
-				if (fl && fl[0]) {
-					VDStringW p = VDTextU8ToW(fl[0], -1);
-					try {
-						g_sim.SaveStorage((ATStorageId)(kATStorageId_Firmware + 1), p.c_str());
-					} catch (...) {
-						fprintf(stderr, "[AltirraSDL] Failed to save firmware\n");
-					}
-				}
-			}, nullptr, window, fwFilters, 2, nullptr);
+			SDL_ShowSaveFileDialog([](void *ud, const char * const *fl, int) {
+				if (fl && fl[0])
+					ATUIPushDeferred(kATDeferred_SaveFirmware, fl[0], (int)(intptr_t)ud);
+			}, (void *)(intptr_t)1, window, fwFilters, 2, nullptr);
 		}
 
 		if (ImGui::MenuItem("Save Ultimate1MB Flash...", nullptr, false,
@@ -694,16 +776,10 @@ static void RenderFileMenu(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 			static const SDL_DialogFileFilter fwFilters[] = {
 				{ "Firmware Images", "bin;rom" }, { "All Files", "*" },
 			};
-			SDL_ShowSaveFileDialog([](void *, const char * const *fl, int) {
-				if (fl && fl[0]) {
-					VDStringW p = VDTextU8ToW(fl[0], -1);
-					try {
-						g_sim.SaveStorage((ATStorageId)(kATStorageId_Firmware + 2), p.c_str());
-					} catch (...) {
-						fprintf(stderr, "[AltirraSDL] Failed to save firmware\n");
-					}
-				}
-			}, nullptr, window, fwFilters, 2, nullptr);
+			SDL_ShowSaveFileDialog([](void *ud, const char * const *fl, int) {
+				if (fl && fl[0])
+					ATUIPushDeferred(kATDeferred_SaveFirmware, fl[0], (int)(intptr_t)ud);
+			}, (void *)(intptr_t)2, window, fwFilters, 2, nullptr);
 		}
 
 		if (ImGui::MenuItem("Save Rapidus Flash...", nullptr, false,
@@ -711,16 +787,10 @@ static void RenderFileMenu(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 			static const SDL_DialogFileFilter fwFilters[] = {
 				{ "Firmware Images", "bin;rom" }, { "All Files", "*" },
 			};
-			SDL_ShowSaveFileDialog([](void *, const char * const *fl, int) {
-				if (fl && fl[0]) {
-					VDStringW p = VDTextU8ToW(fl[0], -1);
-					try {
-						g_sim.SaveStorage((ATStorageId)(kATStorageId_Firmware + 3), p.c_str());
-					} catch (...) {
-						fprintf(stderr, "[AltirraSDL] Failed to save firmware\n");
-					}
-				}
-			}, nullptr, window, fwFilters, 2, nullptr);
+			SDL_ShowSaveFileDialog([](void *ud, const char * const *fl, int) {
+				if (fl && fl[0])
+					ATUIPushDeferred(kATDeferred_SaveFirmware, fl[0], (int)(intptr_t)ud);
+			}, (void *)(intptr_t)3, window, fwFilters, 2, nullptr);
 		}
 
 		ImGui::EndMenu();
@@ -922,12 +992,18 @@ static void RenderSystemMenu(ATSimulator &sim, ATUIState &state) {
 
 	ImGui::Separator();
 
-	if (ImGui::MenuItem("Warm Reset", "F5"))
+	if (ImGui::MenuItem("Warm Reset", "F5")) {
 		sim.WarmReset();
-	if (ImGui::MenuItem("Cold Reset", "Shift+F5"))
+		sim.Resume();
+	}
+	if (ImGui::MenuItem("Cold Reset", "Shift+F5")) {
 		sim.ColdReset();
-	if (ImGui::MenuItem("Cold Reset (Computer Only)"))
+		sim.Resume();
+	}
+	if (ImGui::MenuItem("Cold Reset (Computer Only)")) {
 		sim.ColdResetComputerOnly();
+		sim.Resume();
+	}
 
 	bool paused = sim.IsPaused();
 	if (ImGui::MenuItem("Pause", "F9", paused)) {
@@ -1093,17 +1169,102 @@ static void RenderSystemMenu(ATSimulator &sim, ATUIState &state) {
 // Input menu
 // =========================================================================
 
+// Render a single Port submenu.  Queries ATInputManager for all input maps
+// that touch the given physical port, presents them as radio items, and
+// toggles activation.  Mirrors Windows uiportmenus.cpp behavior exactly.
+static void RenderPortSubmenu(ATInputManager &im, int portIdx) {
+	// Collect input maps that use this physical port
+	struct MapEntry {
+		ATInputMap *map;
+		VDStringA  name;   // UTF-8 for ImGui
+		bool       active;
+	};
+	std::vector<MapEntry> entries;
+
+	uint32 mapCount = im.GetInputMapCount();
+	for (uint32 i = 0; i < mapCount; ++i) {
+		vdrefptr<ATInputMap> imap;
+		if (im.GetInputMapByIndex(i, ~imap)) {
+			if (imap->UsesPhysicalPort(portIdx)) {
+				MapEntry e;
+				e.map = imap;
+				e.name = VDTextWToU8(imap->GetName(), -1);
+				e.active = im.IsInputMapEnabled(imap);
+				entries.push_back(std::move(e));
+			}
+		}
+	}
+
+	// Sort alphabetically (case-insensitive), matching Windows
+	std::sort(entries.begin(), entries.end(),
+		[](const MapEntry &a, const MapEntry &b) {
+			return vdwcsicmp(a.map->GetName(), b.map->GetName()) < 0;
+		});
+
+	// "None" item — selected when no maps are active for this port
+	bool anyActive = false;
+	for (const auto &e : entries)
+		if (e.active) { anyActive = true; break; }
+
+	if (ImGui::MenuItem("None", nullptr, !anyActive)) {
+		// Deactivate all maps for this port
+		for (const auto &e : entries)
+			if (e.active)
+				im.ActivateInputMap(e.map, false);
+	}
+
+	// One radio item per input map — strict radio behavior matching Windows:
+	// clicking any item activates it and deactivates all others for this port.
+	// Clicking the already-active item is a no-op (it stays selected).
+	for (const auto &e : entries) {
+		if (ImGui::MenuItem(e.name.c_str(), nullptr, e.active)) {
+			for (const auto &other : entries)
+				im.ActivateInputMap(other.map, &other == &e);
+		}
+	}
+}
+
 static void RenderInputMenu(ATSimulator &sim) {
+	ATInputManager *pIM = sim.GetInputManager();
+
 	ImGui::MenuItem("Input Mappings...", nullptr, false, false);  // placeholder
 	ImGui::MenuItem("Input Setup...", nullptr, false, false);     // placeholder
-	ImGui::MenuItem("Cycle Quick Maps", nullptr, false, false);   // placeholder
+
+	// Cycle Quick Maps — cycles through maps marked as quick-cycle
+	if (ImGui::MenuItem("Cycle Quick Maps")) {
+		if (pIM) {
+			ATInputMap *pMap = pIM->CycleQuickMaps();
+			if (pMap) {
+				VDStringA msg;
+				msg = "Quick map: ";
+				msg += VDTextWToU8(pMap->GetName(), -1);
+				fprintf(stderr, "[AltirraSDL] %s\n", msg.c_str());
+			} else {
+				fprintf(stderr, "[AltirraSDL] Quick maps disabled\n");
+			}
+		}
+	}
+
 	ImGui::Separator();
 
-	ImGui::MenuItem("Capture Mouse", nullptr, false, false);  // placeholder
+	// Capture Mouse — only enabled when mouse is mapped in an input map
+	{
+		bool mouseMapped = pIM && pIM->IsMouseMapped();
+		bool captured = ATUIIsMouseCaptured();
+		if (ImGui::MenuItem("Capture Mouse", nullptr, captured, mouseMapped)) {
+			if (captured)
+				ATUIReleaseMouse();
+			else
+				ATUICaptureMouse();
+		}
+	}
 
-	bool mouseCapture = ATUIGetMouseAutoCapture();
-	if (ImGui::MenuItem("Auto-Capture Mouse", nullptr, mouseCapture))
-		ATUISetMouseAutoCapture(!mouseCapture);
+	{
+		bool mouseMapped = pIM && pIM->IsMouseMapped();
+		bool mouseAutoCapture = ATUIGetMouseAutoCapture();
+		if (ImGui::MenuItem("Auto-Capture Mouse", nullptr, mouseAutoCapture, mouseMapped))
+			ATUISetMouseAutoCapture(!mouseAutoCapture);
+	}
 
 	ImGui::Separator();
 
@@ -1112,13 +1273,15 @@ static void RenderInputMenu(ATSimulator &sim) {
 
 	ImGui::Separator();
 
-	// Port 1-4 submenus (placeholders — requires input mapping system)
-	for (int i = 0; i < 4; ++i) {
-		char label[16];
-		snprintf(label, sizeof(label), "Port %d", i + 1);
-		if (ImGui::BeginMenu(label)) {
-			ImGui::MenuItem("None", nullptr, false, false);  // placeholder
-			ImGui::EndMenu();
+	// Port 1-4 submenus — dynamic input map assignment per port
+	if (pIM) {
+		for (int i = 0; i < 4; ++i) {
+			char label[16];
+			snprintf(label, sizeof(label), "Port %d", i + 1);
+			if (ImGui::BeginMenu(label)) {
+				RenderPortSubmenu(*pIM, i);
+				ImGui::EndMenu();
+			}
 		}
 	}
 }
@@ -1231,10 +1394,8 @@ static void RenderRecordMenu(ATSimulator &sim, SDL_Window *window) {
 			{ "Raw PCM Audio", "pcm" }, { "All Files", "*" },
 		};
 		SDL_ShowSaveFileDialog([](void *, const char * const *fl, int) {
-			if (fl && fl[0]) {
-				VDStringW p = VDTextU8ToW(fl[0], -1);
-				ATUIStartAudioRecording(p.c_str(), true);
-			}
+			if (fl && fl[0])
+				ATUIPushDeferred(kATDeferred_StartRecordRaw, fl[0]);
 		}, nullptr, window, rawFilters, 1, nullptr);
 	}
 
@@ -1243,10 +1404,8 @@ static void RenderRecordMenu(ATSimulator &sim, SDL_Window *window) {
 			{ "WAV Audio", "wav" }, { "All Files", "*" },
 		};
 		SDL_ShowSaveFileDialog([](void *, const char * const *fl, int) {
-			if (fl && fl[0]) {
-				VDStringW p = VDTextU8ToW(fl[0], -1);
-				ATUIStartAudioRecording(p.c_str(), false);
-			}
+			if (fl && fl[0])
+				ATUIPushDeferred(kATDeferred_StartRecordWAV, fl[0]);
 		}, nullptr, window, wavFilters, 1, nullptr);
 	}
 
@@ -1257,10 +1416,8 @@ static void RenderRecordMenu(ATSimulator &sim, SDL_Window *window) {
 			{ "SAP Files", "sap" }, { "All Files", "*" },
 		};
 		SDL_ShowSaveFileDialog([](void *, const char * const *fl, int) {
-			if (fl && fl[0]) {
-				VDStringW p = VDTextU8ToW(fl[0], -1);
-				ATUIStartSAPRecording(p.c_str());
-			}
+			if (fl && fl[0])
+				ATUIPushDeferred(kATDeferred_StartRecordSAP, fl[0]);
 		}, nullptr, window, sapFilters, 1, nullptr);
 	}
 

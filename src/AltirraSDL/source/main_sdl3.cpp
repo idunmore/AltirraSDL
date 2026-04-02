@@ -28,6 +28,8 @@
 #include "simulator.h"
 #include <at/ataudio/audiooutput.h>
 #include "uiaccessors.h"
+#include "inputmanager.h"
+#include "inputdefs.h"
 #include "gtia.h"
 #include "joystick.h"
 #include "joystick_sdl3.h"
@@ -107,7 +109,23 @@ static FramePacer g_pacer;
 // Event handling
 // =========================================================================
 
+static bool g_prevImGuiCapture = false;
+static bool g_prevImGuiMouseCapture = false;
+
 static void HandleEvents() {
+	// Detect when ImGui starts capturing keyboard (e.g. menu opened)
+	// and release all held emulator keys to prevent stuck input.
+	bool imguiCapture = ATUIWantCaptureKeyboard();
+	if (imguiCapture && !g_prevImGuiCapture)
+		ATInputSDL3_ReleaseAllKeys();
+	g_prevImGuiCapture = imguiCapture;
+
+	// Release mouse capture when ImGui wants the mouse (menu/dialog open)
+	bool imguiMouseCapture = ATUIWantCaptureMouse();
+	if (imguiMouseCapture && !g_prevImGuiMouseCapture)
+		ATUIReleaseMouse();
+	g_prevImGuiMouseCapture = imguiMouseCapture;
+
 	SDL_Event ev;
 	while (SDL_PollEvent(&ev)) {
 		ATUIProcessEvent(&ev);
@@ -119,12 +137,24 @@ static void HandleEvents() {
 			break;
 
 		case SDL_EVENT_KEY_DOWN:
+			// Right-Alt releases mouse capture (matches Windows behavior)
+			if (ATUIIsMouseCaptured() && ev.key.scancode == SDL_SCANCODE_RALT) {
+				ATUIReleaseMouse();
+				break;
+			}
 			if (!ATUIWantCaptureKeyboard()) {
-				if (ev.key.key == SDLK_F12)
+				if (ev.key.key == SDLK_F5 && (ev.key.mod & SDL_KMOD_SHIFT)) {
 					g_sim.ColdReset();
-				else if (ev.key.key == SDLK_F11)
+					g_sim.Resume();
+				} else if (ev.key.key == SDLK_F5 && !(ev.key.mod & SDL_KMOD_SHIFT)) {
 					g_sim.WarmReset();
-				else if (ev.key.key == SDLK_F7)
+					g_sim.Resume();
+				} else if (ev.key.key == SDLK_F9) {
+					if (g_sim.IsPaused())
+						g_sim.Resume();
+					else
+						g_sim.Pause();
+				} else if (ev.key.key == SDLK_F7)
 					ATUIQuickLoadState();
 				else if (ev.key.key == SDLK_F8)
 					ATUIQuickSaveState();
@@ -138,8 +168,37 @@ static void HandleEvents() {
 			break;
 
 		case SDL_EVENT_KEY_UP:
-			if (!ATUIWantCaptureKeyboard())
-				ATInputSDL3_HandleKeyUp(ev.key);
+			if (!ATUIWantCaptureKeyboard()) {
+				// Don't forward key-up for keys consumed as hotkeys
+				// (F5, Shift+F5, F7, F8, Alt+Enter) to avoid spurious
+				// ATInputManager release events.
+				if (ev.key.key != SDLK_F5 && ev.key.key != SDLK_F7 &&
+					ev.key.key != SDLK_F8 && ev.key.key != SDLK_F9)
+					ATInputSDL3_HandleKeyUp(ev.key);
+			}
+			break;
+
+		case SDL_EVENT_MOUSE_BUTTON_DOWN:
+			if (!ATUIWantCaptureMouse()) {
+				// Middle-click releases mouse capture when MMB isn't mapped
+				// as an input (matches Windows behavior).
+				if (ev.button.button == SDL_BUTTON_MIDDLE &&
+					ATUIIsMouseCaptured()) {
+					ATInputManager *im = g_sim.GetInputManager();
+					if (!im || !im->IsInputMapped(0, kATInputCode_MouseMMB))
+						ATUIReleaseMouse();
+					break;
+				}
+
+				// Auto-capture: on left click, capture the mouse if auto-capture
+				// is enabled and mouse is mapped.  The click is consumed (not
+				// forwarded to input manager) — matches Windows behavior.
+				if (ev.button.button == SDL_BUTTON_LEFT &&
+					ATUIGetMouseAutoCapture() &&
+					!ATUIIsMouseCaptured()) {
+					ATUICaptureMouse();
+				}
+			}
 			break;
 
 		case SDL_EVENT_GAMEPAD_ADDED:
@@ -162,6 +221,7 @@ static void HandleEvents() {
 				if (g_sim.Load(widePath.c_str(), kATMediaWriteMode_VRWSafe, &ctx)) {
 					ATAddMRU(widePath.c_str());
 					g_sim.ColdReset();
+					g_sim.Resume();
 				} else
 					fprintf(stderr, "Warning: Could not load dropped file '%s'\n", file);
 			}
@@ -174,6 +234,10 @@ static void HandleEvents() {
 
 		case SDL_EVENT_WINDOW_FOCUS_LOST:
 			g_winActive = false;
+			// Release all held keys/buttons to prevent stuck input
+			ATInputSDL3_ReleaseAllKeys();
+			// Release mouse capture on focus loss
+			ATUIReleaseMouse();
 			break;
 
 		default:
@@ -211,10 +275,11 @@ static void RenderAndPresent() {
 static double GetBaseFrameRate() {
 	switch (g_sim.GetVideoStandard()) {
 	case kATVideoStandard_PAL:
-	case kATVideoStandard_PAL60:
+	case kATVideoStandard_NTSC50:	// NTSC color at 50Hz → PAL timing
 		return kFrameRate_PAL;
 	case kATVideoStandard_SECAM:
 		return kFrameRate_SECAM;
+	case kATVideoStandard_PAL60:	// PAL color at 60Hz → NTSC timing
 	default:
 		return kFrameRate_NTSC;
 	}
@@ -280,6 +345,9 @@ int main(int argc, char *argv[]) {
 		return 1;
 	}
 
+	// Give the mouse capture system access to the window
+	ATUISetMouseCaptureWindow(g_pWindow);
+
 	g_pDisplay = new VDVideoDisplaySDL3(g_pRenderer, 384*kScale, 240*kScale);
 
 	fprintf(stderr, "[AltirraSDL] Initializing simulator...\n");
@@ -298,7 +366,7 @@ int main(int argc, char *argv[]) {
 		g_pJoystickMgr = nullptr;
 	}
 
-	ATInputSDL3_Init(&g_sim.GetPokey(), g_sim.GetInputManager());
+	ATInputSDL3_Init(&g_sim.GetPokey(), g_sim.GetInputManager(), &g_sim.GetGTIA());
 
 	// Load emulator settings using the same code path as Windows.
 	// On first run (no config file), VDRegistryKey returns defaults for all
@@ -363,6 +431,9 @@ int main(int argc, char *argv[]) {
 		HandleEvents();
 		if (!g_running) break;
 
+		// Process deferred file dialog results on main thread
+		ATUIPollDeferredActions();
+
 		// Pause emulation when window loses focus (if enabled).
 		const bool pauseInactive = ATUIGetPauseWhenInactive() && !g_winActive;
 
@@ -421,6 +492,9 @@ int main(int argc, char *argv[]) {
 		delete g_pJoystickMgr;
 		g_pJoystickMgr = nullptr;
 	}
+
+	// Release mouse capture before shutdown
+	ATUIReleaseMouse();
 
 	// Save settings before shutdown
 	extern void ATRegistryFlushToDisk();

@@ -44,9 +44,13 @@ Legend:
   [100%] SDL_EVENT_MOUSE_MOTION              — Processed in main loop
   [100%] SDL_EVENT_MOUSE_BUTTON_*            — Left/right/middle clicks
   [100%] ImGui mouse capture check           — WantCaptureMouse guard
-  [  0%] Relative mouse mode (light pen)     — SDL_SetWindowRelativeMouseMode not used
-  [  0%] Mouse capture for paddle emulation  — ATUISetMouseAutoCapture stored but
-                                               not wired to actual SDL3 capture
+  [100%] Relative mouse mode (paddle)        — SDL_SetWindowRelativeMouseMode via
+                                               ATUICaptureMouse/ATUIReleaseMouse
+  [100%] Mouse capture for paddle emulation  — ATUICaptureMouse toggles relative mode,
+                                               auto-capture on left click, release on
+                                               focus loss / ImGui capture / shutdown
+  [100%] Absolute mouse mode (light pen)     — SDL_SetWindowMouseGrab for confining
+                                               cursor to window
   [  0%] Mouse → light pen position mapping  — Needs coordinate transformation
 
 
@@ -57,9 +61,10 @@ Legend:
   [100%] ATInputManager receives key events    — Via POKEY direct path
   [100%] ATInputManager receives gamepad       — Via IATJoystickManager
   [  0%] Custom input mappings UI             — Placeholder in menu (disabled)
-  [  0%] Input map save/load                  — Settings category exists but UI missing
-  [  0%] Quick map cycling                    — Menu item placeholder (disabled)
-  [  0%] Port 1-4 assignment UI              — Menu items missing
+  [100%] Input map save/load                  — Settings loads/saves via InputMaps category
+  [100%] Quick map cycling                    — CycleQuickMaps() wired to menu item
+  [100%] Port 1-4 assignment UI              — Dynamic submenus with radio selection,
+                                               queries ATInputManager per port
 
 
 ================================================================================
@@ -86,10 +91,11 @@ Category                    Implemented    Total    Coverage
 ------------------------------------------------------------
 Keyboard                         8            8      100%
 Gamepad/joystick                 5            7       71%
-Mouse                            3            6       50%
-Input manager integration        2            6       33%
+Mouse                            6            7       86%
+Input manager integration        5            6       83%
 Text input                       0            1        0%
 File drop                        1            1      100%
 
-Core keyboard and gamepad input works well for daily use.
-Main gaps: mouse capture/light pen, input mapping UI, text input, file drop.
+Core keyboard, gamepad, and mouse input works well for daily use.
+Port assignment, quick map cycling, and mouse capture are functional.
+Main gaps: input mapping editor UI, light pen coordinate mapping, text input.
