@@ -65,6 +65,7 @@ add_executable(AltirraSDL
     source/ui_input.cpp
     source/ui_profiles.cpp
     source/ui_devconfig.cpp
+    source/ui_tools.cpp
 
     # Registry persistence (filtered out by ui* regex, so add explicitly)
     ${CMAKE_SOURCE_DIR}/src/Altirra/source/uiregistry.cpp

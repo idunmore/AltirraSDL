@@ -117,6 +117,52 @@ static FramePacer g_pacer;
 static bool g_prevImGuiCapture = false;
 static bool g_prevImGuiMouseCapture = false;
 
+// Update all mouse position inputs (pad, beam, virtual stick) from pixel coords.
+// Matches Windows ATUIVideoDisplayWindow::UpdateMousePosition().
+static void UpdateMousePosition(ATInputManager *im, float mx, float my) {
+	int winW, winH;
+	SDL_GetWindowSize(g_pWindow, &winW, &winH);
+	if (winW <= 1 || winH <= 1)
+		return;
+
+	// Pad position: map window area to [-0x10000, +0x10000]
+	int padX = (int)((mx / (float)(winW - 1)) * 131072.0f - 0x10000);
+	int padY = (int)((my / (float)(winH - 1)) * 131072.0f - 0x10000);
+	im->SetMousePadPos(padX, padY);
+
+	// Beam position: map pixel to ANTIC beam coordinates, then normalize.
+	{
+		ATGTIAEmulator& gtia = g_sim.GetGTIA();
+		const vdrect32 scanArea(gtia.GetFrameScanArea());
+
+		float hcyc = (float)scanArea.left
+			+ (mx + 0.5f) * (float)scanArea.width() / (float)winW - 0.5f;
+		float vcyc = (float)scanArea.top
+			+ (my + 0.5f) * (float)scanArea.height() / (float)winH - 0.5f;
+
+		im->SetMouseBeamPos(
+			(int)((hcyc - 128.0f) * (65536.0f / 94.0f)),
+			(int)((vcyc - 128.0f) * (65536.0f / 188.0f)));
+	}
+
+	// Virtual stick: normalized [-1, +1] with aspect ratio correction
+	{
+		float sizeX = (float)(winW - 1);
+		float sizeY = (float)(winH - 1);
+		float normX = mx / sizeX * 2.0f - 1.0f;
+		float normY = my / sizeY * 2.0f - 1.0f;
+
+		if (sizeX > sizeY)
+			normX *= sizeX / sizeY;
+		else if (sizeY > sizeX)
+			normY *= sizeY / sizeX;
+
+		im->SetMouseVirtualStickPos(
+			(int)(normX * 131072.0f),
+			(int)(normY * 131072.0f));
+	}
+}
+
 static void HandleEvents() {
 	// Detect when ImGui starts capturing keyboard (e.g. menu opened)
 	// and release all held emulator keys to prevent stuck input.
@@ -138,8 +184,10 @@ static void HandleEvents() {
 		switch (ev.type) {
 		case SDL_EVENT_QUIT:
 		case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
-			if (g_uiState.exitConfirmed || ATUIRequestExit(g_sim, g_uiState))
+			if (g_uiState.exitConfirmed)
 				g_running = false;
+			else if (!g_uiState.showExitConfirm)
+				g_uiState.showExitConfirm = true;  // Render loop will open the popup
 			break;
 
 		case SDL_EVENT_KEY_DOWN:
@@ -196,57 +244,7 @@ static void HandleEvents() {
 					(!ATUIGetMouseAutoCapture() && im->IsMouseAbsoluteMode())))
 				{
 					if (im->IsMouseAbsoluteMode()) {
-						// Absolute mode: update beam, pad, and virtual stick positions
-						// from window pixel coordinates.
-						int winW, winH;
-						SDL_GetWindowSize(g_pWindow, &winW, &winH);
-
-						float mx = ev.motion.x;
-						float my = ev.motion.y;
-
-						// Pad position: map window area to [-0x10000, +0x10000]
-						if (winW > 1 && winH > 1) {
-							int padX = (int)((mx / (float)(winW - 1)) * 131072.0f - 0x10000);
-							int padY = (int)((my / (float)(winH - 1)) * 131072.0f - 0x10000);
-							im->SetMousePadPos(padX, padY);
-						}
-
-						// Beam position: map pixel to ANTIC beam coordinates.
-						// The texture covers the GTIA scan area; map pixel to
-						// scan area cycles, then normalize.
-						{
-							ATGTIAEmulator& gtia = g_sim.GetGTIA();
-							const vdrect32 scanArea(gtia.GetFrameScanArea());
-
-							float hcyc = (float)scanArea.left
-								+ (mx + 0.5f) * (float)scanArea.width() / (float)winW
-								- 0.5f;
-							float vcyc = (float)scanArea.top
-								+ (my + 0.5f) * (float)scanArea.height() / (float)winH
-								- 0.5f;
-
-							float xn = (hcyc - 128.0f) * (65536.0f / 94.0f);
-							float yn = (vcyc - 128.0f) * (65536.0f / 188.0f);
-
-							im->SetMouseBeamPos((int)xn, (int)yn);
-						}
-
-						// Virtual stick: normalized [-1, +1] with aspect correction
-						if (winW > 1 && winH > 1) {
-							float sizeX = (float)(winW - 1);
-							float sizeY = (float)(winH - 1);
-							float normX = mx / sizeX * 2.0f - 1.0f;
-							float normY = my / sizeY * 2.0f - 1.0f;
-
-							if (sizeX > sizeY)
-								normX *= sizeX / sizeY;
-							else if (sizeY > sizeX)
-								normY *= sizeY / sizeX;
-
-							im->SetMouseVirtualStickPos(
-								(int)(normX * 131072.0f),
-								(int)(normY * 131072.0f));
-						}
+						UpdateMousePosition(im, ev.motion.x, ev.motion.y);
 					} else {
 						// Relative mode: forward deltas for paddle/trackball
 						im->OnMouseMove(0, (int)ev.motion.xrel, (int)ev.motion.yrel);
@@ -282,24 +280,8 @@ static void HandleEvents() {
 				if (im && (ATUIIsMouseCaptured() || im->IsMouseAbsoluteMode())) {
 					// In absolute mode, update position before the button press
 					// (matches Windows OnMouseDown which calls UpdateMousePosition)
-					if (im->IsMouseAbsoluteMode()) {
-						int winW, winH;
-						SDL_GetWindowSize(g_pWindow, &winW, &winH);
-						if (winW > 1 && winH > 1) {
-							float mx = ev.button.x;
-							float my = ev.button.y;
-							int padX = (int)((mx / (float)(winW - 1)) * 131072.0f - 0x10000);
-							int padY = (int)((my / (float)(winH - 1)) * 131072.0f - 0x10000);
-							im->SetMousePadPos(padX, padY);
-
-							ATGTIAEmulator& gtia = g_sim.GetGTIA();
-							const vdrect32 scanArea(gtia.GetFrameScanArea());
-							float hcyc = (float)scanArea.left + (mx + 0.5f) * (float)scanArea.width() / (float)winW - 0.5f;
-							float vcyc = (float)scanArea.top + (my + 0.5f) * (float)scanArea.height() / (float)winH - 0.5f;
-							im->SetMouseBeamPos((int)((hcyc - 128.0f) * (65536.0f / 94.0f)),
-								(int)((vcyc - 128.0f) * (65536.0f / 188.0f)));
-						}
-					}
+					if (im->IsMouseAbsoluteMode())
+						UpdateMousePosition(im, ev.button.x, ev.button.y);
 
 					uint32 code = 0;
 					switch (ev.button.button) {

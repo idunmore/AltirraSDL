@@ -64,6 +64,12 @@ static void RenderCreateDiskDialog() {
 		return;
 	}
 
+	if (ATUICheckEscClose()) {
+		g_createDiskState.show = false;
+		ImGui::End();
+		return;
+	}
+
 	// Format combo
 	if (ImGui::Combo("Format", &g_createDiskState.formatIndex,
 		[](void *, int idx) -> const char * { return kDiskFormatTypes[idx].label; },
@@ -228,6 +234,12 @@ void ATUIRenderDiskManager(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 	ImGui::SetNextWindowSize(ImVec2(720, 460), ImGuiCond_Appearing);
 	ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
 	if (!ImGui::Begin("Disk drives", &state.showDiskManager, ImGuiWindowFlags_NoSavedSettings)) {
+		ImGui::End();
+		return;
+	}
+
+	if (ATUICheckEscClose()) {
+		state.showDiskManager = false;
 		ImGui::End();
 		return;
 	}

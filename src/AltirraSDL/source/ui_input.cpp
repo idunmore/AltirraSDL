@@ -1387,6 +1387,12 @@ static void RenderEditMappingPopup(ATInputManager *pIM) {
 		return;
 	}
 
+	if (ATUICheckEscClose()) {
+		g_showEditMapping = false;
+		ImGui::End();
+		return;
+	}
+
 	// Source input
 	ImGui::Text("Source Input:");
 	if (ImGui::BeginCombo("##source", [&]() -> const char * {
@@ -1535,6 +1541,12 @@ static void RenderEditControllerPopup(ATInputManager *pIM) {
 	ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
 	if (!ImGui::Begin(g_editControllerIsNew ? "Add Controller" : "Edit Controller",
 			&g_showEditController, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings)) {
+		ImGui::End();
+		return;
+	}
+
+	if (ATUICheckEscClose()) {
+		g_showEditController = false;
 		ImGui::End();
 		return;
 	}
@@ -1866,6 +1878,12 @@ static void RenderEditInputMapDialog(ATInputManager *pIM) {
 		return;
 	}
 
+	if (ATUICheckEscClose()) {
+		g_showEditInputMap = false;
+		ImGui::End();
+		return;
+	}
+
 	// Gamepad unit selection
 	{
 		const char *unitLabels[8];
@@ -2145,6 +2163,12 @@ static void RenderCreateInputMapPopup(ATInputManager *pIM) {
 		return;
 	}
 
+	if (ATUICheckEscClose()) {
+		g_showCreateInputMap = false;
+		ImGui::End();
+		return;
+	}
+
 	// Controller type
 	ImGui::Text("Controller type:");
 	if (ImGui::BeginCombo("##ctrltype", kControllerTypeTemplateInfo[g_createCtrlType].mpName)) {
@@ -2248,6 +2272,13 @@ void ATUIRenderInputMappings(ATSimulator &sim, ATUIState &state) {
 		ImGui::End();
 		if (!state.showInputMappings)
 			g_inputMappingsWasOpen = false;
+		return;
+	}
+
+	if (ATUICheckEscClose()) {
+		state.showInputMappings = false;
+		g_inputMappingsWasOpen = false;
+		ImGui::End();
 		return;
 	}
 
@@ -2559,6 +2590,16 @@ void ATUIRenderInputSetup(ATSimulator &sim, ATUIState &state) {
 			pJoyMan->SetCaptureMode(false);
 			g_inputSetupWasOpen = false;
 		}
+		return;
+	}
+
+	if (ATUICheckEscClose()) {
+		state.showInputSetup = false;
+		// Cancel — restore saved transforms
+		pJoyMan->SetTransforms(g_savedTransforms);
+		pJoyMan->SetCaptureMode(false);
+		g_inputSetupWasOpen = false;
+		ImGui::End();
 		return;
 	}
 

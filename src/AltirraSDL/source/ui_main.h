@@ -5,6 +5,7 @@
 
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/VDString.h>
+#include <imgui.h>
 
 struct SDL_Window;
 struct SDL_Renderer;
@@ -33,6 +34,13 @@ struct ATUIState {
 	bool showCommandLineHelp = false;
 	bool showChangeLog = false;
 	bool showCompatWarning = false;
+
+	// Tools menu dialogs
+	bool showDiskExplorer = false;
+	bool showSetupWizard = false;
+	bool showKeyboardShortcuts = false;
+	bool showCompatDB = false;
+	bool showAdvancedConfig = false;
 
 	// System config sidebar selection
 	int systemConfigCategory = 0;
@@ -81,6 +89,9 @@ enum ATDeferredActionType {
 	kATDeferred_StartRecordSAP,
 	kATDeferred_StartRecordVideo,  // uses mInt for ATVideoEncoding
 	kATDeferred_SetCompatDBPath,
+	kATDeferred_ConvertSAPToEXE,   // mPath = source SAP, mStr = dest XEX
+	kATDeferred_ExportROMSet,      // mPath = target folder
+	kATDeferred_AnalyzeTapeDecode, // mPath = source WAV, mStr = dest WAV
 };
 
 // Push a deferred action (thread-safe — may be called from file dialog callbacks)
@@ -107,6 +118,13 @@ void ATUIRenderInputMappings(ATSimulator &sim, ATUIState &state);
 void ATUIRenderInputSetup(ATSimulator &sim, ATUIState &state);
 void ATUIRenderProfiles(ATSimulator &sim, ATUIState &state);
 
+// Tools menu dialogs
+void ATUIRenderDiskExplorer(ATSimulator &sim, ATUIState &state, SDL_Window *window);
+void ATUIRenderSetupWizard(ATSimulator &sim, ATUIState &state, SDL_Window *window);
+void ATUIRenderKeyboardShortcuts(ATUIState &state);
+void ATUIRenderCompatDB(ATSimulator &sim, ATUIState &state);
+void ATUIRenderAdvancedConfig(ATUIState &state);
+
 // Device configuration dialog (ui_devconfig.cpp)
 class IATDevice;
 class ATDeviceManager;
@@ -119,8 +137,17 @@ void ATUIRenderDeviceConfig(ATDeviceManager *devMgr);
 void ATUICheckCompatibility(ATSimulator &sim, ATUIState &state);
 void ATUIRenderCompatWarning(ATSimulator &sim, ATUIState &state);
 
-// Exit confirmation — checks for dirty storage and shows discard dialog
-// Returns true if exit should proceed immediately (nothing dirty).
-// Returns false if confirmation popup was opened (check state.exitConfirmed later).
-bool ATUIRequestExit(ATSimulator &sim, ATUIState &state);
+// ESC-to-close helper for ImGui dialog windows.
+// Win32 dialogs close on ESC automatically (IDCANCEL). ImGui::Begin() windows
+// do not.  Call this right after ImGui::Begin() succeeds; returns true if the
+// dialog should close.  Only fires when the window (or a child within it) is
+// focused and no popup is consuming input above it.
+inline bool ATUICheckEscClose() {
+	return ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)
+		&& ImGui::IsKeyPressed(ImGuiKey_Escape);
+}
+
+// Exit confirmation — checks for dirty storage and shows discard dialog.
+// Set state.showExitConfirm = true to trigger; the render function handles
+// building the message, showing the popup, and pushing SDL_EVENT_QUIT on OK.
 void ATUIRenderExitConfirm(ATSimulator &sim, ATUIState &state);

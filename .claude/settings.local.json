@@ -97,7 +97,11 @@
       "Bash(timeout 15 ./src/AltirraSDL/AltirraSDL /home/ilm/Documents/GitHub/AltirraSDL/EXAMPLES/torus3d.xex)",
       "Bash(convert /tmp/altirra_sdl_frame.bmp /tmp/altirra_sdl_frame.png)",
       "Bash(/tmp/analysis.txt:*)",
-      "Bash(./src/AltirraSDL/AltirraSDL --help)"
+      "Bash(./src/AltirraSDL/AltirraSDL --help)",
+      "Bash(xargs basename:*)",
+      "Bash(sort -t: -k2 -n)",
+      "Bash(chmod +x /tmp/extract_dialogs.sh)",
+      "Bash(/tmp/extract_dialogs.sh)"
     ]
   }
 }

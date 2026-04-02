@@ -23,6 +23,12 @@ void ATUIRenderProfiles(ATSimulator &sim, ATUIState &state) {
 		return;
 	}
 
+	if (ATUICheckEscClose()) {
+		state.showProfiles = false;
+		ImGui::End();
+		return;
+	}
+
 	static char renameBuffer[128] = {};
 	static uint32 renamingId = kATProfileId_Invalid;
 

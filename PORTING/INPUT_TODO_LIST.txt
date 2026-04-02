@@ -1,7 +1,7 @@
 AltirraSDL — Input Handling Parity Checklist
 ============================================
-Updated: 2026-04-01
-Reference: PORTING/INPUT.md vs actual input_sdl3.cpp + joystick_sdl3.cpp
+Updated: 2026-04-02
+Reference: PORTING/INPUT.md vs actual input_sdl3.cpp + joystick_sdl3.cpp + main_sdl3.cpp
 
 Legend:
   [100%] Fully implemented
@@ -17,10 +17,21 @@ Legend:
   [100%] SDL scancode → Atari KBCODE mapping  — Direct POKEY keyboard matrix path
   [100%] SDL scancode → ATInputCode mapping   — For input manager controller mapping
   [100%] ImGui keyboard capture check         — WantCaptureKeyboard guard
-  [100%] Modifier keys (Shift, Ctrl, Alt)     — Mapped to Atari Shift/Control/Option
-  [100%] Function keys (F1-F12)               — Mapped to emulator controls
+  [100%] Modifier keys (Shift, Ctrl, Alt)     — Mapped to Atari Shift/Control/Option.
+                                                Ctrl/Shift excluded from POKEY when
+                                                input-mapped (ExcludeMappedCtrlShiftState).
+  [100%] Function keys (F1-F12)               — F2/F3/F4 = console switches (default) or
+                                                1200XL function keys (mbEnableFunctionKeys).
+                                                F6 = Help key. F5/F7-F9 = emulator hotkeys.
   [100%] Arrow keys                           — Mapped per ATUIKeyboardOptions mode
   [100%] Special keys (Tab, Backspace, etc.)  — Full scancode table
+  [100%] Key repeat forwarding                — ev.repeat passed to POKEY PushKey
+  [100%] Alt-key guard                        — Alt+key does NOT route to ATInputManager
+                                                (prevents shortcuts triggering input maps)
+  [100%] Input map overlap control            — mbAllowInputMapOverlap: when disabled,
+                                                input-mapped keys consumed before POKEY path
+  [100%] Focus loss cleanup                   — ReleaseAllRawKeys + console switch release
+                                                + mouse button release on FOCUS_LOST
 
 
 ================================================================================
@@ -42,8 +53,14 @@ Legend:
 3. MOUSE INPUT
 ================================================================================
 
-  [100%] SDL_EVENT_MOUSE_MOTION              — Processed in main loop
-  [100%] SDL_EVENT_MOUSE_BUTTON_*            — Left/right/middle clicks
+  [100%] SDL_EVENT_MOUSE_MOTION              — Relative deltas (paddle/trackball) +
+                                               absolute position (beam/pad/stick)
+  [100%] SDL_EVENT_MOUSE_BUTTON_*            — LMB/RMB/MMB/X1/X2 down+up when captured
+                                               or absolute mode. Position updated before
+                                               button-down in absolute mode.
+  [100%] SDL_EVENT_MOUSE_WHEEL              — Vertical + horizontal, always forwarded
+                                               (no capture required, matches Windows)
+  [100%] SDL_EVENT_WINDOW_MOUSE_LEAVE       — Resets virtual stick to center
   [100%] ImGui mouse capture check           — WantCaptureMouse guard
   [100%] Relative mouse mode (paddle)        — SDL_SetWindowRelativeMouseMode via
                                                ATUICaptureMouse/ATUIReleaseMouse
@@ -51,10 +68,11 @@ Legend:
                                                auto-capture on left click, release on
                                                focus loss / ImGui capture / shutdown
   [100%] Absolute mouse mode (light pen)     — SDL_SetWindowMouseGrab for confining
-                                               cursor to window
-  [100%] Mouse → light pen position mapping  — Pixel to ANTIC beam coordinate
-                                               transform via GetFrameScanArea(), plus
-                                               pad position and virtual stick
+                                               cursor to window. Works without capture
+                                               when auto-capture is off.
+  [100%] Mouse → light pen position mapping  — UpdateMousePosition helper: pixel to
+                                               ANTIC beam via GetFrameScanArea(), pad
+                                               position, virtual stick with aspect ratio
 
 
 ================================================================================
@@ -101,9 +119,9 @@ SUMMARY
 
 Category                    Implemented    Total    Coverage
 ------------------------------------------------------------
-Keyboard                         8            8      100%
+Keyboard                        12           12      100%
 Gamepad/joystick                 7            7      100%
-Mouse                            7            7      100%
+Mouse                           11           11      100%
 Input manager integration        6            6      100%
 Text input                       N/A          N/A      N/A
 File drop                        1            1      100%

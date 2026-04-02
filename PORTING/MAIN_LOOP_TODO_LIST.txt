@@ -36,10 +36,13 @@ Legend:
   [100%] SDL_EVENT_QUIT handling               — Sets running flag to false
   [100%] ImGui event forwarding                — ImGui_ImplSDL3_ProcessEvent
   [100%] Keyboard event dispatch               — With ImGui capture guard
-  [100%] Mouse event dispatch                  — With ImGui capture guard
+  [100%] Mouse event dispatch                  — Motion (relative + absolute via
+                                                 UpdateMousePosition), buttons (LMB-X2B),
+                                                 wheel (vert + horiz), mouse-leave
   [100%] Gamepad event dispatch                — Via joystick manager poll
   [100%] SDL_EVENT_DROP_FILE handling          — Loads dropped file + cold reset
-  [100%] SDL_EVENT_WINDOW_FOCUS_*             — Tracks g_winActive for pause-when-inactive
+  [100%] SDL_EVENT_WINDOW_FOCUS_*             — Tracks g_winActive, releases keys +
+                                                 mouse buttons + mouse capture on loss
 
 
 ================================================================================

@@ -96,7 +96,7 @@ static void CleanupGenericEntries();
 static bool RenderCovoxConfig(ATPropertySet& props, ATDeviceConfigState& st);
 static bool Render850Config(ATPropertySet& props, ATDeviceConfigState& st);
 static bool Render850FullConfig(ATPropertySet& props, ATDeviceConfigState& st);
-static bool RenderModemConfig(ATPropertySet& props, ATDeviceConfigState& st, bool fullEmu, bool is835);
+static bool RenderModemConfig(ATPropertySet& props, ATDeviceConfigState& st, bool fullEmu, bool is835, bool hasConnectRate = true);
 static bool RenderSX212Config(ATPropertySet& props, ATDeviceConfigState& st);
 static bool RenderPocketModemConfig(ATPropertySet& props, ATDeviceConfigState& st);
 static bool RenderHardDiskConfig(ATPropertySet& props, ATDeviceConfigState& st);
@@ -179,11 +179,12 @@ static bool DispatchDeviceDialog(const char *tag, ATPropertySet& props, ATDevice
 
 	// Modems
 	if (!strcmp(tag, "modem")) return RenderModemConfig(props, st, false, false);
-	if (!strcmp(tag, "1030")) return RenderModemConfig(props, st, false, false);
+	// 1030 has SIO level but no connect_rate/check_rate (unlike generic modem)
+	if (!strcmp(tag, "1030")) return RenderModemConfig(props, st, false, false, false);
 	if (!strcmp(tag, "1030full")) return RenderModemConfig(props, st, true, false);
 	if (!strcmp(tag, "835")) return RenderModemConfig(props, st, false, true);
 	if (!strcmp(tag, "835full")) return RenderModemConfig(props, st, true, true);
-	// 1400XL is a simpler modem: has unthrottled but no connect_rate/check_rate/emulevel
+	// 1400XL has no connect_rate/check_rate/emulevel
 	if (!strcmp(tag, "1400xl")) return RenderModemConfig(props, st, false, true);
 	if (!strcmp(tag, "sx212")) return RenderSX212Config(props, st);
 	if (!strcmp(tag, "pocketmodem")) return RenderPocketModemConfig(props, st);
@@ -200,6 +201,7 @@ static bool DispatchDeviceDialog(const char *tag, ATPropertySet& props, ATDevice
 	if (!strcmp(tag, "xep80")) return RenderXEP80Config(props, st);
 	if (!strcmp(tag, "computereyes")) return RenderComputerEyesConfig(props, st);
 	if (!strcmp(tag, "videostillimage")) return RenderVideoStillImageConfig(props, st);
+	if (!strcmp(tag, "videogenerator")) return RenderGenericConfig(props, st);
 
 	// Sound
 	if (!strcmp(tag, "soundboard")) return RenderSoundBoardConfig(props, st);
@@ -273,15 +275,19 @@ void ATUIRenderDeviceConfig(ATDeviceManager *devMgr) {
 
 	bool windowOpen = true;
 	if (ImGui::Begin(title.c_str(), &windowOpen, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
-		bool applied = DispatchDeviceDialog(g_devCfg.configTag.c_str(), g_devCfg.props, g_devCfg);
+		if (ATUICheckEscClose()) {
+			windowOpen = false;
+		} else {
+			bool applied = DispatchDeviceDialog(g_devCfg.configTag.c_str(), g_devCfg.props, g_devCfg);
 
-		if (applied && g_devCfg.pDev && devMgr) {
-			try {
-				devMgr->ReconfigureDevice(*g_devCfg.pDev, g_devCfg.props);
-			} catch (...) {
-				fprintf(stderr, "[AltirraSDL] Failed to reconfigure device\n");
+			if (applied && g_devCfg.pDev && devMgr) {
+				try {
+					devMgr->ReconfigureDevice(*g_devCfg.pDev, g_devCfg.props);
+				} catch (...) {
+					fprintf(stderr, "[AltirraSDL] Failed to reconfigure device\n");
+				}
+				g_devCfg.Reset();
 			}
-			g_devCfg.Reset();
 		}
 	}
 	// Clear justOpened AFTER dispatch so per-device renderers can see it
@@ -441,11 +447,11 @@ static bool Render850FullConfig(ATPropertySet& props, ATDeviceConfigState& st) {
 // Note: SX212 and PocketModem have their own dialogs below
 // =========================================================================
 
-static bool RenderModemConfig(ATPropertySet& props, ATDeviceConfigState& st, bool fullEmu, bool is835) {
-	// Determine if this is the generic modem (has check_rate + full speed combo)
-	// vs 1030/835 (no check_rate, different controls)
-	// The dispatch sends modem/1400xl with fullEmu=false,is835=false
-	// and 1030/835 with their respective flags
+static bool RenderModemConfig(ATPropertySet& props, ATDeviceConfigState& st, bool fullEmu, bool is835, bool hasConnectRate) {
+	// fullEmu: hide throttling, SIO level, connect rate, check rate (1030full, 835full)
+	// is835: hide SIO level, connect rate, check rate (835, 1400xl)
+	// hasConnectRate: show connection speed + check rate (only generic "modem")
+	// 1030 uses fullEmu=false, is835=false, hasConnectRate=false
 	static const char *kTermTypes[] = {
 		"(none)", "ansi", "dec-vt52", "dec-vt100", "vt52", "vt100", "vt102", "vt320"
 	};
@@ -544,8 +550,8 @@ static bool RenderModemConfig(ATPropertySet& props, ATDeviceConfigState& st, boo
 
 	ImGui::Combo("Network mode", &st.combo[1], kNetModes, 3);
 
-	// Connection speed, SIO level, check_rate only for generic modem (not 1030/835/1400xl)
-	if (!fullEmu && !is835) {
+	// Connection speed only for generic modem (not 1030/835/1400xl)
+	if (!fullEmu && !is835 && hasConnectRate) {
 		ImGui::Combo("Connection speed", &st.combo[3], kConnSpeedLabels, 14);
 	}
 
@@ -553,9 +559,12 @@ static bool RenderModemConfig(ATPropertySet& props, ATDeviceConfigState& st, boo
 		ImGui::Checkbox("Disable throttling", &st.check[5]);
 	}
 
+	// SIO emulation level for generic modem and 1030 (not 835/1400xl/full emu)
 	if (!fullEmu && !is835) {
 		ImGui::Combo("SIO emulation level", &st.combo[2], kSIOLabels, 3);
-		ImGui::Checkbox("Require matched DTE rate", &st.check[6]);
+		// check_rate only for generic modem (not 1030)
+		if (hasConnectRate)
+			ImGui::Checkbox("Require matched DTE rate", &st.check[6]);
 	}
 
 	ImGui::Separator();
@@ -574,11 +583,11 @@ static bool RenderModemConfig(ATPropertySet& props, ATDeviceConfigState& st, boo
 		if (!fullEmu)
 			props.SetBool("unthrottled", st.check[5]);
 		// check_rate only exists on generic modem (not 1030/835)
-		if (!fullEmu && !is835)
+		if (!fullEmu && !is835 && hasConnectRate)
 			props.SetBool("check_rate", st.check[6]);
 
 		// connect_rate only for generic modem (not 1030/835/1400xl)
-		if (!fullEmu && !is835 && st.combo[3] >= 0 && st.combo[3] < 14)
+		if (!fullEmu && !is835 && hasConnectRate && st.combo[3] >= 0 && st.combo[3] < 14)
 			props.SetUint32("connect_rate", kConnSpeeds[st.combo[3]]);
 
 		if (st.combo[0] > 0)
@@ -1079,7 +1088,7 @@ static bool RenderSIDE3Config(ATPropertySet& props, ATDeviceConfigState& st) {
 // =========================================================================
 
 static bool RenderXEP80Config(ATPropertySet& props, ATDeviceConfigState& st) {
-	static const char *kPortLabels[] = { "Port 1", "Port 2", "Port 3", "Port 4" };
+	static const char *kPortLabels[] = { "Port 1", "Port 2 (default)", "Port 3 (400/800 only)", "Port 4 (400/800 only)" };
 
 	if (st.justOpened) {
 		// Windows stores as 1-based (1-4), default 2
@@ -1108,7 +1117,7 @@ static bool RenderXEP80Config(ATPropertySet& props, ATDeviceConfigState& st) {
 // =========================================================================
 
 static bool RenderCorvusConfig(ATPropertySet& props, ATDeviceConfigState& st) {
-	static const char *kPortLabels[] = { "Ports 3+4", "Ports 1+2" };
+	static const char *kPortLabels[] = { "Ports 3+4 (standard, but 400/800 only)", "Ports 1+2 (XL/XE compatible)" };
 
 	if (st.justOpened) {
 		st.combo[0] = props.GetBool("altports", false) ? 1 : 0;
@@ -1160,7 +1169,7 @@ static bool RenderVeronicaConfig(ATPropertySet& props, ATDeviceConfigState& st) 
 // =========================================================================
 
 static bool RenderDongleConfig(ATPropertySet& props, ATDeviceConfigState& st) {
-	static const char *kPortLabels[] = { "Port 1", "Port 2", "Port 3", "Port 4" };
+	static const char *kPortLabels[] = { "Port 1", "Port 2", "Port 3 (400/800 only)", "Port 4 (400/800 only)" };
 
 	if (st.justOpened) {
 		st.combo[0] = (int)props.GetUint32("port", 0);
@@ -1173,8 +1182,25 @@ static bool RenderDongleConfig(ATPropertySet& props, ATDeviceConfigState& st) {
 	ImGui::InputText("Mapping (hex)", st.mappingBuf, sizeof(st.mappingBuf));
 	ImGui::SetItemTooltip("16-character hex string mapping input bits to output bits");
 
+	// Validate mapping: must be exactly 16 hex digits (matching Windows validation)
+	int mappingLen = (int)strlen(st.mappingBuf);
+	bool mappingValid = (mappingLen == 16);
+	if (mappingValid) {
+		for (int i = 0; i < 16; ++i) {
+			char c = st.mappingBuf[i];
+			if (!((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f'))) {
+				mappingValid = false;
+				break;
+			}
+		}
+	}
+	if (!mappingValid)
+		ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "The mapping string must be a set of 16 hexadecimal digits.");
+
 	ImGui::Separator();
 	if (ImGui::Button("OK", ImVec2(120, 0))) {
+		if (!mappingValid)
+			return false;
 		props.Clear();
 		props.SetUint32("port", (uint32)st.combo[0]);
 		if (st.mappingBuf[0])
@@ -1223,7 +1249,7 @@ static bool RenderKMKJZIDEConfig(ATPropertySet& props, ATDeviceConfigState& st) 
 // =========================================================================
 
 static bool RenderKMKJZIDE2Config(ATPropertySet& props, ATDeviceConfigState& st) {
-	static const char *kRevLabels[] = { "Rev C", "Rev D", "Rev Ds/S", "Rev E" };
+	static const char *kRevLabels[] = { "Rev. C", "Rev. D", "Rev. Ds/S (rev.D with Covox)", "Rev. E" };
 	static const char *kRevValues[] = { "c", "d", "s", "e" };
 	static const char *kIDLabels[] = { "ID 0", "ID 1", "ID 2", "ID 3", "ID 4", "ID 5", "ID 6", "ID 7" };
 
@@ -1982,11 +2008,79 @@ static bool Render815Config(ATPropertySet& props, ATDeviceConfigState& st) {
 }
 
 // =========================================================================
-// ATR8000 — same interface as Percom but without FDC/AT modes
+// ATR8000 — drive types (None/5.25"/8") + serial port signals
+// (matches Windows uiconfdevatr8000.cpp exactly)
 // =========================================================================
 
 static bool RenderATR8000Config(ATPropertySet& props, ATDeviceConfigState& st) {
-	return RenderPercomConfig(props, st, false, false);
+	static const char *kDriveTypeLabels[] = { "None", "5.25\"", "8\"" };
+
+	static const char *kSignal1Labels[] = {
+		"Request To Send (RTS)", "Data Terminal Ready (DTR)"
+	};
+	static const char *kSignal1Values[] = { "rts", "dtr" };
+
+	static const char *kSignal2Labels[] = {
+		"Clear To Send (CTS)", "Data Set Ready (DSR)",
+		"Carrier Detect (CD)", "Secondary Request To Send (SRTS)"
+	};
+	static const char *kSignal2Values[] = { "cts", "dsr", "cd", "srts" };
+
+	if (st.justOpened) {
+		for (int i = 0; i < 4; ++i) {
+			char key[16];
+			snprintf(key, sizeof(key), "drivetype%d", i);
+			st.combo[i] = (int)props.GetUint32(key, i == 0 ? 1 : 0);
+			if (st.combo[i] > 2) st.combo[i] = 0;
+		}
+
+		// Serial signal 1
+		st.combo[4] = 0;
+		const wchar_t *s1 = props.GetString("signal1", L"");
+		if (s1) {
+			VDStringA s1u8 = WToU8(s1);
+			for (int i = 0; i < 2; ++i)
+				if (!strcmp(kSignal1Values[i], s1u8.c_str())) { st.combo[4] = i; break; }
+		}
+
+		// Serial signal 2
+		st.combo[5] = 0;
+		const wchar_t *s2 = props.GetString("signal2", L"");
+		if (s2) {
+			VDStringA s2u8 = WToU8(s2);
+			for (int i = 0; i < 4; ++i)
+				if (!strcmp(kSignal2Values[i], s2u8.c_str())) { st.combo[5] = i; break; }
+		}
+	}
+
+	ImGui::SeparatorText("Drive types");
+	for (int i = 0; i < 4; ++i) {
+		char label[32];
+		snprintf(label, sizeof(label), "Drive %d", i + 1);
+		ImGui::Combo(label, &st.combo[i], kDriveTypeLabels, 3);
+	}
+
+	ImGui::SeparatorText("Serial port signals");
+	ImGui::Combo("Signal 1", &st.combo[4], kSignal1Labels, 2);
+	ImGui::Combo("Signal 2", &st.combo[5], kSignal2Labels, 4);
+
+	ImGui::Separator();
+	if (ImGui::Button("OK", ImVec2(120, 0))) {
+		props.Clear();
+		for (int i = 0; i < 4; ++i) {
+			char key[16];
+			snprintf(key, sizeof(key), "drivetype%d", i);
+			props.SetUint32(key, (uint32)st.combo[i]);
+		}
+		props.SetString("signal1", U8ToW(kSignal1Values[st.combo[4]]).c_str());
+		props.SetString("signal2", U8ToW(kSignal2Values[st.combo[5]]).c_str());
+		return true;
+	}
+	ImGui::SameLine();
+	if (ImGui::Button("Cancel", ImVec2(120, 0)))
+		g_devCfg.Reset();
+
+	return false;
 }
 
 // =========================================================================

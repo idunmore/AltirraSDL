@@ -4978,6 +4978,30 @@ source/ui_system.cpp.s:
 	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/ui_system.cpp.s
 .PHONY : source/ui_system.cpp.s
 
+source/ui_tools.o: source/ui_tools.cpp.o
+.PHONY : source/ui_tools.o
+
+# target to build an object file
+source/ui_tools.cpp.o:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/ui_tools.cpp.o
+.PHONY : source/ui_tools.cpp.o
+
+source/ui_tools.i: source/ui_tools.cpp.i
+.PHONY : source/ui_tools.i
+
+# target to preprocess a source file
+source/ui_tools.cpp.i:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/ui_tools.cpp.i
+.PHONY : source/ui_tools.cpp.i
+
+source/ui_tools.s: source/ui_tools.cpp.s
+.PHONY : source/ui_tools.s
+
+# target to generate assembly for a file
+source/ui_tools.cpp.s:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/ui_tools.cpp.s
+.PHONY : source/ui_tools.cpp.s
+
 source/videowriter_sdl3.o: source/videowriter_sdl3.cpp.o
 .PHONY : source/videowriter_sdl3.o
 
@@ -5761,6 +5785,9 @@ help:
 	@echo "... source/ui_system.o"
 	@echo "... source/ui_system.i"
 	@echo "... source/ui_system.s"
+	@echo "... source/ui_tools.o"
+	@echo "... source/ui_tools.i"
+	@echo "... source/ui_tools.s"
 	@echo "... source/videowriter_sdl3.o"
 	@echo "... source/videowriter_sdl3.i"
 	@echo "... source/videowriter_sdl3.s"

@@ -18,7 +18,9 @@
 #include <at/atio/cartridgeimage.h>
 #include <at/atio/cartridgetypes.h>
 
+#include <vd2/system/error.h>
 #include <vd2/system/file.h>
+#include <vd2/system/filesys.h>
 #include <at/atio/cassetteimage.h>
 
 #include <at/atcore/serializable.h>
@@ -52,6 +54,9 @@
 #include <vd2/system/math.h>
 #include "settings.h"
 #include "options.h"
+#include "sapconverter.h"
+#include "firmwaremanager.h"
+#include "oshelper.h"
 
 extern ATSimulator g_sim;
 extern ATUIKeyboardOptions g_kbdOpts;
@@ -73,11 +78,23 @@ extern ATUIKeyboardOptions g_kbdOpts;
 struct ATDeferredAction {
 	ATDeferredActionType type;
 	VDStringW path;
+	VDStringW path2;   // second path for two-file operations (SAP->EXE, tape analysis)
 	int mInt = 0;
 };
 
 static std::mutex g_deferredMutex;
 static std::vector<ATDeferredAction> g_deferredActions;
+
+// Tools result popup state
+static bool g_showToolsResult = false;
+static VDStringA g_toolsResultMessage;
+
+// Export ROM Set confirmation state
+static bool g_showExportROMOverwrite = false;
+static VDStringW g_exportROMPath;
+
+// Forward declarations for tools
+static void ATUIDoExportROMSet(const VDStringW &targetDir);
 
 void ATUIPushDeferred(ATDeferredActionType type, const char *utf8path, int extra) {
 	ATDeferredAction action;
@@ -87,6 +104,48 @@ void ATUIPushDeferred(ATDeferredActionType type, const char *utf8path, int extra
 
 	std::lock_guard<std::mutex> lock(g_deferredMutex);
 	g_deferredActions.push_back(std::move(action));
+}
+
+static void ATUIPushDeferred2(ATDeferredActionType type, const char *utf8path1, const char *utf8path2) {
+	ATDeferredAction action;
+	action.type = type;
+	action.path = VDTextU8ToW(utf8path1, -1);
+	action.path2 = VDTextU8ToW(utf8path2, -1);
+
+	std::lock_guard<std::mutex> lock(g_deferredMutex);
+	g_deferredActions.push_back(std::move(action));
+}
+
+// Export ROM Set implementation — writes internal ROMs to a user-selected folder.
+static void ATUIDoExportROMSet(const VDStringW &targetDir) {
+	static const struct {
+		ATFirmwareId mId;
+		const wchar_t *mpFilename;
+	} kOutputs[] = {
+		{ kATFirmwareId_Basic_ATBasic, L"atbasic.rom" },
+		{ kATFirmwareId_Kernel_LLE,    L"altirraos-800.rom" },
+		{ kATFirmwareId_Kernel_LLEXL,  L"altirraos-xl.rom" },
+		{ kATFirmwareId_Kernel_816,    L"altirraos-816.rom" },
+		{ kATFirmwareId_5200_LLE,      L"altirraos-5200.rom" },
+	};
+
+	vdfastvector<uint8> buf;
+
+	try {
+		for (auto &&out : kOutputs) {
+			ATLoadInternalFirmware(out.mId, nullptr, 0, 0, nullptr, nullptr, &buf);
+
+			VDFile f(VDMakePath(targetDir, VDStringSpanW(out.mpFilename)).c_str(),
+				nsVDFile::kWrite | nsVDFile::kCreateAlways | nsVDFile::kSequential);
+			f.write(buf.data(), (long)buf.size());
+		}
+
+		g_toolsResultMessage = "ROM set successfully exported.";
+		g_showToolsResult = true;
+	} catch (const MyError &e) {
+		g_toolsResultMessage = VDStringA("Export failed: ") + e.c_str();
+		g_showToolsResult = true;
+	}
 }
 
 // Called from main loop each frame — processes deferred file dialog results.
@@ -199,8 +258,9 @@ void ATUIRenderCompatWarning(ATSimulator &sim, ATUIState &state) {
 		return;
 	}
 
-	// Detect X-button close (showCompatWarning toggled to false by ImGui)
-	if (!state.showCompatWarning) {
+	// Detect X-button or ESC close (showCompatWarning toggled to false by ImGui)
+	if (!state.showCompatWarning || ATUICheckEscClose()) {
+		state.showCompatWarning = false;
 		applyMuteSettings();
 		sim.Resume();
 		ImGui::End();
@@ -872,7 +932,48 @@ void ATUIPollDeferredActions() {
 				}
 				break;
 			}
+			case kATDeferred_ConvertSAPToEXE:
+				ATConvertSAPToPlayer(a.path2.c_str(), a.path.c_str());
+				g_toolsResultMessage = "SAP file successfully converted to executable.";
+				g_showToolsResult = true;
+				break;
+			case kATDeferred_ExportROMSet: {
+				// Check if any target files exist — show overwrite confirm if so
+				static const wchar_t *kROMNames[] = {
+					L"atbasic.rom", L"altirraos-800.rom", L"altirraos-xl.rom",
+					L"altirraos-816.rom", L"altirraos-5200.rom",
+				};
+				bool needConfirm = false;
+				for (auto *name : kROMNames) {
+					if (VDDoesPathExist(VDMakePath(a.path, VDStringSpanW(name)).c_str())) {
+						needConfirm = true;
+						break;
+					}
+				}
+				if (needConfirm) {
+					g_exportROMPath = a.path;
+					g_showExportROMOverwrite = true;
+				} else {
+					ATUIDoExportROMSet(a.path);
+				}
+				break;
 			}
+			case kATDeferred_AnalyzeTapeDecode: {
+				if (VDFileIsPathEqual(a.path.c_str(), a.path2.c_str()))
+					throw MyError("The analysis file needs to be different from the source tape file.");
+
+				VDFileStream f2(a.path2.c_str(), nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kSequential | nsVDFile::kCreateAlways);
+				ATCassetteLoadContext ctx;
+				g_sim.GetCassette().GetLoadOptions(ctx);
+				(void)ATLoadCassetteImage(a.path.c_str(), &f2, ctx);
+				g_toolsResultMessage = "Tape analysis complete.";
+				g_showToolsResult = true;
+				break;
+			}
+			}
+		} catch (const MyError& e) {
+			g_toolsResultMessage = VDStringA("Error: ") + e.c_str();
+			g_showToolsResult = true;
 		} catch (...) {
 			VDStringA u8 = VDTextWToU8(a.path);
 			fprintf(stderr, "[AltirraSDL] Deferred action %d failed for: %s\n", a.type, u8.c_str());
@@ -1270,12 +1371,8 @@ static void RenderFileMenu(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 	ImGui::Separator();
 
 	if (ImGui::MenuItem("Exit")) {
-		if (ATUIRequestExit(sim, state)) {
-			SDL_Event quit{};
-			quit.type = SDL_EVENT_QUIT;
-			state.exitConfirmed = true;
-			SDL_PushEvent(&quit);
-		}
+		if (!state.showExitConfirm)
+			state.showExitConfirm = true;
 	}
 }
 
@@ -1956,6 +2053,12 @@ static void RenderVideoRecordingDialog(SDL_Window *window) {
 		return;
 	}
 
+	if (ATUICheckEscClose()) {
+		g_showVideoRecordingDialog = false;
+		ImGui::End();
+		return;
+	}
+
 	// Load saved settings from registry
 	static bool settingsLoaded = false;
 	if (!settingsLoaded) {
@@ -2090,17 +2193,93 @@ static void RenderVideoRecordingDialog(SDL_Window *window) {
 // Tools menu
 // =========================================================================
 
-static void RenderToolsMenu() {
-	ImGui::MenuItem("Disk Explorer...", nullptr, false, false);         // placeholder
-	ImGui::MenuItem("Convert SAP to EXE...", nullptr, false, false);   // placeholder
-	ImGui::MenuItem("Export ROM set...", nullptr, false, false);        // placeholder
-	ImGui::MenuItem("Analyze tape decoding...", nullptr, false, false); // placeholder
+// SAP-to-EXE: two-step file dialog (open SAP, then save XEX)
+static std::string g_sapSourcePath;
+
+static void SAPSaveCallback(void *, const char * const *filelist, int) {
+	if (!filelist || !filelist[0] || g_sapSourcePath.empty())
+		return;
+	ATUIPushDeferred2(kATDeferred_ConvertSAPToEXE, g_sapSourcePath.c_str(), filelist[0]);
+	g_sapSourcePath.clear();
+}
+
+static void SAPOpenCallback(void *userdata, const char * const *filelist, int) {
+	if (!filelist || !filelist[0])
+		return;
+	g_sapSourcePath = filelist[0];
+	static const SDL_DialogFileFilter kXEXFilters[] = {
+		{ "Atari Executable", "xex;obx;com" },
+		{ "All Files", "*" },
+	};
+	SDL_ShowSaveFileDialog(SAPSaveCallback, nullptr, (SDL_Window *)userdata, kXEXFilters, 2, nullptr);
+}
+
+// Export ROM Set: folder dialog callback
+static void ExportROMSetCallback(void *, const char * const *filelist, int) {
+	if (!filelist || !filelist[0])
+		return;
+	ATUIPushDeferred(kATDeferred_ExportROMSet, filelist[0]);
+}
+
+// Analyze Tape: two-step file dialog (open WAV, then save WAV)
+static std::string g_tapeSourcePath;
+
+static void TapeAnalysisSaveCallback(void *, const char * const *filelist, int) {
+	if (!filelist || !filelist[0] || g_tapeSourcePath.empty())
+		return;
+	ATUIPushDeferred2(kATDeferred_AnalyzeTapeDecode, g_tapeSourcePath.c_str(), filelist[0]);
+	g_tapeSourcePath.clear();
+}
+
+static void TapeAnalysisOpenCallback(void *userdata, const char * const *filelist, int) {
+	if (!filelist || !filelist[0])
+		return;
+	g_tapeSourcePath = filelist[0];
+	static const SDL_DialogFileFilter kWAVFilters[] = {
+		{ "WAV Audio", "wav" },
+		{ "All Files", "*" },
+	};
+	SDL_ShowSaveFileDialog(TapeAnalysisSaveCallback, nullptr, (SDL_Window *)userdata, kWAVFilters, 2, nullptr);
+}
+
+static void RenderToolsMenu(ATSimulator &sim, ATUIState &state, SDL_Window *window) {
+	if (ImGui::MenuItem("Disk Explorer..."))
+		state.showDiskExplorer = true;
+
+	if (ImGui::MenuItem("Convert SAP to EXE...")) {
+		static const SDL_DialogFileFilter kSAPFilters[] = {
+			{ "SAP Music Files", "sap" },
+			{ "All Files", "*" },
+		};
+		SDL_ShowOpenFileDialog(SAPOpenCallback, window, window, kSAPFilters, 2, nullptr, false);
+	}
+
+	if (ImGui::MenuItem("Export ROM set..."))
+		SDL_ShowOpenFolderDialog(ExportROMSetCallback, nullptr, window, nullptr, false);
+
+	if (ImGui::MenuItem("Analyze tape decoding...")) {
+		static const SDL_DialogFileFilter kTapeFilters[] = {
+			{ "Audio Files", "wav;flac" },
+			{ "All Files", "*" },
+		};
+		SDL_ShowOpenFileDialog(TapeAnalysisOpenCallback, window, window, kTapeFilters, 2, nullptr, false);
+	}
+
 	ImGui::Separator();
-	ImGui::MenuItem("First Time Setup...", nullptr, false, false);     // placeholder
+
+	if (ImGui::MenuItem("First Time Setup..."))
+		state.showSetupWizard = true;
+
 	ImGui::Separator();
-	ImGui::MenuItem("Keyboard Shortcuts...", nullptr, false, false);   // placeholder
-	ImGui::MenuItem("Compatibility Database...", nullptr, false, false); // placeholder
-	ImGui::MenuItem("Advanced Configuration...", nullptr, false, false); // placeholder
+
+	if (ImGui::MenuItem("Keyboard Shortcuts..."))
+		state.showKeyboardShortcuts = true;
+
+	if (ImGui::MenuItem("Compatibility Database..."))
+		state.showCompatDB = true;
+
+	if (ImGui::MenuItem("Advanced Configuration..."))
+		state.showAdvancedConfig = true;
 }
 
 // =========================================================================
@@ -2168,6 +2347,12 @@ static void RenderAudioOptionsDialog(ATUIState &state) {
 	ImGui::SetNextWindowSize(ImVec2(400, 320), ImGuiCond_Appearing);
 	ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
 	if (!ImGui::Begin("Audio Options", &state.showAudioOptions, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings)) {
+		ImGui::End();
+		return;
+	}
+
+	if (ATUICheckEscClose()) {
+		state.showAudioOptions = false;
 		ImGui::End();
 		return;
 	}
@@ -2332,6 +2517,12 @@ static void RenderCommandLineHelpDialog(ATUIState &state) {
 		return;
 	}
 
+	if (ATUICheckEscClose()) {
+		state.showCommandLineHelp = false;
+		ImGui::End();
+		return;
+	}
+
 	ImGui::TextWrapped("Usage: AltirraSDL [options] [image-file]");
 	ImGui::Separator();
 
@@ -2359,6 +2550,12 @@ static void RenderChangeLogDialog(ATUIState &state) {
 	ImGui::SetNextWindowSize(ImVec2(520, 400), ImGuiCond_Appearing);
 	ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
 	if (!ImGui::Begin("Change Log", &state.showChangeLog, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings)) {
+		ImGui::End();
+		return;
+	}
+
+	if (ATUICheckEscClose()) {
+		state.showChangeLog = false;
 		ImGui::End();
 		return;
 	}
@@ -2399,6 +2596,12 @@ static void RenderAboutDialog(ATUIState &state) {
 		return;
 	}
 
+	if (ATUICheckEscClose()) {
+		state.showAboutDialog = false;
+		ImGui::End();
+		return;
+	}
+
 	ImGui::Text("AltirraSDL");
 	ImGui::Separator();
 	ImGui::TextWrapped(
@@ -2431,7 +2634,7 @@ static void RenderMainMenu(ATSimulator &sim, SDL_Window *window, SDL_Renderer *r
 	if (ImGui::BeginMenu("Cheat")) { RenderCheatMenu(sim); ImGui::EndMenu(); }
 	if (ImGui::BeginMenu("Debug")) { RenderDebugMenu(sim); ImGui::EndMenu(); }
 	if (ImGui::BeginMenu("Record")) { RenderRecordMenu(sim, window); ImGui::EndMenu(); }
-	if (ImGui::BeginMenu("Tools")) { RenderToolsMenu(); ImGui::EndMenu(); }
+	if (ImGui::BeginMenu("Tools")) { RenderToolsMenu(sim, state, window); ImGui::EndMenu(); }
 	if (ImGui::BeginMenu("Window")) { RenderWindowMenu(window); ImGui::EndMenu(); }
 	if (ImGui::BeginMenu("Help")) { RenderHelpMenu(state); ImGui::EndMenu(); }
 
@@ -2537,11 +2740,13 @@ static void RenderStatusOverlay(ATSimulator &sim) {
 // Exit confirmation dialog
 // =========================================================================
 
-// Persistent message string — built when the popup opens, displayed until closed.
-static VDStringW g_exitConfirmMsg;
+// Persistent message string — built when the dialog opens, displayed until closed.
+static VDStringA g_exitConfirmMsgUtf8;
 
 // Build the dirty-storage message, matching Windows ATUIConfirmDiscardAllStorageGetMessage().
-static VDStringW BuildDirtyStorageMessage(ATSimulator &sim) {
+// Returns UTF-8 string ready for ImGui, using "  " indent instead of "\t" (tabs
+// don't render as indentation in ImGui).
+static VDStringA BuildDirtyStorageMessage(ATSimulator &sim) {
 	vdfastvector<ATStorageId> dirtyIds;
 	sim.GetDirtyStorage(dirtyIds, ~(uint32)0);
 
@@ -2551,14 +2756,14 @@ static VDStringW BuildDirtyStorageMessage(ATSimulator &sim) {
 		dbg->GetDirtyStorage(dbgDirtyIds);
 
 	if (dirtyIds.empty() && dbgDirtyIds.empty())
-		return VDStringW();
+		return VDStringA();
 
 	std::sort(dirtyIds.begin(), dirtyIds.end());
 	std::sort(dbgDirtyIds.begin(), dbgDirtyIds.end());
 
-	VDStringW msg;
-	msg = L"The following modified items have not been saved:\n\n";
-	msg += L"\tContents of emulation memory\n";
+	VDStringA msg;
+	msg = "The following modified items have not been saved:\n\n";
+	msg += "  Contents of emulation memory\n";
 
 	for (const ATStorageId id : dirtyIds) {
 		const uint32 type = id & kATStorageId_TypeMask;
@@ -2566,104 +2771,111 @@ static VDStringW BuildDirtyStorageMessage(ATSimulator &sim) {
 
 		switch (type) {
 			case kATStorageId_Cartridge:
-				msg += L"\tCartridge";
+				msg += "  Cartridge";
 				if (unit)
-					msg.append_sprintf(L" %u", unit + 1);
+					msg.append_sprintf(" %u", unit + 1);
 				break;
 
 			case kATStorageId_Disk:
-				msg.append_sprintf(L"\tDisk (D%u:)", unit + 1);
+				msg.append_sprintf("  Disk (D%u:)", unit + 1);
 				break;
 
 			case kATStorageId_Tape:
-				msg += L"\tTape";
+				msg += "  Tape";
 				break;
 
 			case kATStorageId_Firmware:
 				switch (unit) {
-					case 0: msg += L"\tIDE main firmware"; break;
-					case 1: msg += L"\tIDE SDX firmware"; break;
-					case 2: msg += L"\tUltimate1MB firmware"; break;
-					case 3: msg += L"\tRapidus flash firmware"; break;
-					case 4: msg += L"\tRapidus PBI firmware"; break;
+					case 0: msg += "  IDE main firmware"; break;
+					case 1: msg += "  IDE SDX firmware"; break;
+					case 2: msg += "  Ultimate1MB firmware"; break;
+					case 3: msg += "  Rapidus flash firmware"; break;
+					case 4: msg += "  Rapidus PBI firmware"; break;
 				}
 				break;
 		}
-		msg += L'\n';
+		msg += '\n';
 	}
 
 	for (const ATDebuggerStorageId id : dbgDirtyIds) {
 		switch (id) {
 			case kATDebuggerStorageId_CustomSymbols:
-				msg += L"\tDebugger: Custom Symbols\n";
+				msg += "  Debugger: Custom Symbols\n";
 				break;
 			default:
 				break;
 		}
 	}
 
-	msg += L"\nAre you sure you want to exit?";
+	msg += "\nAre you sure you want to exit?";
 	return msg;
 }
 
-bool ATUIRequestExit(ATSimulator &sim, ATUIState &state) {
-	g_exitConfirmMsg = BuildDirtyStorageMessage(sim);
-
-	// Windows Altirra always confirms on exit:
-	// - If dirty storage: lists dirty items + memory warning
-	// - If nothing dirty: still warns about emulation memory loss
-	// Match that behavior here.
-	if (g_exitConfirmMsg.empty())
-		g_exitConfirmMsg = L"Any unsaved work in emulation memory will be lost.\n\nAre you sure you want to exit?";
-
-	state.showExitConfirm = true;
-	ImGui::OpenPopup("Confirm Exit");
-	return false;
-}
-
 void ATUIRenderExitConfirm(ATSimulator &sim, ATUIState &state) {
-	// Ensure popup is open (handles the case where OpenPopup was called
-	// in a different ImGui frame than the BeginPopupModal).
-	if (!ImGui::IsPopupOpen("Confirm Exit"))
-		ImGui::OpenPopup("Confirm Exit");
+	// First frame: build the message.
+	if (g_exitConfirmMsgUtf8.empty()) {
+		g_exitConfirmMsgUtf8 = BuildDirtyStorageMessage(sim);
+
+		// Windows Altirra always confirms on exit:
+		// - If dirty storage: lists dirty items + memory warning
+		// - If nothing dirty: still warns about emulation memory loss
+		if (g_exitConfirmMsgUtf8.empty())
+			g_exitConfirmMsgUtf8 = "Any unsaved work in emulation memory will be lost.\n\nAre you sure you want to exit?";
+	}
 
 	ImGui::SetNextWindowSize(ImVec2(440, 0), ImGuiCond_Appearing);
 	ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(),
 		ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
 
-	if (ImGui::BeginPopupModal("Confirm Exit", nullptr,
-			ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
-		// Convert wide string to UTF-8 for ImGui display.
-		VDStringA msgUtf8 = VDTextWToU8(g_exitConfirmMsg);
-		ImGui::TextWrapped("%s", msgUtf8.c_str());
-		ImGui::Separator();
-
-		float buttonWidth = 120.0f;
-		float spacing = ImGui::GetStyle().ItemSpacing.x;
-		float totalWidth = buttonWidth * 2 + spacing;
-		ImGui::SetCursorPosX((ImGui::GetWindowWidth() - totalWidth) * 0.5f);
-
-		if (ImGui::Button("OK", ImVec2(buttonWidth, 0))) {
+	bool open = state.showExitConfirm;
+	if (!ImGui::Begin("Confirm Exit", &open,
+			ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize
+			| ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
+		if (!open) {
 			state.showExitConfirm = false;
-			state.exitConfirmed = true;
-			g_exitConfirmMsg.clear();
-			ImGui::CloseCurrentPopup();
-
-			// Push quit event so the main loop exits.
-			SDL_Event quit{};
-			quit.type = SDL_EVENT_QUIT;
-			SDL_PushEvent(&quit);
+			g_exitConfirmMsgUtf8.clear();
 		}
-		ImGui::SameLine();
-		if (ImGui::Button("Cancel", ImVec2(buttonWidth, 0))) {
-			state.showExitConfirm = false;
-			state.exitConfirmed = false;
-			g_exitConfirmMsg.clear();
-			ImGui::CloseCurrentPopup();
-		}
-
-		ImGui::EndPopup();
+		ImGui::End();
+		return;
 	}
+
+	// User closed via title bar X button or ESC
+	if (!open || ATUICheckEscClose()) {
+		state.showExitConfirm = false;
+		g_exitConfirmMsgUtf8.clear();
+		ImGui::End();
+		return;
+	}
+
+	ImGui::TextWrapped("%s", g_exitConfirmMsgUtf8.c_str());
+	ImGui::Separator();
+
+	float buttonWidth = 120.0f;
+	float spacing = ImGui::GetStyle().ItemSpacing.x;
+	float totalWidth = buttonWidth * 2 + spacing;
+	ImGui::SetCursorPosX((ImGui::GetWindowWidth() - totalWidth) * 0.5f);
+
+	if (ImGui::Button("OK", ImVec2(buttonWidth, 0))) {
+		state.showExitConfirm = false;
+		state.exitConfirmed = true;
+		g_exitConfirmMsgUtf8.clear();
+		ImGui::End();
+
+		// Push quit event so the main loop exits.
+		SDL_Event quit{};
+		quit.type = SDL_EVENT_QUIT;
+		SDL_PushEvent(&quit);
+		return;
+	}
+	ImGui::SameLine();
+	if (ImGui::Button("Cancel", ImVec2(buttonWidth, 0))) {
+		state.showExitConfirm = false;
+		g_exitConfirmMsgUtf8.clear();
+		ImGui::End();
+		return;
+	}
+
+	ImGui::End();
 }
 
 // =========================================================================
@@ -2709,7 +2921,43 @@ void ATUIRenderFrame(ATSimulator &sim, VDVideoDisplaySDL3 &display,
 	if (state.showChangeLog)         RenderChangeLogDialog(state);
 	if (state.showCompatWarning)     ATUIRenderCompatWarning(sim, state);
 	if (state.showExitConfirm)       ATUIRenderExitConfirm(sim, state);
+	if (state.showDiskExplorer)      ATUIRenderDiskExplorer(sim, state, window);
+	if (state.showSetupWizard)       ATUIRenderSetupWizard(sim, state, window);
+	if (state.showKeyboardShortcuts) ATUIRenderKeyboardShortcuts(state);
+	if (state.showCompatDB)          ATUIRenderCompatDB(sim, state);
+	if (state.showAdvancedConfig)    ATUIRenderAdvancedConfig(state);
 	RenderVideoRecordingDialog(window);
+
+	// Tools result popup (success/error messages from deferred tool actions)
+	if (g_showToolsResult) {
+		ImGui::OpenPopup("Tool Result");
+		g_showToolsResult = false;
+	}
+	if (ImGui::BeginPopupModal("Tool Result", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
+		ImGui::TextUnformatted(g_toolsResultMessage.c_str());
+		ImGui::Spacing();
+		if (ImGui::Button("OK", ImVec2(120, 0)))
+			ImGui::CloseCurrentPopup();
+		ImGui::EndPopup();
+	}
+
+	// Export ROM overwrite confirmation popup
+	if (g_showExportROMOverwrite) {
+		ImGui::OpenPopup("Overwrite Existing Files?");
+		g_showExportROMOverwrite = false;
+	}
+	if (ImGui::BeginPopupModal("Overwrite Existing Files?", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
+		ImGui::TextUnformatted("There are existing files with the same names that will be overwritten.\nAre you sure?");
+		ImGui::Spacing();
+		if (ImGui::Button("Yes", ImVec2(120, 0))) {
+			ImGui::CloseCurrentPopup();
+			ATUIDoExportROMSet(g_exportROMPath);
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("No", ImVec2(120, 0)))
+			ImGui::CloseCurrentPopup();
+		ImGui::EndPopup();
+	}
 
 	ImGui::Render();
 	ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), renderer);

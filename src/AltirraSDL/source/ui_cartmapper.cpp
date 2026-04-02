@@ -412,6 +412,12 @@ void ATUIRenderCartridgeMapper(ATUIState &state) {
 		return;
 	}
 
+	if (ATUICheckEscClose()) {
+		state.showCartridgeMapper = false;
+		ImGui::End();
+		return;
+	}
+
 	if (s.show2600Warning) {
 		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.8f, 0.2f, 1.0f));
 		ImGui::TextWrapped("Warning: This image appears to be an Atari 2600 cartridge. "

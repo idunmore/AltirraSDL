@@ -406,6 +406,8 @@ file(REMOVE_RECURSE
   "CMakeFiles/AltirraSDL.dir/source/ui_profiles.cpp.o.d"
   "CMakeFiles/AltirraSDL.dir/source/ui_system.cpp.o"
   "CMakeFiles/AltirraSDL.dir/source/ui_system.cpp.o.d"
+  "CMakeFiles/AltirraSDL.dir/source/ui_tools.cpp.o"
+  "CMakeFiles/AltirraSDL.dir/source/ui_tools.cpp.o.d"
   "CMakeFiles/AltirraSDL.dir/source/videowriter_sdl3.cpp.o"
   "CMakeFiles/AltirraSDL.dir/source/videowriter_sdl3.cpp.o.d"
   "CMakeFiles/AltirraSDL.dir/stubs/console_stubs.cpp.o"

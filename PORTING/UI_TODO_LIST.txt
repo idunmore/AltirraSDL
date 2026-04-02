@@ -294,14 +294,16 @@ Files:
   [100%] BASIC enable checkbox            — "Enable internal BASIC" (conditional cold reset)
   [100%] BASIC ROM combo                  — BASIC ROM selection (combo with [Autoselect])
   [100%] Auto-Reload ROMs on Cold Reset   — Checkbox
-  [100%] Firmware manager... button       — Full dialog: firmware list with Name/Type/Use for
-                                            columns, type category filter, Add (file dialog +
-                                            autodetect), Remove, Settings (edit name/type/path/
-                                            CRC32, OPTION key flag for XL/XEGS), Scan (directory
-                                            scan), Audit (known firmware CRC comparison), Set as
-                                            Default, Use for... (specific firmware assignment),
-                                            Clear All Custom. Grayed internal firmware. Thread-safe
-                                            file dialog callback.
+  [100%] Firmware manager... button       — Full dialog matching Windows IDD_FIRMWARE:
+                                            List with Name/Type/Use for/Default columns, type
+                                            category filter, "no firmware" placeholders, Add (file
+                                            dialog + autodetect + blank ROM warning), Remove,
+                                            Settings (edit name/type/path/CRC32, OPTION key flag),
+                                            Scan (SDL3 folder picker, hidden/system file skip),
+                                            Audit (background thread CRC scan with progress),
+                                            Right-click context menu, Set as Default, Use for...,
+                                            Clear (with confirmation), OK button, drag-and-drop.
+                                            Thread-safe callbacks, race condition guards.
 
 3.4 MEMORY (Computer > Memory — IDD_CONFIGURE_MEMORY)
   [100%] Memory Size combo                — 13 sizes (via ATUISwitchMemoryMode with validation)

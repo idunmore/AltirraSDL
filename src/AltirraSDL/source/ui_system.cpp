@@ -799,6 +799,13 @@ static void FirmwareAddCallback(void *userdata, const char * const *filelist, in
 	if (!filelist || !filelist[0])
 		return;
 
+	// Reject if a previous add is still pending (e.g., blank firmware warning showing)
+	{
+		std::lock_guard<std::mutex> lock(g_fwAddMutex);
+		if (g_fwPendingAdd.pending)
+			return;
+	}
+
 	VDStringW wpath = VDTextU8ToW(VDStringA(filelist[0]));
 
 	// Read file on callback thread (file I/O is thread-safe)
@@ -834,10 +841,10 @@ static void FirmwareAddCallback(void *userdata, const char * const *filelist, in
 		if (!info.mName.empty())
 			newFw.mName = info.mName;
 		else
-			newFw.mName = VDFileSplitPath(wpath.c_str());
+			newFw.mName = VDFileSplitExtLeft(VDStringW(VDFileSplitPath(wpath.c_str())));
 	} else {
 		newFw.mType = kATFirmwareType_Unknown;
-		newFw.mName = VDFileSplitPath(wpath.c_str());
+		newFw.mName = VDFileSplitExtLeft(VDStringW(VDFileSplitPath(wpath.c_str())));
 	}
 
 	// Check if ROM is blank (all same byte) — matches Windows blank firmware check
@@ -937,6 +944,7 @@ static void ExecuteFirmwareScan(ATFirmwareManager *fwm, const VDStringW &scanDir
 		VDDirectoryIterator it(pattern.c_str());
 		while (it.Next()) {
 			if (it.IsDirectory()) continue;
+			if (it.GetAttributes() & (kVDFileAttr_System | kVDFileAttr_Hidden)) continue;
 			if (!ATFirmwareAutodetectCheckSize(it.GetSize())) continue;
 
 			VDStringW filePath = it.GetFullPath();
@@ -1123,7 +1131,7 @@ static void AuditScanThreadFunc() {
 		sint32 knownFirmwareIndex = -1;
 
 		try {
-			VDFile f(path.c_str(), nsVDFile::kRead | nsVDFile::kOpenExisting | nsVDFile::kDenyNone);
+			VDFile f(path.c_str(), nsVDFile::kRead | nsVDFile::kOpenExisting | nsVDFile::kDenyWrite);
 
 			{
 				std::lock_guard<std::mutex> lock(g_audit.mutex);
@@ -1360,6 +1368,17 @@ static void RenderFirmwareManager(ATSimulator &sim, bool &show) {
 			g_fwMgr.auditOpen = false;
 			g_audit.entries.clear();
 		}
+		return;
+	}
+
+	if (ATUICheckEscClose()) {
+		show = false;
+		if (g_fwMgr.auditOpen) {
+			StopAuditScan();
+			g_fwMgr.auditOpen = false;
+			g_audit.entries.clear();
+		}
+		ImGui::End();
 		return;
 	}
 
@@ -1667,8 +1686,8 @@ static void RenderFirmwareManager(ATSimulator &sim, bool &show) {
 	// OK button right-aligned (matches Windows DEFPUSHBUTTON "OK")
 	{
 		float okWidth = 80.0f;
-		float avail = ImGui::GetContentRegionAvail().x;
-		ImGui::SameLine(avail - okWidth + ImGui::GetCursorPosX() - ImGui::GetStyle().ItemSpacing.x);
+		float rightEdge = ImGui::GetWindowContentRegionMax().x;
+		ImGui::SameLine(rightEdge - okWidth);
 		if (ImGui::Button("OK", ImVec2(okWidth, 0)))
 			show = false;
 	}
@@ -1681,7 +1700,7 @@ static void RenderFirmwareManager(ATSimulator &sim, bool &show) {
 			vdvector<ATFirmwareInfo> allFw;
 			fwm->GetFirmwareList(allFw);
 			for (const auto &fw : allFw) {
-				fwm->RemoveFirmware(fw.mId);
+				fwm->RemoveFirmware(fw.mId); // RemoveFirmware internally skips built-in entries
 			}
 			g_fwMgr.selectedIdx = -1;
 			ImGui::CloseCurrentPopup();
@@ -2898,6 +2917,7 @@ static const DeviceCatalogEntry kSIODevices[] = {
 	{ "1029full",       "1029 80-Column Printer (full emulation)" },
 	{ "1030",           "1030 Modem" },
 	{ "1030full",       "1030 Modem (full emulation)" },
+	{ "midimate",       "MidiMate" },
 	{ "pclink",         "PCLink" },
 	{ "pocketmodem",    "Pocket Modem" },
 	{ "rverter",        "R-Verter" },
@@ -2906,6 +2926,9 @@ static const DeviceCatalogEntry kSIODevices[] = {
 	{ "sio2sd",         "SIO2SD" },
 	{ "sioclock",       "SIO Real-Time Clock" },
 	{ "sx212",          "SX212 Modem" },
+	{ "testsiopoll3",   "SIO Type 3 Poll Test Device" },
+	{ "testsiopoll4",   "SIO Type 4 Poll Test Device" },
+	{ "testsiohs",      "SIO High Speed Test Device" },
 	{ "xm301",          "XM301 Modem" },
 };
 
@@ -2913,6 +2936,19 @@ static const DeviceCatalogEntry kHLEDevices[] = {
 	{ "hostfs",         "Host device (H:)" },
 	{ "printer",        "Printer (P:)" },
 	{ "browser",        "Browser (B:)" },
+};
+
+static const DeviceCatalogEntry kVideoSourceDevices[] = {
+	{ "videogenerator", "Video generator" },
+	{ "videostillimage","Video still image" },
+};
+
+static const DeviceCatalogEntry kAddOnDevices[] = {
+	{ "blackboxfloppy", "Black Box Floppy Board" },
+};
+
+static const DeviceCatalogEntry kOtherDevices[] = {
+	{ "custom",         "Custom device" },
 };
 
 static const DeviceCategoryDef kDeviceCategories[] = {
@@ -2926,6 +2962,9 @@ static const DeviceCategoryDef kDeviceCategories[] = {
 	{ "Disk drives",          kDiskDriveDevices,     (int)(sizeof(kDiskDriveDevices)/sizeof(kDiskDriveDevices[0])) },
 	{ "SIO bus devices",      kSIODevices,           (int)(sizeof(kSIODevices)/sizeof(kSIODevices[0])) },
 	{ "HLE devices",          kHLEDevices,           (int)(sizeof(kHLEDevices)/sizeof(kHLEDevices[0])) },
+	{ "Video source devices", kVideoSourceDevices,   (int)(sizeof(kVideoSourceDevices)/sizeof(kVideoSourceDevices[0])) },
+	{ "Add-on devices",       kAddOnDevices,         (int)(sizeof(kAddOnDevices)/sizeof(kAddOnDevices[0])) },
+	{ "Other devices",        kOtherDevices,         (int)(sizeof(kOtherDevices)/sizeof(kOtherDevices[0])) },
 };
 static const int kNumDeviceCategories = (int)(sizeof(kDeviceCategories)/sizeof(kDeviceCategories[0]));
 
@@ -3454,6 +3493,12 @@ void ATUIRenderSystemConfig(ATSimulator &sim, ATUIState &state) {
 	ImGui::SetNextWindowSize(ImVec2(640, 480), ImGuiCond_Appearing);
 	ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
 	if (!ImGui::Begin("Configure System", &state.showSystemConfig, ImGuiWindowFlags_NoSavedSettings)) {
+		ImGui::End();
+		return;
+	}
+
+	if (ATUICheckEscClose()) {
+		state.showSystemConfig = false;
 		ImGui::End();
 		return;
 	}

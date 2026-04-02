@@ -41,6 +41,12 @@ void ATUIRenderCassetteControl(ATSimulator &sim, ATUIState &state, SDL_Window *w
 		return;
 	}
 
+	if (ATUICheckEscClose()) {
+		state.showCassetteControl = false;
+		ImGui::End();
+		return;
+	}
+
 	ATCassetteEmulator& cas = sim.GetCassette();
 	bool loaded = cas.IsLoaded();
 

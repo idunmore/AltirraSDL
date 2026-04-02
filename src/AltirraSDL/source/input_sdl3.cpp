@@ -374,7 +374,7 @@ void ATInputSDL3_HandleKeyDown(const SDL_KeyboardEvent& ev) {
 			bool ctrl  = (ev.mod & SDL_KMOD_CTRL) != 0;
 			if (ctrl)  fkeyCode |= 0x80;
 			if (shift) fkeyCode |= 0x40;
-			g_inputState.mpPokey->PushKey(fkeyCode, ev.repeat, true, false, true);
+			g_inputState.mpPokey->PushKey(fkeyCode, ev.repeat);
 			return;
 		}
 	}
@@ -429,7 +429,7 @@ void ATInputSDL3_HandleKeyDown(const SDL_KeyboardEvent& ev) {
 	if (ctrl)  atariCode |= 0x80;
 	if (shift) atariCode |= 0x40;
 
-	g_inputState.mpPokey->PushKey(atariCode, ev.repeat, true, false, true);
+	g_inputState.mpPokey->PushKey(atariCode, ev.repeat);
 }
 
 void ATInputSDL3_HandleKeyUp(const SDL_KeyboardEvent& ev) {

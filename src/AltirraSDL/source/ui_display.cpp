@@ -44,6 +44,12 @@ void ATUIRenderDisplaySettings(ATSimulator &sim, ATUIState &state) {
 		return;
 	}
 
+	if (ATUICheckEscClose()) {
+		state.showDisplaySettings = false;
+		ImGui::End();
+		return;
+	}
+
 	// Filter mode
 	ATDisplayFilterMode curFM = ATUIGetDisplayFilterMode();
 	int fmIdx = 0;
@@ -112,6 +118,12 @@ void ATUIRenderAdjustColors(ATSimulator &sim, ATUIState &state) {
 	ImGui::SetNextWindowSize(ImVec2(480, 600), ImGuiCond_Appearing);
 	ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
 	if (!ImGui::Begin("Adjust Colors", &state.showAdjustColors, ImGuiWindowFlags_NoSavedSettings)) {
+		ImGui::End();
+		return;
+	}
+
+	if (ATUICheckEscClose()) {
+		state.showAdjustColors = false;
 		ImGui::End();
 		return;
 	}

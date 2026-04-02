@@ -438,16 +438,21 @@ Lists available firmware by type (OS-A, OS-B, XL, BASIC, etc.), shows
 file paths, allows re-scanning.
 
 **Status:** IMPLEMENTED in `ui_system.cpp` (firmware manager section,
-~400 lines). Full dialog matching Windows `IDD_FIRMWARE`:
-- Firmware list table with Name, Type, Use for, Default columns
+~600 lines). Full dialog matching Windows `IDD_FIRMWARE`:
+- Firmware list table with Name, Type, Use for, Default (*) columns
 - Type category filter (Computer/Printers/Disk Drives/Hardware)
+- "No firmware" placeholder rows for unrepresented types (All Types view)
 - Internal firmware grayed out (non-editable, non-removable)
-- Add (SDL3 file dialog + `ATFirmwareAutodetect`, thread-safe)
+- Add (SDL3 file dialog + `ATFirmwareAutodetect`, thread-safe callback)
+- Blank firmware warning (all-same-byte ROM detection, matches Windows)
 - Remove, Settings (edit name/type/CRC32/path, OPTION key flag)
-- Scan (directory scan with `VDDirectoryIterator`)
-- Audit (known firmware CRC comparison, ~92 entries, clippered table)
-- Set as Default, Use for... (specific firmware assignment menu)
-- Clear All Custom (with confirmation)
+- Scan (SDL3 folder picker + `VDDirectoryIterator`, skips hidden/system)
+- Audit (background thread CRC scan, incremental progress, matches Windows)
+- Right-click context menu (Set as Default, Edit...)
+- Set as Default, Use for... (specific firmware assignment toggle menu)
+- Clear (with confirmation), OK button
+- Drag-and-drop file import (routes SDL_EVENT_DROP_FILE when manager open)
+- Firmware type long names match Windows exactly (all 56 types)
 
 ### 9. Debugger (14 files, ~10,000 lines)
 
