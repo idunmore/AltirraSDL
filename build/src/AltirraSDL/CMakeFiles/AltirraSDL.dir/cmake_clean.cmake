@@ -398,6 +398,8 @@ file(REMOVE_RECURSE
   "CMakeFiles/AltirraSDL.dir/__/VDDisplay/source/displaytypes.cpp.o.d"
   "CMakeFiles/AltirraSDL.dir/__/VDDisplay/source/screenfx.cpp.o"
   "CMakeFiles/AltirraSDL.dir/__/VDDisplay/source/screenfx.cpp.o.d"
+  "CMakeFiles/AltirraSDL.dir/source/commandline_sdl3.cpp.o"
+  "CMakeFiles/AltirraSDL.dir/source/commandline_sdl3.cpp.o.d"
   "CMakeFiles/AltirraSDL.dir/source/display_backend_gl33.cpp.o"
   "CMakeFiles/AltirraSDL.dir/source/display_backend_gl33.cpp.o.d"
   "CMakeFiles/AltirraSDL.dir/source/display_backend_sdl.cpp.o"

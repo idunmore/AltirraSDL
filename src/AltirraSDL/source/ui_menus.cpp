@@ -278,14 +278,10 @@ static bool WcsiEqual(const wchar_t *a, size_t alen, const wchar_t *b) {
 	return true;
 }
 
-void ATUIPasteText() {
-	VDStringW clipText;
-	if (!ATUIClipGetText(clipText) || clipText.empty())
-		return;
-
+void ATUIPasteTextDirect(const wchar_t *text, size_t textLen) {
 	auto& pokey = g_sim.GetPokey();
-	const wchar_t *s = clipText.data();
-	size_t len = clipText.size();
+	const wchar_t *s = text;
+	size_t len = textLen;
 	vdfastvector<wchar_t> pasteChars;
 
 	while (len--) {
@@ -400,6 +396,13 @@ void ATUIPasteText() {
 
 		scancodeModifier = 0;
 	}
+}
+
+void ATUIPasteText() {
+	VDStringW clipText;
+	if (!ATUIClipGetText(clipText) || clipText.empty())
+		return;
+	ATUIPasteTextDirect(clipText.data(), clipText.size());
 }
 
 static const SDL_DialogFileFilter kCartFilters[] = {

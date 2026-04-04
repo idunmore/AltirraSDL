@@ -87,6 +87,13 @@ void ATUIShowSaveFrameDialog(SDL_Window *window);     // Alt+F10
 // Paste text from clipboard into emulator (Alt+Shift+V)
 void ATUIPasteText();
 
+// Paste text directly (not from clipboard) — used by --type command-line switch
+void ATUIPasteTextDirect(const wchar_t *text, size_t len);
+
+// Command-line processing (commandline_sdl3.cpp) — returns true if any
+// boot image was loaded (caller should skip default ColdReset+Resume)
+bool ATProcessCommandLineSDL3(int argc, char** argv);
+
 // Mouse capture — SDL3 implementation (defined in uiaccessors_stubs.cpp)
 void ATUISetMouseCaptureWindow(SDL_Window *window);
 void ATUICaptureMouse();

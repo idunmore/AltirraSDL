@@ -118,16 +118,19 @@ def parse_rc_dialogs(path):
                     # AUTORADIOBUTTON "label", ID, ...
                     # AUTOCHECKBOX "label", ID, ...
                     cm = re.match(
-                        r'\s+(?:PUSHBUTTON|DEFPUSHBUTTON|CHECKBOX|LTEXT|RTEXT|CTEXT|'
+                        r'\s+(PUSHBUTTON|DEFPUSHBUTTON|CHECKBOX|LTEXT|RTEXT|CTEXT|'
                         r'GROUPBOX|AUTORADIOBUTTON|AUTOCHECKBOX)\s+"([^"]*)"(?:,\s*(\w+))?',
                         line)
                     if cm:
-                        label = cm.group(1).replace('&', '')
-                        ctrl_id = cm.group(2) or ''
+                        ctrl_type = cm.group(1)
+                        label = cm.group(2).replace('&', '')
+                        ctrl_id = cm.group(3) or ''
                         if label and label not in ('OK', 'Cancel', '', '...', 'Static'):
+                            is_static = ctrl_type in ('LTEXT', 'RTEXT', 'CTEXT', 'GROUPBOX')
                             dlg['controls'].append({
                                 'label': label,
                                 'id': ctrl_id,
+                                'is_static': is_static,
                             })
                     # CONTROL "label", ID, "class", ...
                     cm2 = re.match(
@@ -141,6 +144,7 @@ def parse_rc_dialogs(path):
                             dlg['controls'].append({
                                 'label': label,
                                 'id': ctrl_id,
+                                'is_static': False,
                             })
                 j += 1
             dialogs[dlg_id] = dlg
@@ -363,6 +367,12 @@ IMPLEMENTED_VIA_LOOPS.update({
     'Console.HappyToggleWriteEnable',
     'Console.ATR8000Reset', 'Console.XELCFSwap',
 })
+# Recording commands — implemented via ATUIToggleRecordingPause() in ui_menus.cpp
+IMPLEMENTED_VIA_LOOPS.update({
+    'Record.Pause', 'Record.Resume', 'Record.PauseResume',
+})
+# Tools.OptionsDialog is an alias for System.Configure (Configure System menu item)
+IMPLEMENTED_VIA_LOOPS.add('Tools.OptionsDialog')
 # Special cartridge types (table-driven in ui_menus.cpp)
 IMPLEMENTED_VIA_LOOPS.update({
     'Cart.AttachSC3D', 'Cart.AttachMaxFlash1MB', 'Cart.AttachMaxFlash1MBMyIDE',
@@ -516,7 +526,7 @@ SETTINGS_IN_SYSCONFIG = {
     'Options.EfficiencyModeEfficiency',
     'System.DevicesDialog',
     # View settings in sysconfig
-    'View.ToggleAccelScreenFX', 'View.ToggleAutoHideMenu',
+    'View.ToggleAutoHideMenu',
     'View.ToggleAutoHidePointer', 'View.ToggleConstrainPointerFullScreen',
     'View.ToggleIndicators', 'View.TogglePadBounds', 'View.TogglePadPointers',
     'View.ToggleReaderEnabled', 'View.ToggleTargetPointer',
@@ -524,10 +534,6 @@ SETTINGS_IN_SYSCONFIG = {
     'View.VideoOutputPrev', 'View.EffectClear', 'View.EffectReload',
     # Rewind
     'System.ToggleRewindRecording',
-    # Recording
-    'Record.Pause', 'Record.Resume',
-    # Tools
-    'Tools.OptionsDialog',
 }
 
 
@@ -567,6 +573,9 @@ def generate_report(verbose=False, output_json=False):
             label: The label text to search for
             strict: If True, require exact or near-exact match only.
                     If False, also allow substring matching for longer labels.
+
+        Conservative matching policy: we prefer false positives (flagging
+        implemented items as missing) over false negatives (hiding real gaps).
         """
         if not label:
             return False
@@ -586,14 +595,26 @@ def generate_report(verbose=False, output_json=False):
             if clean_lower == lit_clean:
                 return True
 
-        if strict:
-            return False
+        # No fuzzy/substring matching — too many false negatives.
+        # A label must appear as an exact string literal to count.
+        return False
 
-        # For non-strict mode: fuzzy matching for longer labels (>8 chars)
-        if len(label_lower) > 8:
-            for item_label in imgui_menu_items:
-                if label_lower in item_label.lower() or item_label.lower() in label_lower:
-                    return True
+    def label_in_imgui_menu(label):
+        """Check if label appears specifically in an ImGui::MenuItem or BeginMenu call.
+
+        This is stricter than label_found_in_sdl — it only matches labels that
+        are actually used as menu item text, not random string literals in the
+        source (comments, variable names, log messages, etc.).
+        """
+        if not label:
+            return False
+        label_lower = label.lower()
+        clean_lower = label.rstrip('.').strip().lower()
+        for item_label in imgui_menu_items:
+            il = item_label.lower()
+            il_clean = il.rstrip('.').strip()
+            if label_lower == il or clean_lower == il_clean:
+                return True
         return False
 
     # ── Cross-reference ──
@@ -611,12 +632,19 @@ def generate_report(verbose=False, output_json=False):
         label = info.get('label', '')
         if cmd_id in WINDOWS_ONLY_COMMANDS:
             menu_windows_only.add(cmd_id)
+        elif label in placeholders:
+            # Check placeholders BEFORE label matching — a disabled MenuItem
+            # with a TODO comment has the label in source but isn't implemented.
+            menu_placeholder.add(cmd_id)
         elif cmd_id in sdl_commands or cmd_id in IMPLEMENTED_VIA_LOOPS:
             menu_covered.add(cmd_id)
-        elif label_found_in_sdl(label):
+        elif label_in_imgui_menu(label):
+            # Label found specifically in an ImGui::MenuItem/BeginMenu call
             menu_covered.add(cmd_id)
-        elif label in placeholders:
-            menu_placeholder.add(cmd_id)
+        elif len(label) > 15 and label_found_in_sdl(label):
+            # Only accept generic string-literal matching for long unique labels
+            # Short labels like "Normal", "All", "None" match too many things
+            menu_covered.add(cmd_id)
         else:
             menu_missing.add(cmd_id)
 
@@ -635,17 +663,16 @@ def generate_report(verbose=False, output_json=False):
         elif cmd_id in SETTINGS_IN_SYSCONFIG:
             cmd_sysconfig.add(cmd_id)
         else:
-            # Also try label-based matching from menu_commands
+            # Try label-based matching from menu_commands, with same
+            # conservative approach as for menu commands above.
             info = menu_commands.get(cmd_id, {})
             label = info.get('label', '')
-            if label_found_in_sdl(label):
+            if label_in_imgui_menu(label):
+                cmd_covered.add(cmd_id)
+            elif len(label) > 15 and label_found_in_sdl(label):
                 cmd_covered.add(cmd_id)
             else:
-                cmd_name = cmd_id.split('.', 1)[1] if '.' in cmd_id else ''
-                if cmd_name and cmd_name in all_sdl_text_combined:
-                    cmd_covered.add(cmd_id)
-                else:
-                    cmd_missing.add(cmd_id)
+                cmd_missing.add(cmd_id)
 
     # 3. Dialog coverage
     dialog_covered = set()
@@ -843,6 +870,10 @@ def generate_report(verbose=False, output_json=False):
     for dialog_id in sorted(dialog_covered):
         if dialog_id in DIALOG_NOT_APPLICABLE:
             continue
+        # Sub-page dialogs are consolidated into a parent — skip per-control
+        # checking since their controls appear under the parent dialog in ImGui.
+        if dialog_id in DIALOG_SCREENFX_SUB:
+            continue
         dlg = rc_dialogs[dialog_id]
         controls = dlg.get('controls', [])
         if not controls:
@@ -1019,17 +1050,18 @@ def generate_report(verbose=False, output_json=False):
     ac = s['all_commands']
     print("SUMMARY")
     print("-" * 78)
-    print(f"  {'Category':<25} {'Total':>6} {'Direct':>7} {'SysCfg':>7} {'WinOnly':>8} {'MISSING':>8} {'Accounted':>10}")
-    print(f"  {'-'*25} {'-'*6} {'-'*7} {'-'*7} {'-'*8} {'-'*8} {'-'*10}")
-    print(f"  {'Menu Commands':<25} {mc['total']:>6} {mc['covered']:>7} {'—':>7} {mc['windows_only']:>8} {mc['missing']:>8} {mc['pct']:>10}")
-    print(f"  {'Registered Commands':<25} {ac['total']:>6} {ac['covered']:>7} {ac['in_sysconfig']:>7} {ac['windows_only']:>8} {ac['missing']:>8} {ac['pct']:>10}")
-    print(f"  {'Dialogs (RC)':<25} {s['dialogs']['total']:>6} {s['dialogs']['covered']:>7} {'—':>7} {'—':>8} {s['dialogs']['missing']:>8} {s['dialogs']['pct']:>10}")
+    print(f"  {'Category':<25} {'Total':>6} {'Direct':>7} {'SysCfg':>7} {'WinOnly':>8} {'Stub':>6} {'MISSING':>8} {'Accounted':>10}")
+    print(f"  {'-'*25} {'-'*6} {'-'*7} {'-'*7} {'-'*8} {'-'*6} {'-'*8} {'-'*10}")
+    print(f"  {'Menu Commands':<25} {mc['total']:>6} {mc['covered']:>7} {'—':>7} {mc['windows_only']:>8} {mc['placeholder']:>6} {mc['missing']:>8} {mc['pct']:>10}")
+    print(f"  {'Registered Commands':<25} {ac['total']:>6} {ac['covered']:>7} {ac['in_sysconfig']:>7} {ac['windows_only']:>8} {'—':>6} {ac['missing']:>8} {ac['pct']:>10}")
+    print(f"  {'Dialogs (RC)':<25} {s['dialogs']['total']:>6} {s['dialogs']['covered']:>7} {'—':>7} {'—':>8} {'—':>6} {s['dialogs']['missing']:>8} {s['dialogs']['pct']:>10}")
     cm = s['context_menus']
-    print(f"  {'Context Menu Items':<25} {cm['total_items']:>6} {cm['items_found']:>7} {'—':>7} {'—':>8} {cm['items_missing']:>8} {cm['pct']:>10}")
+    print(f"  {'Context Menu Items':<25} {cm['total_items']:>6} {cm['items_found']:>7} {'—':>7} {'—':>8} {'—':>6} {cm['items_missing']:>8} {cm['pct']:>10}")
     print()
     print(f"  Direct  = found in SDL3 source code (string literal, label, or loop/table)")
     print(f"  SysCfg  = setting exposed in Configure System dialog (not a menu command)")
     print(f"  WinOnly = Windows-specific (D3D, file assoc, single instance, etc.)")
+    print(f"  Stub    = menu item exists but disabled with TODO/placeholder comment")
     print(f"  MISSING = genuinely not found — needs implementation or verification")
     print()
 
@@ -1039,6 +1071,19 @@ def generate_report(verbose=False, output_json=False):
         print("-" * 78)
         by_menu = defaultdict(list)
         for item in report['menu_commands']['missing']:
+            by_menu[item['menu']].append(item)
+        for menu in sorted(by_menu):
+            print(f"\n  [{menu}]")
+            for item in by_menu[menu]:
+                print(f"    {item['id']:<45} {item['label']}")
+        print()
+
+    # Stub/placeholder menu items (exist in SDL3 but disabled with TODO)
+    if report['menu_commands']['placeholder']:
+        print("STUB MENU COMMANDS (exist in SDL3 but disabled with TODO/placeholder)")
+        print("-" * 78)
+        by_menu = defaultdict(list)
+        for item in report['menu_commands']['placeholder']:
             by_menu[item['menu']].append(item)
         for menu in sorted(by_menu):
             print(f"\n  [{menu}]")
@@ -1119,9 +1164,17 @@ def generate_report(verbose=False, output_json=False):
                 total = g['total']
                 found = len(g['controls_found'])
                 pct = f"{found/total*100:.0f}%" if total else "?"
+                # Separate functional controls (buttons, checkboxes, radios)
+                # from static labels (LTEXT, RTEXT, CTEXT, GROUPBOX)
+                missing_func = [c for c in g['controls_missing'] if not c.get('is_static')]
+                missing_static = [c for c in g['controls_missing'] if c.get('is_static')]
                 print(f"\n  {did} \"{caption}\"  (controls: {found}/{total} = {pct})")
-                for ctrl in g['controls_missing']:
-                    print(f"    MISSING control: {ctrl['label']:<35} [{ctrl['id']}]")
+                if missing_func:
+                    for ctrl in missing_func:
+                        print(f"    MISSING control: {ctrl['label']:<35} [{ctrl['id']}]")
+                if missing_static:
+                    for ctrl in missing_static:
+                        print(f"    MISSING label:   {ctrl['label']:<35} [{ctrl['id']}]")
             if did in dialog_menu_gaps:
                 mg = dialog_menu_gaps[did]
                 if not caption:

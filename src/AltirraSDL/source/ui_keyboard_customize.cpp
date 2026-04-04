@@ -952,6 +952,7 @@ struct KbdCustomizeState {
 	bool confirmClearOpen = false;
 	bool scrollBindingIntoView = false;  // request scroll in right panel
 	bool scrollScanCodeIntoView = false; // request scroll in left panel
+	bool captureJustCompleted = false;   // one-shot: auto-search bindings after capture
 	bool pendingAddConflict = false;     // waiting for conflict confirmation
 	uint32 pendingAddMapping = 0;        // mapping to add after confirm
 };
@@ -1032,6 +1033,7 @@ static void InitDialog() {
 	s_kc.capturedMapping = 0;
 	s_kc.hasCaptured = false;
 	s_kc.confirmClearOpen = false;
+	s_kc.captureJustCompleted = false;
 	s_kc.pendingAddConflict = false;
 	s_kc.pendingAddMapping = 0;
 	RebuildFilteredList();
@@ -1431,6 +1433,7 @@ void ATUIRenderKeyboardCustomize(ATUIState &state) {
 					s_kc.capturedMapping = ATUIPackKeyboardMapping(0, ch, kATUIKeyboardMappingModifier_Cooked);
 					s_kc.hasCaptured = true;
 					s_kc.capturingKey = false;
+					s_kc.captureJustCompleted = true;
 				}
 				io.InputQueueCharacters.clear();
 			}
@@ -1456,8 +1459,35 @@ void ATUIRenderKeyboardCustomize(ATUIState &state) {
 					s_kc.capturedMapping = ATUIPackKeyboardMapping(0, km.vk, modifiers);
 					s_kc.hasCaptured = true;
 					s_kc.capturingKey = false;
+					s_kc.captureJustCompleted = true;
 					break;
 				}
+			}
+		}
+	}
+
+	// After capture completes, auto-select existing binding with same host key
+	// (matches Windows OnHotKeyChanged — lets user see what's already mapped)
+	if (s_kc.captureJustCompleted) {
+		s_kc.captureJustCompleted = false;
+		uint32 capturedBase = s_kc.capturedMapping & 0xFFFFFE00;
+		for (int j = 0; j < (int)s_kc.mappings.size(); ++j) {
+			if ((s_kc.mappings[j] & 0xFFFFFE00) == capturedBase) {
+				s_kc.selectedBindingIdx = j;
+				s_kc.scrollBindingIntoView = true;
+
+				uint32 sc = s_kc.mappings[j] & 0x1FF;
+				uint32 tableIdx = s_kc.scanCodeToEntry[sc];
+				if (tableIdx < (uint32)kScanCodeTableSize) {
+					for (int k = 0; k < (int)s_kc.filteredScanCodes.size(); ++k) {
+						if (s_kc.filteredScanCodes[k] == tableIdx) {
+							s_kc.selectedScanCodeIdx = k;
+							s_kc.scrollScanCodeIntoView = true;
+							break;
+						}
+					}
+				}
+				break;
 			}
 		}
 	}
@@ -1486,12 +1516,11 @@ void ATUIRenderKeyboardCustomize(ATUIState &state) {
 
 		// Add
 		bool canAdd = s_kc.hasCaptured && s_kc.selectedScanCodeIdx >= 0
-			&& s_kc.selectedScanCodeIdx < (int)s_kc.filteredScanCodes.size();
+			&& s_kc.selectedScanCodeIdx < (int)s_kc.filteredScanCodes.size()
+			&& s_kc.filteredScanCodes[s_kc.selectedScanCodeIdx] < (uint32)kScanCodeTableSize;
 		if (!canAdd) ImGui::BeginDisabled();
 		if (ImGui::Button("Add") && canAdd) {
 			uint32 tableIdx = s_kc.filteredScanCodes[s_kc.selectedScanCodeIdx];
-			if (tableIdx >= (uint32)kScanCodeTableSize)
-				tableIdx = 0;
 			uint32 sc = kScanCodeTable[tableIdx];
 			uint32 mapping = s_kc.capturedMapping + sc;
 

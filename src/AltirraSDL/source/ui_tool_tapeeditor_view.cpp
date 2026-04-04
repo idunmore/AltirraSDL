@@ -503,8 +503,24 @@ void ATTapeEditorState::RenderTapeView(float viewWidth, float viewHeight, float 
 					uint32 sepColor = hasValidChecksum ? IM_COL32(0x80, 0xFF, 0xC4, 255) : IM_COL32(0x70, 0x70, 0x70, 255);
 					dl->AddLine(ImVec2(bx1, ya), ImVec2(bx1, ya + yah), sepColor);
 
-					// Byte value text or block
+					// Bit sample markers (when zoomed in enough)
 					float space = bx2 - bx1;
+					if (space > 20.0f) {
+						const int suspiciousBit = dblock.mSuspiciousBit
+							&& ((db.mData & (1 << (dblock.mSuspiciousBit - 1))) != 0) == dblock.mbSuspiciousBitPolarity
+							? dblock.mSuspiciousBit : -1;
+
+						for (int j = 0; j < 10; ++j) {
+							uint32 bitSamplePos = db.mStartSample + db.mBitSampleOffsets[j];
+							if (bitSamplePos < byteEnd) {
+								float bitX = SampleEdgeToClientX(bitSamplePos, viewWidth) + viewX;
+								uint32 bitColor = (j == suspiciousBit) ? IM_COL32(0x99, 0x44, 0xFF, 255) : IM_COL32(0x60, 0x60, 0x60, 255);
+								dl->AddLine(ImVec2(bitX, ya), ImVec2(bitX, ya + yah * 0.5f), bitColor);
+							}
+						}
+					}
+
+					// Byte value text or block
 					if (space > 18.0f) {
 						char hexBuf[4];
 						snprintf(hexBuf, sizeof(hexBuf), "%02X", db.mData);
@@ -522,6 +538,11 @@ void ATTapeEditorState::RenderTapeView(float viewWidth, float viewHeight, float 
 						dl->AddRectFilled(ImVec2(bx1 + 1, ya + 1), ImVec2(bx2, ya + yah - 1), blockColor);
 					}
 				}
+
+				// End separator line for the block
+				uint32 blockEndSample = ch.mDecodedBlocks.mByteData[dblock.mStartByte + dblock.mByteCount].mStartSample;
+				float bxEnd = SampleEdgeToClientX(blockEndSample, viewWidth) + viewX;
+				dl->AddLine(ImVec2(bxEnd, ya), ImVec2(bxEnd, ya + yah), IM_COL32(0xC0, 0xC0, 0xC0, 255));
 			}
 		}
 	}

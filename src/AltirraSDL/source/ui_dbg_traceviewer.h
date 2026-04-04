@@ -70,6 +70,12 @@ struct ATImGuiTraceViewerContext {
 	vdrefptr<ATTraceChannelCPUHistory> mpCPUHistoryChannel;
 	vdrefptr<IATTraceChannel> mpLogChannel;
 
+	// ---- Vertical scroll (shared between labels and events) ----
+	float mScrollY = 0;
+
+	// ---- Generation counter (bumped on collection change) ----
+	uint32 mCollectionGeneration = 0;
+
 	// ---- Zoom helper ----
 	void ZoomDeltaSteps(double centerTime, sint32 steps, float viewWidthPixels);
 };

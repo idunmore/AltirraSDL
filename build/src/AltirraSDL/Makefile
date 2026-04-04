@@ -4941,6 +4941,30 @@ __/VDDisplay/source/screenfx.cpp.s:
 	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/__/VDDisplay/source/screenfx.cpp.s
 .PHONY : __/VDDisplay/source/screenfx.cpp.s
 
+source/commandline_sdl3.o: source/commandline_sdl3.cpp.o
+.PHONY : source/commandline_sdl3.o
+
+# target to build an object file
+source/commandline_sdl3.cpp.o:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/commandline_sdl3.cpp.o
+.PHONY : source/commandline_sdl3.cpp.o
+
+source/commandline_sdl3.i: source/commandline_sdl3.cpp.i
+.PHONY : source/commandline_sdl3.i
+
+# target to preprocess a source file
+source/commandline_sdl3.cpp.i:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/commandline_sdl3.cpp.i
+.PHONY : source/commandline_sdl3.cpp.i
+
+source/commandline_sdl3.s: source/commandline_sdl3.cpp.s
+.PHONY : source/commandline_sdl3.s
+
+# target to generate assembly for a file
+source/commandline_sdl3.cpp.s:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/commandline_sdl3.cpp.s
+.PHONY : source/commandline_sdl3.cpp.s
+
 source/display_backend_gl33.o: source/display_backend_gl33.cpp.o
 .PHONY : source/display_backend_gl33.o
 
@@ -6989,6 +7013,9 @@ help:
 	@echo "... __/VDDisplay/source/screenfx.o"
 	@echo "... __/VDDisplay/source/screenfx.i"
 	@echo "... __/VDDisplay/source/screenfx.s"
+	@echo "... source/commandline_sdl3.o"
+	@echo "... source/commandline_sdl3.i"
+	@echo "... source/commandline_sdl3.s"
 	@echo "... source/display_backend_gl33.o"
 	@echo "... source/display_backend_gl33.i"
 	@echo "... source/display_backend_gl33.s"

@@ -212,5 +212,6 @@ private:
 	// librashader integration
 	LibrashaderRuntime mLibrashader;
 	uint32_t mFrameCounter = 0;
-	GLRenderTarget mLibrashaderFBO;  // intermediate FBO for librashader output
+	GLRenderTarget mLibrashaderFBO;     // built-in effects → librashader input
+	GLRenderTarget mLibrashaderOutFBO;  // librashader output → screen
 };

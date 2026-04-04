@@ -51,6 +51,7 @@ struct ProfileState {
 	bool mbValid = false;
 	double mLastSelectStart = -1;
 	double mLastSelectEnd = -1;
+	uint32 mLastCollectionGen = 0;
 
 	struct SortedRecord {
 		uint32 mAddress;
@@ -349,6 +350,13 @@ static void RenderCPUProfile(ATImGuiTraceViewerContext& ctx) {
 			std::max(ctx.mSelectStart, ctx.mSelectEnd));
 	}
 
+	// Detect collection change
+	if (ctx.mCollectionGeneration != s_profState.mLastCollectionGen) {
+		s_profState.mLastCollectionGen = ctx.mCollectionGeneration;
+		s_profState.mbNeedsRefresh = true;
+		s_profState.mbValid = false;
+	}
+
 	// Check if selection changed
 	if (ctx.mbSelectionValid &&
 		(ctx.mSelectStart != s_profState.mLastSelectStart || ctx.mSelectEnd != s_profState.mLastSelectEnd)) {
@@ -453,6 +461,8 @@ static void RebuildLogEntries(ATImGuiTraceViewerContext& ctx) {
 	s_logState.mEntries.clear();
 	s_logState.mbValid = false;
 	s_logState.mpLastChannel = ctx.mpLogChannel;
+	s_logState.mSelectedRow = -1;
+	s_logState.mTimestampOrigin = 0;
 
 	if (!ctx.mpLogChannel)
 		return;

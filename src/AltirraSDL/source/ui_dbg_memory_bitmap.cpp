@@ -31,8 +31,8 @@ void ATImGuiMemoryPaneImpl::GenerateBitmapRow(
 	// -----------------------------------------------------------------
 	// 1-bpp font: 8x8 character cells
 	// Each group of 8 bytes encodes one character.
-	// Byte j in a group represents column j; bit b = row b.
-	// Windows renders bottom-up (row i uses src[7-i]).
+	// Byte j in a group = scanline j (byte 0 = top row).
+	// SDL/ImGui textures are top-down, so scanline 0 = byte 0.
 	// Output: cols pixels wide, 8 scanlines tall.
 	// -----------------------------------------------------------------
 	case InterpretMode::Font1Bpp: {
@@ -40,7 +40,7 @@ void ATImGuiMemoryPaneImpl::GenerateBitmapRow(
 		for (int scanline = 0; scanline < 8; scanline++) {
 			uint32 *row = dst + scanline * dstPitch;
 			for (uint32 ch = 0; ch < chars; ch++) {
-				uint8 byte = src[ch * 8 + (7 - scanline)];
+				uint8 byte = src[ch * 8 + scanline];
 				for (int bit = 7; bit >= 0; bit--)
 					*row++ = kPal1Bpp[(byte >> bit) & 1];
 			}
@@ -50,7 +50,8 @@ void ATImGuiMemoryPaneImpl::GenerateBitmapRow(
 
 	// -----------------------------------------------------------------
 	// 2-bpp font: 8x8 character cells, 2 bits per pixel
-	// Each group of 8 bytes, byte j = column j, 2 bits per pixel.
+	// Each group of 8 bytes, byte j = scanline j, 2 bits per pixel.
+	// SDL/ImGui textures are top-down, so scanline 0 = byte 0.
 	// Output: (cols/2) pixels wide, 8 scanlines tall.
 	// -----------------------------------------------------------------
 	case InterpretMode::Font2Bpp: {
@@ -58,7 +59,7 @@ void ATImGuiMemoryPaneImpl::GenerateBitmapRow(
 		for (int scanline = 0; scanline < 8; scanline++) {
 			uint32 *row = dst + scanline * dstPitch;
 			for (uint32 ch = 0; ch < chars; ch++) {
-				uint8 byte = src[ch * 8 + (7 - scanline)];
+				uint8 byte = src[ch * 8 + scanline];
 				for (int k = 0; k < 4; k++)
 					*row++ = kPal2Bpp[(byte >> (6 - 2 * k)) & 3];
 			}
@@ -101,14 +102,17 @@ void ATImGuiMemoryPaneImpl::GenerateBitmapRow(
 	// Output: cols*2 pixels wide, 1 scanline.
 	// -----------------------------------------------------------------
 	case InterpretMode::Graphics4Bpp: {
+		// 16-level grayscale palette matching Windows: range [16, 240]
+		// Windows: palette[0] = 16, palette[i] = 16 + (240*i+7)/15 for i=1..15
+		static constexpr uint8 kPal4Bpp[16] = {
+			16, 16, 32, 48, 64, 80, 96, 112,
+			128, 144, 160, 176, 192, 208, 224, 240
+		};
 		uint32 *row = dst;
 		for (uint32 i = 0; i < cols; i++) {
 			uint8 byte = src[i];
-			uint8 hi = (byte >> 4) & 0x0F;
-			uint8 lo = byte & 0x0F;
-			// 16-level grayscale
-			uint8 vh = (uint8)(hi * 255 / 15);
-			uint8 vl = (uint8)(lo * 255 / 15);
+			uint8 vh = kPal4Bpp[(byte >> 4) & 0x0F];
+			uint8 vl = kPal4Bpp[byte & 0x0F];
 			*row++ = 0xFF000000 | (vh << 16) | (vh << 8) | vh;
 			*row++ = 0xFF000000 | (vl << 16) | (vl << 8) | vl;
 		}
@@ -252,6 +256,9 @@ void ATImGuiMemoryPaneImpl::UpdateBitmapTexture(int rowCount) {
 				mBitmapTexW, mBitmapTexH);
 
 			if (!mpBitmapTexture) return;
+
+			// Nearest-neighbor filtering for sharp pixel rendering
+			SDL_SetTextureScaleMode(mpBitmapTexture, SDL_SCALEMODE_NEAREST);
 		}
 
 		// Lock and fill

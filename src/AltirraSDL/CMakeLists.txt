@@ -124,6 +124,9 @@ add_executable(AltirraSDL
     # Test mode (headless automated testing via stdin/stdout commands)
     source/ui_testmode.cpp
 
+    # Command-line processing (mirrors Windows uicommandline.cpp)
+    source/commandline_sdl3.cpp
+
     # Registry persistence (filtered out by ui* regex, so add explicitly)
     ${CMAKE_SOURCE_DIR}/src/Altirra/source/uiregistry.cpp
 

@@ -81,6 +81,7 @@ DisplayBackendGL33::~DisplayBackendGL33() {
 
 	// Clean up FBOs
 	mLibrashaderFBO.Destroy();
+	mLibrashaderOutFBO.Destroy();
 	mBicubicFBO.Destroy();
 	mBicubicFBO2.Destroy();
 	mPALFBO.Destroy();
@@ -279,17 +280,14 @@ void DisplayBackendGL33::RenderFrame(float dstX, float dstY, float dstW, float d
 		// Now apply librashader on top: FBO texture → screen
 		++mFrameCounter;
 
-		// Allocate a second FBO for librashader output
-		// (reuse mLibrashaderFBO as input, need a separate output)
-		// Actually, librashader reads from a texture and writes to an FBO,
-		// so we can't use the same FBO for both. We'll use a static second FBO.
-		static GLRenderTarget s_librashaderOut;
-		if (s_librashaderOut.width != vpW || s_librashaderOut.height != vpH) {
-			s_librashaderOut.Destroy();
-			s_librashaderOut.Create(vpW, vpH, GL_RGBA8);
+		// Allocate a second FBO for librashader output (input and output
+		// can't share the same FBO since librashader reads from a texture).
+		if (mLibrashaderOutFBO.width != vpW || mLibrashaderOutFBO.height != vpH) {
+			mLibrashaderOutFBO.Destroy();
+			mLibrashaderOutFBO.Create(vpW, vpH, GL_RGBA8);
 		}
 
-		mLibrashader.Apply(mLibrashaderFBO.tex, s_librashaderOut.fbo, s_librashaderOut.tex,
+		mLibrashader.Apply(mLibrashaderFBO.tex, mLibrashaderOutFBO.fbo, mLibrashaderOutFBO.tex,
 			vpW, vpH, vpW, vpH, mFrameCounter);
 
 		// Restore GL state after librashader
@@ -308,7 +306,7 @@ void DisplayBackendGL33::RenderFrame(float dstX, float dstY, float dstW, float d
 		glUseProgram(mPassthroughProgram);
 
 		glActiveTexture(GL_TEXTURE0);
-		glBindTexture(GL_TEXTURE_2D, s_librashaderOut.tex);
+		glBindTexture(GL_TEXTURE_2D, mLibrashaderOutFBO.tex);
 		glUniform1i(mPassthroughLoc_SourceTex, 0);
 
 		GLDrawFullscreenTriangle();

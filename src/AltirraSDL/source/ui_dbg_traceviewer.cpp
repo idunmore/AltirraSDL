@@ -236,6 +236,8 @@ void ATImGuiTraceViewerPane::SetCollection(ATTraceCollection *coll) {
 	mContext.mbSelectionValid = false;
 	mContext.mFocusTime = -1;
 	mContext.mbFocusTimeChanged = false;
+	mContext.mScrollY = 0;
+	++mContext.mCollectionGeneration;
 	RebuildViews();
 }
 

@@ -27,6 +27,12 @@
 #include <thread>
 #include <cstring>
 #include <cstdlib>
+#include <filesystem>
+
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
 
 extern SDL_Window *g_pWindow;
 
@@ -322,24 +328,49 @@ static void SetDownloadStatus(const std::string &msg) {
 	s_downloadStatus = msg;
 }
 
-// Create a directory and all parents.  Works on all platforms.
+// Portable directory operations using std::filesystem (C++17).
 static bool CreateDirRecursive(const std::string &path) {
-#if defined(_WIN32)
-	std::string cmd = "cmd /c mkdir \"" + path + "\" 2>nul";
-#else
-	std::string cmd = "mkdir -p \"" + path + "\" 2>/dev/null";
-#endif
-	return system(cmd.c_str()) == 0;
+	std::error_code ec;
+	std::filesystem::create_directories(path, ec);
+	return !ec;
 }
 
-// Check if a directory exists by trying to open a known file or stat.
 static bool DirectoryExists(const std::string &path) {
+	std::error_code ec;
+	return std::filesystem::is_directory(path, ec);
+}
+
+static bool FileExists(const std::string &path) {
+	std::error_code ec;
+	return std::filesystem::exists(path, ec);
+}
+
+// Run a shell command.  On Windows, uses CREATE_NO_WINDOW to avoid
+// flashing a console window from a GUI application.
+static int RunCommand(const std::string &cmd) {
 #if defined(_WIN32)
-	std::string cmd = "cmd /c if exist \"" + path + "\\*\" (exit 0) else (exit 1)";
-	return system(cmd.c_str()) == 0;
+	STARTUPINFOA si = {};
+	si.cb = sizeof(si);
+	si.dwFlags = STARTF_USESHOWWINDOW;
+	si.wShowWindow = SW_HIDE;
+	PROCESS_INFORMATION pi = {};
+
+	// cmd.exe /c "command"
+	std::string full = "cmd.exe /c \"" + cmd + "\"";
+	char *buf = _strdup(full.c_str());
+	BOOL ok = CreateProcessA(nullptr, buf, nullptr, nullptr, FALSE,
+		CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
+	free(buf);
+	if (!ok)
+		return -1;
+	WaitForSingleObject(pi.hProcess, INFINITE);
+	DWORD exitCode = 1;
+	GetExitCodeProcess(pi.hProcess, &exitCode);
+	CloseHandle(pi.hProcess);
+	CloseHandle(pi.hThread);
+	return (int)exitCode;
 #else
-	std::string cmd = "test -d \"" + path + "\"";
-	return system(cmd.c_str()) == 0;
+	return system(cmd.c_str());
 #endif
 }
 
@@ -382,12 +413,14 @@ static void DownloadShaderPackThread() {
 	std::string dlCmd = "curl -fSL -o \"" + zipPath + "\" \"" + kZipURL + "\" 2>/dev/null";
 #endif
 
-	int ret = system(dlCmd.c_str());
+	int ret = RunCommand(dlCmd);
+#if !defined(_WIN32)
 	if (ret != 0) {
 		// Try wget as fallback (common on Linux)
 		std::string wgetCmd = "wget -q -O \"" + zipPath + "\" \"" + kZipURL + "\"";
-		ret = system(wgetCmd.c_str());
+		ret = RunCommand(wgetCmd);
 	}
+#endif
 
 	if (ret != 0) {
 		std::lock_guard<std::mutex> lk(s_downloadMutex);
@@ -415,7 +448,7 @@ static void DownloadShaderPackThread() {
 	std::string extractCmd = "unzip -q -o \"" + zipPath + "\" -d \"" + destDir + "\" 2>/dev/null";
 #endif
 
-	ret = system(extractCmd.c_str());
+	ret = RunCommand(extractCmd);
 
 #if !defined(_WIN32) && !defined(__APPLE__)
 	if (ret != 0) {
@@ -423,7 +456,7 @@ static void DownloadShaderPackThread() {
 		std::string pyCmd = "python3 -c \"import zipfile,sys; "
 			"zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])\" "
 			"\"" + zipPath + "\" \"" + destDir + "\" 2>/dev/null";
-		ret = system(pyCmd.c_str());
+		ret = RunCommand(pyCmd);
 	}
 #endif
 
@@ -439,12 +472,8 @@ static void DownloadShaderPackThread() {
 	// GitHub ZIP extracts to "slang-shaders-master/" — rename to "slang-shaders/"
 	std::string extractedDir = destDir + "/slang-shaders-master";
 	if (DirectoryExists(extractedDir)) {
-#if defined(_WIN32)
-		std::string renCmd = "cmd /c move \"" + extractedDir + "\" \"" + targetDir + "\" 2>nul";
-#else
-		std::string renCmd = "mv \"" + extractedDir + "\" \"" + targetDir + "\" 2>/dev/null";
-#endif
-		system(renCmd.c_str());
+		std::error_code ec;
+		std::filesystem::rename(extractedDir, targetDir, ec);
 	}
 
 	// Clean up the ZIP file

@@ -387,10 +387,17 @@ bool ATImGuiMemoryPaneImpl::Render() {
 		return open;
 	}
 
-	// Calculate visible rows from window height
+	// Calculate visible rows from window height.
+	// In font bitmap modes, each row is taller than a text line
+	// (matching Windows' UpdateLineHeight enlargement for fonts).
 	float contentH = ImGui::GetContentRegionAvail().y
 		- ImGui::GetFrameHeightWithSpacing() * 2;
 	float lineH = ImGui::GetTextLineHeightWithSpacing();
+	if (IsFontMode()) {
+		float fontH = std::max(ImGui::GetTextLineHeight(), 24.0f * mZoomFactor);
+		fontH = std::ceil(fontH / 8.0f) * 8.0f;
+		lineH = fontH;
+	}
 	if (lineH > 0)
 		mVisibleRows = std::max<uint32>((uint32)(contentH / lineH), 4);
 

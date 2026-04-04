@@ -301,36 +301,47 @@ void ATImGuiMemoryPaneImpl::RenderHexDump() {
 				} else if (IsBitmapMode() && GetBitmapImTextureID()) {
 					ImGui::SameLine(0, charW * 2);
 
-					// Calculate display size
+					// Calculate display size matching Windows:
+					// - Font modes: each 8-byte character fills lineH × lineH
+					// - Graphics modes: all modes display at same total width
+					//   (pixelScale * mColumns * 8), with vertical centering.
+					//   Exception: 8bpp = pixelScale * mColumns (no stretch).
 					float lineH = ImGui::GetTextLineHeight();
 					float displayW, displayH;
 					int rawH;
 
 					if (IsFontMode()) {
-						displayW = lineH * (float)(mColumns / 8);
-						displayH = lineH;
+						// Match Windows: enlarge line height for font modes
+						// to at least 24px (at zoom 1.0), rounded to multiple
+						// of 8 for clean 8×8 character scaling.
+						float fontH = std::max(lineH, 24.0f * mZoomFactor);
+						fontH = std::ceil(fontH / 8.0f) * 8.0f;
+						displayW = fontH * (float)(mColumns / 8);
+						displayH = fontH;
 						rawH = 8;
 					} else {
-						int rawW = 0;
+						float pixScale = std::max(lineH * 0.5f, 1.0f);
+						// Windows stretches lower-bpp modes so each byte
+						// occupies the same screen width (8 × pixelScale).
+						// 8bpp is the exception: 1 pixel per byte, no stretch.
 						switch (mInterpretMode) {
 							case InterpretMode::Graphics1Bpp:
-								rawW = mColumns * 8; break;
+								displayW = pixScale * mColumns * 8; break;
 							case InterpretMode::Graphics2Bpp:
-								rawW = mColumns * 4; break;
+								displayW = pixScale * mColumns * 8; break;
 							case InterpretMode::Graphics4Bpp:
-								rawW = mColumns * 2; break;
+								displayW = pixScale * mColumns * 8; break;
 							case InterpretMode::Graphics8Bpp:
-								rawW = mColumns; break;
-							default: break;
+								displayW = pixScale * mColumns; break;
+							default:
+								displayW = 0; break;
 						}
-						float pixScale = std::max(lineH * 0.5f, 1.0f);
-						displayW = pixScale * rawW;
 						displayH = pixScale;
 						rawH = 1;
 					}
 
 					if (mBitmapTexW > 0 && mBitmapTexH > 0) {
-						// Compute actual pixel width for UV
+						// Compute actual pixel width in the texture for UV
 						int contentW = 0;
 						switch (mInterpretMode) {
 							case InterpretMode::Font1Bpp:
@@ -350,6 +361,16 @@ void ATImGuiMemoryPaneImpl::RenderHexDump() {
 						ImVec2 uv0(0, (float)(row * rawH) / mBitmapTexH);
 						ImVec2 uv1((float)contentW / mBitmapTexW,
 									(float)((row + 1) * rawH) / mBitmapTexH);
+
+						// Vertically center single-scanline graphics
+						// within the text line (matching Windows behavior).
+						if (!IsFontMode()) {
+							float offsetY = (lineH - displayH) * 0.5f;
+							if (offsetY > 0) {
+								ImVec2 cur = ImGui::GetCursorPos();
+								ImGui::SetCursorPos(ImVec2(cur.x, cur.y + offsetY));
+							}
+						}
 
 						ImGui::Image((ImTextureID)GetBitmapImTextureID(),
 							ImVec2(displayW, displayH), uv0, uv1);

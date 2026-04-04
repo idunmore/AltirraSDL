@@ -245,8 +245,8 @@ void ATImGuiTraceViewer_RenderTimeline(ATImGuiTraceViewerContext& ctx) {
 		totalHeight += channelHeight * (float)group.mChannels.size();
 	}
 
-	// Persistent vertical scroll offset (shared between labels and events)
-	static float s_scrollY = 0;
+	// Vertical scroll offset (stored in context, reset on collection change)
+	float& scrollY = ctx.mScrollY;
 
 	// ---- Timescale (non-scrolling, above events area) ----
 	{
@@ -268,9 +268,9 @@ void ATImGuiTraceViewer_RenderTimeline(ATImGuiTraceViewerContext& ctx) {
 
 		// --- Channel labels (left column) ---
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(2, 0));
-		ImGui::BeginChild("##TVLabels", ImVec2(labelWidth, 0), ImGuiChildFlags_None);
+		ImGui::BeginChild("##TVLabels", ImVec2(labelWidth, 0), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar);
 		{
-			ImGui::SetScrollY(s_scrollY);
+			ImGui::SetScrollY(scrollY);
 
 			ImU32 groupColor = IM_COL32(200, 200, 255, 255);
 			ImU32 channelColor = IM_COL32(200, 200, 200, 255);
@@ -311,7 +311,7 @@ void ATImGuiTraceViewer_RenderTimeline(ATImGuiTraceViewerContext& ctx) {
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
 		ImGui::BeginChild("##TVEvents", ImVec2(0, 0), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar);
 		{
-			ImGui::SetScrollY(s_scrollY);
+			ImGui::SetScrollY(scrollY);
 
 			// Reserve content height for scroll range
 			ImGui::Dummy(ImVec2(eventAreaWidth, totalHeight));
@@ -326,7 +326,7 @@ void ATImGuiTraceViewer_RenderTimeline(ATImGuiTraceViewerContext& ctx) {
 			ImVec2 clipMax = ImVec2(eventOrigin.x + eventAreaWidth, mainOrigin.y + viewHeight);
 			drawList->PushClipRect(clipMin, clipMax, true);
 
-			ImVec2 scrolledOrigin = ImVec2(eventOrigin.x, eventOrigin.y - s_scrollY);
+			ImVec2 scrolledOrigin = ImVec2(eventOrigin.x, eventOrigin.y - scrollY);
 			RenderEvents(drawList, scrolledOrigin, eventAreaWidth, totalHeight, ctx, channelHeight, groupHeaderHeight);
 
 			drawList->PopClipRect();
@@ -347,8 +347,8 @@ void ATImGuiTraceViewer_RenderTimeline(ATImGuiTraceViewerContext& ctx) {
 						ctx.ZoomDeltaSteps(mouseTime, (sint32)(wheel * 2), eventAreaWidth);
 					} else {
 						// Wheel without Ctrl = vertical scroll
-						s_scrollY -= wheel * channelHeight * 3;
-						s_scrollY = std::max(0.0f, std::min(s_scrollY, totalHeight - viewHeight));
+						scrollY -= wheel * channelHeight * 3;
+						scrollY = std::max(0.0f, std::min(scrollY, totalHeight - viewHeight));
 					}
 				}
 
@@ -362,8 +362,8 @@ void ATImGuiTraceViewer_RenderTimeline(ATImGuiTraceViewerContext& ctx) {
 					ctx.mStartTime -= (double)delta.x * ctx.mSecondsPerPixel;
 					// Vertical pan via middle drag
 					if (ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) {
-						s_scrollY -= delta.y;
-						s_scrollY = std::max(0.0f, std::min(s_scrollY, std::max(0.0f, totalHeight - viewHeight)));
+						scrollY -= delta.y;
+						scrollY = std::max(0.0f, std::min(scrollY, std::max(0.0f, totalHeight - viewHeight)));
 					}
 				}
 

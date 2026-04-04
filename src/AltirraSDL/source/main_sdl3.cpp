@@ -52,6 +52,7 @@
 #include <cmath>
 
 ATSimulator g_sim;
+extern ATUIKeyboardOptions g_kbdOpts;
 VDVideoDisplaySDL3 *g_pDisplay = nullptr;
 SDL_Window   *g_pWindow   = nullptr;  // non-static: accessed by console_stubs.cpp for fullscreen exit
 static SDL_Renderer *g_pRenderer = nullptr;
@@ -1107,11 +1108,33 @@ int main(int argc, char *argv[]) {
 	// Auto-load last librashader preset if one was saved
 	ATUIShaderPresetsAutoLoad(g_pBackend);
 
+	// Pre-simulator initialization matching Windows main.cpp:3559-3589.
+	// Register save state format 2 reader (needed for loading save states).
+	{
+		extern void ATInitSaveStateDeserializer();
+		ATInitSaveStateDeserializer();
+	}
+
+	// Install ATFS virtual file system handler (needed for atfs:// paths).
+	{
+		extern void ATVFSInstallAtfsHandler();
+		ATVFSInstallAtfsHandler();
+	}
+
 	fprintf(stderr, "[AltirraSDL] Initializing simulator...\n");
 	g_sim.Init();
+	g_sim.SetRandomSeed(rand() ^ (rand() << 15));
 	g_sim.LoadROMs();
 
 	g_sim.GetGTIA().SetVideoOutput(g_pDisplay);
+
+	// Register all device definitions (Windows main.cpp:3904).
+	// Must be called before ATLoadSettings so that device creation during
+	// settings load can find device definitions.
+	{
+		extern void ATRegisterDevices(ATDeviceManager& dm);
+		ATRegisterDevices(*g_sim.GetDeviceManager());
+	}
 
 	// Initialize joystick manager before loading settings — the Input
 	// settings category needs GetJoystickManager() to read transforms.
@@ -1129,15 +1152,25 @@ int main(int argc, char *argv[]) {
 	extern void ATRegisterDeviceXCmds(ATDeviceManager& dm);
 	ATRegisterDeviceXCmds(*g_sim.GetDeviceManager());
 
-	// Load emulator settings using the same code path as Windows.
-	// On first run (no config file), VDRegistryKey returns defaults for all
-	// keys, which matches a fresh Windows install.
 	// Initialize network sockets (POSIX sockets, lookup worker, socket worker).
 	// Must be called before ATLoadSettings as some device init may need sockets.
 	extern bool ATSocketInit();
 	ATSocketInit();
 
-	ATLoadSettings((ATSettingsCategory)(
+	// Load config variable overrides and options before loading settings
+	// (matches Windows main.cpp:3654-3657).
+	{
+		extern void ATLoadConfigVars();
+		ATLoadConfigVars();
+	}
+	ATOptionsLoad();
+
+	// Load default profiles and then restore the last active profile.
+	// Windows does this at main.cpp:3941-3979.  ATSettingsLoadLastProfile()
+	// calls ATLoadSettings() internally with the profile's settings,
+	// replacing the direct ATLoadSettings() call we had before.
+	ATLoadDefaultProfiles();
+	ATSettingsLoadLastProfile((ATSettingsCategory)(
 		kATSettingsCategory_Hardware
 		| kATSettingsCategory_Firmware
 		| kATSettingsCategory_Acceleration
@@ -1188,6 +1221,10 @@ int main(int argc, char *argv[]) {
 		}
 	);
 
+	// Initialize the virtual key map from loaded keyboard options
+	// (matches Windows main.cpp:3857).
+	ATUIInitVirtualKeyMap(g_kbdOpts);
+
 	// Create the native audio device now that settings have been loaded
 	// (SetApi, SetLatency, etc. may have been called during ATLoadSettings).
 	g_sim.GetAudioOutput()->InitNativeAudio();
@@ -1200,11 +1237,24 @@ int main(int argc, char *argv[]) {
 		ATInitDebugger();
 	}
 
-	if (argc > 1) {
-		// Push as deferred boot action so it goes through the full retry loop
-		// with hardware mode auto-switching, BASIC conflict detection, etc.
-		ATUIPushDeferred(kATDeferred_BootImage, argv[1]);
-	} else {
+	// Initialize compatibility database (matches Windows main.cpp:3933).
+	// The internal DB is embedded as a Windows resource (IDR_COMPATDB) which
+	// is not available in SDL3 builds — ATLockResource returns nullptr and
+	// the internal DB is skipped.  The external DB path (from options) works.
+	{
+		extern void ATCompatInit();
+		ATCompatInit();
+	}
+
+	// Save options after initial load (matches Windows main.cpp:4002).
+	ATOptionsSave();
+
+	// Full command-line processing matching Windows uicommandline.cpp.
+	// Handles all switches (--debug, --debugcmd, --hardware, --ntsc, etc.),
+	// media loading (--cart, --disk, --run, positional args), startup.atdbg,
+	// and debug suspend mode.  Returns true if any boot image was loaded.
+	if (!ATProcessCommandLineSDL3(argc, argv)) {
+		// No boot image on command line — cold reset and start
 		g_sim.ColdReset();
 		g_sim.Resume();
 	}
@@ -1335,6 +1385,12 @@ int main(int argc, char *argv[]) {
 		g_pJoystickMgr->Shutdown();
 		delete g_pJoystickMgr;
 		g_pJoystickMgr = nullptr;
+	}
+
+	// Shut down compatibility database (matches Windows main.cpp:4059)
+	{
+		extern void ATCompatShutdown();
+		ATCompatShutdown();
 	}
 
 	// Shut down debugger before simulator (matches Windows cleanup order)

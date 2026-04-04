@@ -38,3 +38,10 @@ curvature & glow
 ➡️ Altirra:
 Has decent video filters, but not the massive shader ecosystems (1000+ shaders etc.)
 Planned in SHADERS.md
+
+# Screemshot grabbing, game management like in Yuzu emulator or PPSSPP
+
+# pyA8-style Python interface
+
+# Android port with virtual joystick
+

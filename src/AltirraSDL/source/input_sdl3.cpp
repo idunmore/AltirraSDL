@@ -508,7 +508,9 @@ void ATInputSDL3_HandleKeyDown(const SDL_KeyboardEvent& ev) {
 				if (scanCode >= kATUIKeyScanCodeFirst) {
 					HandleCustomConsoleSwitch(scanCode, true, ev.scancode);
 				} else {
-					// Scan code from custom map already has shift/ctrl baked in
+					// Scan code from custom map already has shift/ctrl baked in.
+					// Note: Windows uses PushRawKey in raw mode, but the existing
+					// SDL3 standard path also uses PushKey for consistency.
 					g_inputState.mpPokey->PushKey((uint8)scanCode, ev.repeat);
 				}
 			}
