@@ -172,7 +172,11 @@ void ATGetUIPanes(vdfastvector<ATUIPane*>&) {}
 ATUIPane *ATGetUIPane(uint32) { return nullptr; }
 void *ATGetUIPaneAs(uint32, uint32) { return nullptr; }
 ATUIPane *ATGetUIPaneByFrame(ATFrameWindow*) { return nullptr; }
-void ATCloseUIPane(uint32) {}
+void ATCloseUIPane(uint32 id) {
+	// Delegate to the ImGui pane manager
+	extern void ATUIDebuggerClosePaneById(uint32);
+	ATUIDebuggerClosePaneById(id);
+}
 
 ATUIPane *ATUIGetActivePane() { return nullptr; }
 void *ATUIGetActivePaneAs(uint32) { return nullptr; }

@@ -52,6 +52,10 @@ struct ATUIState {
 	bool showShaderParams = false;
 	bool showShaderSetup = false;
 
+	// View menu dialogs
+	bool showCalibrate = false;
+	bool showCustomizeHud = false;
+
 	// System config sidebar selection
 	int systemConfigCategory = 0;
 };
@@ -59,6 +63,10 @@ struct ATUIState {
 bool ATUIInit(SDL_Window *window, IDisplayBackend *backend);
 void ATUIShutdown();
 bool ATUIProcessEvent(const SDL_Event *event);
+
+// Theme management
+void ATUIApplyTheme();
+void ATUIUpdateSystemTheme();
 bool ATUIWantCaptureKeyboard();
 bool ATUIWantCaptureMouse();
 
@@ -190,6 +198,33 @@ void ATUIRenderCompatDB(ATSimulator &sim, ATUIState &state);
 void ATUIRenderAdvancedConfig(ATUIState &state);
 void ATUIRenderTapeEditor(ATSimulator &sim, ATUIState &state, SDL_Window *window);
 void ATUIRenderScreenEffects(ATSimulator &sim, ATUIState &state);
+
+// Calibration dialog (ui_calibrate.cpp)
+void ATUIRenderCalibrationDialog(ATUIState &state);
+
+// HUD customization dialog (ui_hud_customize.cpp)
+void ATUIRenderCustomizeHudDialog(ATUIState &state);
+
+// HUD element visibility settings — used by ui_indicators.cpp for rendering,
+// ui_hud_customize.cpp for the dialog, persisted to registry under "HUD" key.
+struct ATHudSettings {
+	bool showDiskLEDs      = true;
+	bool showHActivity     = true;
+	bool showCassette      = true;
+	bool showRecording     = true;
+	bool showFPS           = true;
+	bool showWatches       = true;
+	bool showStatusMessage = true;
+	bool showErrors        = true;
+	bool showPauseOverlay  = true;
+	bool showHeldButtons   = true;
+	bool showAudioScope    = false;
+};
+const ATHudSettings& ATUIGetHudSettings();
+
+// Pan/Zoom tool state (managed in main_sdl3.cpp event loop)
+bool ATUIIsPanZoomToolActive();
+void ATUISetPanZoomToolActive(bool active);
 
 // Shader presets (ui_shader_presets.cpp)
 void ATUIShaderPresetsAutoLoad(IDisplayBackend *backend);

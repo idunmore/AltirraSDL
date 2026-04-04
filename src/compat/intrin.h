@@ -17,6 +17,14 @@
 		__cpuid_count((level), (count), (info)[0], (info)[1], (info)[2], (info)[3])
 #elif defined(__aarch64__)
 	#include <arm_neon.h>
+
+	// MSVC provides _rotr/_rotl via <intrin.h>; GCC/Clang on ARM64 don't.
+	static inline unsigned int _rotr(unsigned int value, int shift) {
+		return (value >> (shift & 31)) | (value << (32 - (shift & 31)));
+	}
+	static inline unsigned int _rotl(unsigned int value, int shift) {
+		return (value << (shift & 31)) | (value >> (32 - (shift & 31)));
+	}
 #endif
 
 #endif

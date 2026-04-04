@@ -29,6 +29,12 @@ enum ATErrorMode {
 enum class ATProcessEfficiencyMode : uint8;
 enum ATMediaWriteMode : uint8;
 
+enum class ATUIThemeMode : uint8 {
+	System,		// follow OS dark/light preference
+	Light,
+	Dark,
+};
+
 struct ATOptionsData {
 	bool mbDisplayD3D9;
 	bool mbDisplay3D;
@@ -42,6 +48,8 @@ struct ATOptionsData {
 	
 	sint32 mThemeScale;
 	bool mbDarkTheme;
+	ATUIThemeMode mThemeMode = ATUIThemeMode::System;
+	float mUIAlpha = 1.0f;		// ImGui window transparency (0.2 .. 1.0)
 
 	ATErrorMode mErrorMode;
 

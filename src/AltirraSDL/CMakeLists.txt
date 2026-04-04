@@ -29,7 +29,7 @@ list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*/customdevice\\.cpp$")      # i
 list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*/customdevicevmtypes\\.cpp$") # includes atui/uicommandmanager.h
 list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*/cs8900a\\.cpp$")           # Win32 UI debug path
 list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*/idephysdisk\\.cpp$")       # Win32 raw disk access (DeviceIoControl)
-list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*/idevhdimage\\.cpp$")       # requires sizeof(wchar_t)==2 (UTF-16)
+# idevhdimage.cpp is now portable (UTF-16LE encoding handled for non-Windows)
 list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*/midimate\\.cpp$")          # Win32 MIDI API (winmm.h)
 list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*/modemtcp\\.cpp$")          # Win32 networking (windows.h)
 list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*/profilerui\\.cpp$")        # Win32 profiler UI (w32assist.h)
@@ -38,13 +38,29 @@ list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*/profilerui\\.cpp$")        # W
 list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*/startuplogger\\.cpp$")     # Win32 only (windows.h)
 list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*/texteditor\\.cpp$")        # Win32 HWND/WndProc text editor widget
 # vgmwriter.cpp is now portable (UTF-16LE encoding fixed for non-Windows)
-# Exclude ARM-only files on x86_64
+# Exclude architecture-specific files for the wrong target
 if(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "(aarch64|ARM64)")
     list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*_neon\\.cpp$")
     list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*_arm64\\.cpp$")
 endif()
+if(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64|AMD64|i[36]86)")
+    list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*_sse2\\.cpp$")
+    list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*_sse2_intrin\\.cpp$")
+    list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*_ssse3\\.cpp$")
+    list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*_avx2\\.cpp$")
+endif()
 
-add_executable(AltirraSDL
+# On Android, the native code is a shared library loaded by SDLActivity.
+# On desktop, it's a regular executable.
+if(ANDROID)
+    add_library(AltirraSDL SHARED)
+    # Android APK expects the library to be named "libmain.so"
+    set_target_properties(AltirraSDL PROPERTIES OUTPUT_NAME "main")
+else()
+    add_executable(AltirraSDL)
+endif()
+
+target_sources(AltirraSDL PRIVATE
     # SDL3 frontend
     source/main_sdl3.cpp
     source/display_sdl3.cpp
@@ -79,6 +95,7 @@ add_executable(AltirraSDL
     source/ui_devconfig_devices.cpp
     source/ui_tools.cpp
     source/ui_keyboard_customize.cpp
+    source/ui_textselection.cpp
 
     # Debugger pane manager and panes
     source/ui_debugger.cpp
@@ -97,6 +114,7 @@ add_executable(AltirraSDL
     source/ui_dbg_printer.cpp
     source/ui_dbg_debugdisplay.cpp
     source/ui_dbg_source.cpp
+    source/ui_dbg_verifier.cpp
     source/ui_dbg_traceviewer.cpp
     source/ui_dbg_traceviewer_timeline.cpp
     source/ui_dbg_traceviewer_panels.cpp
@@ -113,8 +131,20 @@ add_executable(AltirraSDL
     # Shader preset browser & parameter UI
     source/ui_shader_presets.cpp
 
+    # Progress dialog (replaces Windows IDD_PROGRESS / uiprogress.cpp)
+    source/ui_progress.cpp
+
+    # Emulation error dialog (replaces Windows IDD_PROGRAM_ERROR / uiemuerror.cpp)
+    source/ui_emuerror.cpp
+
     # Light pen/gun configuration dialog
     source/ui_lightpen.cpp
+
+    # Calibration screen dialog (View > Calibrate)
+    source/ui_calibrate.cpp
+
+    # HUD customization dialog (View > Customize HUD)
+    source/ui_hud_customize.cpp
 
     # Tape Editor dialog (waveform visualization, editing, analysis)
     source/ui_tool_tapeeditor.cpp
@@ -196,7 +226,9 @@ target_include_directories(AltirraSDL BEFORE PRIVATE
     ${CMAKE_SOURCE_DIR}/src/Altirra/h
 )
 
-find_package(OpenGL REQUIRED)
+if(NOT ANDROID)
+    find_package(OpenGL REQUIRED)
+endif()
 
 target_link_libraries(AltirraSDL PRIVATE
     # Core emulation libraries
@@ -219,10 +251,14 @@ target_link_libraries(AltirraSDL PRIVATE
 
     # Dear ImGui
     imgui
-
-    # OpenGL (for GL 3.3 display backend)
-    OpenGL::GL
 )
+
+# OpenGL: desktop GL on Linux/macOS/Windows, GLESv3 on Android
+if(ANDROID)
+    target_link_libraries(AltirraSDL PRIVATE GLESv3 EGL android log)
+else()
+    target_link_libraries(AltirraSDL PRIVATE OpenGL::GL)
+endif()
 
 # Platform-specific link libraries
 # Note: winmm and ws2_32 propagate transitively from system and ATNetworkSockets.

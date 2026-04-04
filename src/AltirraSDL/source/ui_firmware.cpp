@@ -18,6 +18,7 @@
 #include "firmwaredetect.h"
 #include "uiaccessors.h"
 #include "uiconfirm.h"
+#include <at/atcore/progress.h>
 
 #include <mutex>
 #include <thread>
@@ -405,15 +406,29 @@ static void ExecuteFirmwareScan(ATFirmwareManager *fwm, const VDStringW &scanDir
 		pattern += L'/';
 	pattern += L"*.*";
 
+	ATProgress progress;
+	progress.InitF(100, NULL, L"Scanning for firmware");
+
 	int found = 0, alreadyPresent = 0;
 	try {
+		// First pass: collect candidate files
+		std::vector<VDStringW> candidates;
 		VDDirectoryIterator it(pattern.c_str());
 		while (it.Next()) {
+			progress.Update(0);
 			if (it.IsDirectory()) continue;
 			if (it.GetAttributes() & (kVDFileAttr_System | kVDFileAttr_Hidden)) continue;
 			if (!ATFirmwareAutodetectCheckSize(it.GetSize())) continue;
+			candidates.push_back(it.GetFullPath());
+		}
+		progress.Update(10);
 
-			VDStringW filePath = it.GetFullPath();
+		// Second pass: scan each file
+		const size_t n = candidates.size();
+		for (size_t i = 0; i < n; ++i) {
+			progress.Update((uint32)(10 + (i * 90) / n));
+
+			const VDStringW &filePath = candidates[i];
 			vdfastvector<uint8> data;
 			try {
 				VDFile f(filePath.c_str());
@@ -455,7 +470,11 @@ static void ExecuteFirmwareScan(ATFirmwareManager *fwm, const VDStringW &scanDir
 				++found;
 			}
 		}
+	} catch (const MyUserAbortError&) {
+		// User cancelled — show partial results
 	} catch (...) {}
+
+	progress.Shutdown();
 
 	g_fwMgr.scanResultPending = true;
 	g_fwMgr.scanResultNew = found;

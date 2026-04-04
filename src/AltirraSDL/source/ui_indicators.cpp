@@ -15,6 +15,7 @@
 #include <vd2/system/text.h>
 #include <at/ataudio/audiooutput.h>
 #include "uirender.h"
+#include "ui_main.h"
 
 // =========================================================================
 // ATUIRendererImGui — real implementation with HUD overlay rendering
@@ -189,47 +190,53 @@ void ATUIRendererImGui::RenderOverlay() {
 	ImDrawList *dl = ImGui::GetForegroundDrawList();
 	if (!dl) return;
 
+	const ATHudSettings& hud = ATUIGetHudSettings();
 	const ImVec2 vp = ImGui::GetMainViewport()->Size;
 	const float margin = 8.0f;
 	float y = vp.y - margin;
 
 	// --- Status bar at bottom ---
-	// Drive LEDs
 	float ledX = margin;
-	for (int i = 0; i < 8; ++i) {
-		if (!mDiskMotor[i] && mDiskLED[i] == 0)
-			continue;
 
-		char label[8];
-		snprintf(label, sizeof(label), "D%d:", i + 1);
+	// Drive LEDs
+	if (hud.showDiskLEDs) {
+		for (int i = 0; i < 8; ++i) {
+			if (!mDiskMotor[i] && mDiskLED[i] == 0)
+				continue;
 
-		ImU32 color;
-		if (mDiskError[i])
-			color = IM_COL32(255, 60, 60, 255);    // red for error
-		else if (mDiskLED[i] > 0)
-			color = IM_COL32(0, 200, 0, 255);       // green for read
-		else if (mDiskLED[i] < 0)
-			color = IM_COL32(255, 180, 0, 255);     // orange for write
-		else
-			color = IM_COL32(80, 80, 80, 255);       // dim for motor only
+			char label[8];
+			snprintf(label, sizeof(label), "D%d:", i + 1);
 
-		dl->AddRectFilled(ImVec2(ledX, y - 14), ImVec2(ledX + 8, y - 6), color);
-		dl->AddText(ImVec2(ledX + 10, y - 16), IM_COL32(200, 200, 200, 255), label);
-		ledX += 40;
+			ImU32 color;
+			if (mDiskError[i])
+				color = IM_COL32(255, 60, 60, 255);    // red for error
+			else if (mDiskLED[i] > 0)
+				color = IM_COL32(0, 200, 0, 255);       // green for read
+			else if (mDiskLED[i] < 0)
+				color = IM_COL32(255, 180, 0, 255);     // orange for write
+			else
+				color = IM_COL32(80, 80, 80, 255);       // dim for motor only
+
+			dl->AddRectFilled(ImVec2(ledX, y - 14), ImVec2(ledX + 8, y - 6), color);
+			dl->AddText(ImVec2(ledX + 10, y - 16), IM_COL32(200, 200, 200, 255), label);
+			ledX += 40;
+		}
 	}
 
 	// H: / IDE / PCLink activity
-	if (mbHActive) {
-		dl->AddText(ImVec2(ledX, y - 16), IM_COL32(0, 200, 0, 255), "H:");
-		ledX += 24;
-	}
-	if (mbIDEActive) {
-		dl->AddText(ImVec2(ledX, y - 16), IM_COL32(0, 200, 0, 255), "IDE");
-		ledX += 32;
+	if (hud.showHActivity) {
+		if (mbHActive) {
+			dl->AddText(ImVec2(ledX, y - 16), IM_COL32(0, 200, 0, 255), "H:");
+			ledX += 24;
+		}
+		if (mbIDEActive) {
+			dl->AddText(ImVec2(ledX, y - 16), IM_COL32(0, 200, 0, 255), "IDE");
+			ledX += 32;
+		}
 	}
 
 	// Cassette position
-	if (mbCassetteVisible && mCassetteLen > 0) {
+	if (hud.showCassette && mbCassetteVisible && mCassetteLen > 0) {
 		int posMin = (int)(mCassettePos / 60.0f);
 		int posSec = (int)mCassettePos % 60;
 		int lenMin = (int)(mCassetteLen / 60.0f);
@@ -242,28 +249,28 @@ void ATUIRendererImGui::RenderOverlay() {
 	}
 
 	// Recording indicator
-	if (mbRecording) {
+	if (hud.showRecording && mbRecording) {
 		const char *recText = mbRecordingPaused ? "REC PAUSED" : (mbRecordVideo ? "REC VIDEO" : "REC AUDIO");
 		dl->AddText(ImVec2(ledX, y - 16), IM_COL32(255, 60, 60, 255), recText);
 		ledX += 90;
 	}
 
 	// Status message (centered at bottom)
-	if (!mStatusMessage.empty()) {
+	if (hud.showStatusMessage && !mStatusMessage.empty()) {
 		ImVec2 sz = ImGui::CalcTextSize(mStatusMessage.c_str());
 		dl->AddText(ImVec2((vp.x - sz.x) * 0.5f, y - 16),
 			IM_COL32(255, 255, 200, 255), mStatusMessage.c_str());
 	}
 
 	// Error message (red, above status)
-	if (!mErrorMessage.empty()) {
+	if (hud.showErrors && !mErrorMessage.empty()) {
 		ImVec2 sz = ImGui::CalcTextSize(mErrorMessage.c_str());
 		dl->AddText(ImVec2((vp.x - sz.x) * 0.5f, y - 34),
 			IM_COL32(255, 80, 80, 255), mErrorMessage.c_str());
 	}
 
 	// On-screen watches (top-left, below any other HUD)
-	{
+	if (hud.showWatches) {
 		float watchY = margin;
 		for (int i = 0; i < 8; i++) {
 			if (!mWatchValid[i]) continue;
@@ -290,7 +297,7 @@ void ATUIRendererImGui::RenderOverlay() {
 	}
 
 	// FPS (top-right)
-	if (mFps > 0) {
+	if (hud.showFPS && mFps > 0) {
 		char buf[32];
 		snprintf(buf, sizeof(buf), "%.1f fps", mFps);
 		ImVec2 sz = ImGui::CalcTextSize(buf);
@@ -299,7 +306,7 @@ void ATUIRendererImGui::RenderOverlay() {
 	}
 
 	// Pause overlay
-	if (mbPaused) {
+	if (hud.showPauseOverlay && mbPaused) {
 		const char *pauseText = "PAUSED";
 		ImVec2 sz = ImGui::CalcTextSize(pauseText);
 		float px = (vp.x - sz.x) * 0.5f;

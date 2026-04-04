@@ -1087,7 +1087,7 @@ uint32 ATVorbisUpdateCRC_ARM64_CRC32(uint32 crc, const void *src, size_t len) {
 
 	// replace when MSVC actually supports __rbit()
 	const auto rbit32 = [](uint32 v) -> uint32 {
-		return _byteswap_ulong(
+		return VDSwizzleU32(
 			vget_lane_u32(
 				vreinterpret_u32_u8(
 					vrbit_u8(vreinterpret_u8_u32(vdup_n_u32(v)))

@@ -139,6 +139,7 @@ public:
 	sint32 mEditValue = -1;				// -1 = no edit, >=0 = accumulated value
 	int mEditPhase = 0;					// nibble/digit counter
 	bool mbEditCancelledThisFrame = false;
+	bool mbEditCommittedThisFrame = false;	// set by CommitEdit, cleared each frame
 
 	// Context menu
 	uint32 mContextMenuAddr = 0;

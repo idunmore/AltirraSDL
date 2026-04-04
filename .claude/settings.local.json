@@ -101,7 +101,10 @@
       "Bash(xargs basename:*)",
       "Bash(sort -t: -k2 -n)",
       "Bash(chmod +x /tmp/extract_dialogs.sh)",
-      "Bash(/tmp/extract_dialogs.sh)"
+      "Bash(/tmp/extract_dialogs.sh)",
+      "WebSearch",
+      "Bash(git ls-remote:*)",
+      "Bash(chmod +x:*)"
     ]
   }
 }

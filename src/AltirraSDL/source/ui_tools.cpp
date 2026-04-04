@@ -25,6 +25,7 @@
 #include "settings.h"
 #include "uiaccessors.h"
 #include "uitypes.h"
+#include "options.h"
 
 extern ATSimulator g_sim;
 
@@ -982,6 +983,7 @@ void ATUIOpenDiskExplorerForDrive(int driveIdx, bool writable, bool autoFlush) {
 	// Validate filesystem before allowing writes (matches Windows MountFS)
 	if (writable) {
 		if (img->IsUpdatable() && g_diskExplorer.pFS->IsReadOnly()) {
+			g_diskExplorer.readOnly = true;
 			g_diskExplorer.statusMsg = "This disk format is only supported in read-only mode.";
 		} else {
 			g_diskExplorer.ValidateForWrites();
@@ -1188,8 +1190,18 @@ bool ATUIDiskExplorerHandleDrop(const char *utf8path, float dropX, float dropY) 
 		vdfastvector<uint8> buf((uint32)size);
 		f.read(buf.data(), (long)buf.size());
 
+		const VDDate creationTime = f.getCreationTime();
+		f.closeNT();
+
+		VDExpandedDate expDate{};
+		const VDExpandedDate *pDate = nullptr;
+		if (creationTime != VDDate{}) {
+			expDate = VDGetLocalDate(creationTime);
+			pDate = &expDate;
+		}
+
 		VDStringA filename = VDTextWToA(VDFileSplitPathRightSpan(wpath));
-		DiskExplorerWriteFile(filename.c_str(), buf.data(), (uint32)buf.size(), nullptr);
+		DiskExplorerWriteFile(filename.c_str(), buf.data(), (uint32)buf.size(), pDate);
 		g_diskExplorer.OnFSModified();
 	} catch (const MyError &e) {
 		g_diskExplorer.statusMsg.sprintf("Drop import failed: %s", e.c_str());
@@ -1227,10 +1239,21 @@ static void DiskExplorerDoImport(const char *utf8path) {
 		vdfastvector<uint8> buf((uint32)size);
 		f.read(buf.data(), (long)buf.size());
 
+		// Preserve host file creation time (matches Windows uidiskexplorer.cpp)
+		const VDDate creationTime = f.getCreationTime();
+		f.closeNT();
+
+		VDExpandedDate expDate{};
+		const VDExpandedDate *pDate = nullptr;
+		if (creationTime != VDDate{}) {
+			expDate = VDGetLocalDate(creationTime);
+			pDate = &expDate;
+		}
+
 		// Extract filename from path
 		VDStringA filename = VDTextWToA(VDFileSplitPathRightSpan(wpath));
 
-		DiskExplorerWriteFile(filename.c_str(), buf.data(), (uint32)buf.size(), nullptr);
+		DiskExplorerWriteFile(filename.c_str(), buf.data(), (uint32)buf.size(), pDate);
 		g_diskExplorer.OnFSModified();
 	} catch (const MyError &e) {
 		g_diskExplorer.statusMsg.sprintf("Import failed: %s", e.c_str());
@@ -1347,11 +1370,22 @@ static void DiskExplorerDoImportText(const char *utf8path) {
 		vdfastvector<uint8> buf((uint32)size);
 		f.read(buf.data(), (long)buf.size());
 
+		// Preserve host file creation time (matches Windows uidiskexplorer.cpp)
+		const VDDate creationTime = f.getCreationTime();
+		f.closeNT();
+
+		VDExpandedDate expDate{};
+		const VDExpandedDate *pDate = nullptr;
+		if (creationTime != VDDate{}) {
+			expDate = VDGetLocalDate(creationTime);
+			pDate = &expDate;
+		}
+
 		// Convert host line endings to Atari EOL
 		ConvertHostToAtari(buf);
 
 		VDStringA filename = VDTextWToA(VDFileSplitPathRightSpan(wpath));
-		DiskExplorerWriteFile(filename.c_str(), buf.data(), (uint32)buf.size(), nullptr);
+		DiskExplorerWriteFile(filename.c_str(), buf.data(), (uint32)buf.size(), pDate);
 		g_diskExplorer.OnFSModified();
 	} catch (const MyError &e) {
 		g_diskExplorer.statusMsg.sprintf("Import as text failed: %s", e.c_str());
@@ -1912,6 +1946,7 @@ void ATUIRenderDiskExplorer(ATSimulator &sim, ATUIState &state, SDL_Window *wind
 				if (!g_diskExplorer.readOnly && g_diskExplorer.pFS) {
 					if (mountImage->IsUpdatable() && g_diskExplorer.pFS->IsReadOnly()) {
 						// Image format is updatable but FS can only be mounted read-only
+						g_diskExplorer.readOnly = true;
 						g_diskExplorer.statusMsg = "This disk format is only supported in read-only mode.";
 					} else {
 						g_diskExplorer.ValidateForWrites();
@@ -2356,7 +2391,8 @@ static void FirmwareScanCallback(void *, const char * const *filelist, int) {
 static int GetWizPrevPage(int page) {
 	switch (page) {
 		case 0:  return -1;
-		case 10: return 0;
+		case 5:  return 0;
+		case 10: return 5;
 		case 11: return 10;
 		case 20: return 11;
 		case 21: return 20;
@@ -2369,7 +2405,8 @@ static int GetWizPrevPage(int page) {
 
 static int GetWizNextPage(int page) {
 	switch (page) {
-		case 0:  return 10;
+		case 0:  return 5;
+		case 5:  return 10;
 		case 10: return 11;
 		case 11: return 20;
 		case 20: return g_sim.GetHardwareMode() == kATHardwareMode_5200 ? 30 : 21;
@@ -2427,7 +2464,8 @@ void ATUIRenderSetupWizard(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 		ImGui::BeginChild("WizSteps", ImVec2(sidebarW, -40), ImGuiChildFlags_Borders);
 
 		static const struct { int pageMin; int pageMax; const char *label; } kSteps[] = {
-			{ 0, 9, "Welcome" },
+			{ 0, 0, "Welcome" },
+			{ 5, 9, "Appearance" },
 			{ 10, 19, "Setup firmware" },
 			{ 20, 29, "Select system" },
 			{ 30, 39, "Experience" },
@@ -2468,6 +2506,48 @@ void ATUIRenderSetupWizard(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 				"Tools menu at any time."
 			);
 			break;
+
+		case 5: { // Appearance — theme and transparency
+			ImGui::TextWrapped(
+				"Choose a visual theme for the user interface. Changes take effect "
+				"immediately so you can preview each option."
+			);
+			ImGui::Spacing();
+
+			static const char *themeLabels[] = { "Use system setting", "Light", "Dark" };
+			int themeIdx = (int)g_ATOptions.mThemeMode;
+			if (ImGui::Combo("Theme", &themeIdx, themeLabels, 3)) {
+				ATOptions prev(g_ATOptions);
+				g_ATOptions.mThemeMode = (ATUIThemeMode)themeIdx;
+				if (g_ATOptions != prev) {
+					g_ATOptions.mbDirty = true;
+					ATOptionsRunUpdateCallbacks(&prev);
+					ATOptionsSave();
+					ATUIApplyTheme();
+				}
+			}
+
+			ImGui::Spacing();
+
+			int alphaPct = (int)(g_ATOptions.mUIAlpha * 100.0f + 0.5f);
+			if (ImGui::SliderInt("Window opacity (%)", &alphaPct, 20, 100)) {
+				ATOptions prev(g_ATOptions);
+				g_ATOptions.mUIAlpha = alphaPct / 100.0f;
+				if (g_ATOptions != prev) {
+					g_ATOptions.mbDirty = true;
+					ATOptionsRunUpdateCallbacks(&prev);
+					ATOptionsSave();
+					ATUIApplyTheme();
+				}
+			}
+
+			ImGui::Spacing();
+			ImGui::TextWrapped(
+				"These settings can be changed later from Configure System > "
+				"Emulator > UI."
+			);
+			break;
+		}
 
 		case 10: { // Firmware
 			ImGui::TextWrapped(

@@ -495,7 +495,7 @@ static bool s_driveSounds = true;
 bool ATUIGetDriveSoundsEnabled() { return s_driveSounds; }
 void ATUISetDriveSoundsEnabled(bool v) { s_driveSounds = v; }
 void ATUIRecalibrateLightPen() {}
-void ATUIActivatePanZoomTool() {}
+void ATUIActivatePanZoomTool() { ATUISetPanZoomToolActive(true); }
 void ATUIOpenOnScreenKeyboard() {}
 static bool s_holdKeysActive = false;
 void ATUIToggleHoldKeys() {

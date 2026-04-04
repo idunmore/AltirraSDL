@@ -55,7 +55,7 @@ void ATSaveStatePokeyInternal::Exchange(T& rw) {
 	rw.Transfer("pot_master_counter", &mPotMasterCounter);
 	rw.Transfer("pot_scan_active", &mbPotScanActive);
 
-	if constexpr (rw.IsReader) {
+	if constexpr (T::IsReader) {
 		if (mClock15Offset >= 114)
 			throw ATInvalidSaveStateException();
 

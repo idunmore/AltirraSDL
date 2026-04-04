@@ -5,6 +5,8 @@
 
 #include <stdafx.h>
 #include <string.h>
+#include <time.h>
+#include <stdio.h>
 #ifndef _WIN32
 #include <sys/stat.h>
 #endif
@@ -134,6 +136,32 @@ bool ATLoadMiscResource(int id, vdfastvector<uint8>& buf) {
 
 bool ATLoadImageResource(uint32, VDPixmapBuffer&) {
 	return false;
+}
+
+void ATGenerateGuid(uint8 rawguid[16]) {
+#if defined(__linux__)
+	// Read from /dev/urandom for a random UUID
+	FILE *f = fopen("/dev/urandom", "rb");
+	if (f) {
+		fread(rawguid, 1, 16, f);
+		fclose(f);
+	} else {
+		// Fallback: use time + address-based entropy
+		memset(rawguid, 0, 16);
+		uint64 t = (uint64)time(nullptr);
+		memcpy(rawguid, &t, 8);
+	}
+#elif defined(__APPLE__)
+	arc4random_buf(rawguid, 16);
+#else
+	// Generic fallback
+	srand((unsigned)time(nullptr));
+	for (int i = 0; i < 16; ++i)
+		rawguid[i] = (uint8)(rand() & 0xFF);
+#endif
+	// Set version 4 (random) UUID bits per RFC 4122
+	rawguid[6] = (rawguid[6] & 0x0F) | 0x40;  // version 4
+	rawguid[8] = (rawguid[8] & 0x3F) | 0x80;  // variant 1
 }
 
 void ATFileSetReadOnlyAttribute(const wchar_t *path, bool readOnly) {

@@ -19,7 +19,7 @@ frontend (Win32 native UI vs. SDL3+ImGui).
 | Windows SDL    | Win32         | AltirraSDL (SDL3+ImGui) | CMake |
 | Linux          | POSIX + SDL3  | AltirraSDL (SDL3+ImGui) | CMake |
 | macOS          | POSIX + SDL3  | AltirraSDL (SDL3+ImGui) | CMake |
-| Android        | POSIX + SDL3  | AltirraSDL (SDL3+ImGui) | CMake + NDK |
+| Android        | POSIX + SDL3  | AltirraSDL (SDL3+ImGui+Touch) | Gradle + CMake + NDK |
 
 Three independent axes control what gets compiled:
 
@@ -315,19 +315,268 @@ instructions when librashader is not found.
 When packaging (`cmake --build . --target package_altirra`), the shared
 library is bundled automatically if found on the build system.
 
-## Future: Android
+## Android Build
 
-The build system is prepared for Android via CMake + NDK toolchain:
+The Android build produces an APK containing the AltirraSDL native
+library, SDL3, Dear ImGui, and the mobile touch UI. The build uses
+Gradle for APK packaging and CMake (via the NDK) for native compilation.
 
-- `ANDROID` CMake variable triggers `VD_OS_ANDROID` definition
-- System libraries use POSIX/SDL3 sources (same as Linux)
-- SDL3 has first-class Android support
-- NDK provides ARM NEON headers natively
-- Compat shims (`intrin.h`, `tchar.h`) are applied for non-MSVC (NDK uses Clang)
-- Frontend: AltirraSDL with SDL3+ImGui (SDL3 handles Android lifecycle)
+### Quick Start
 
-To build, use the NDK toolchain with CMake:
 ```bash
-cmake .. -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK/build/cmake/android.toolchain.cmake \
-         -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-26
+# If everything is already set up:
+./build.sh --android                # debug APK
+./build.sh --android --release      # release APK
+./build.sh --android --clean        # clean + rebuild
+
+# First time — auto-install SDK components (if sdkmanager is on PATH):
+./build.sh --setup-android
 ```
+
+The build script validates every dependency and prints platform-specific
+install instructions if anything is missing. Read on for manual setup.
+
+### Prerequisites
+
+Three things are needed, in this order:
+
+1. **Java JDK 17+** (must be installed first — sdkmanager needs it)
+2. **Android SDK** with command-line tools
+3. **SDK components:** platform, NDK, build-tools (installed via sdkmanager)
+
+The Gradle wrapper is bundled automatically — no system Gradle needed.
+
+### Step 1: Install Java JDK
+
+sdkmanager and Gradle both require a JDK. Install one for your platform:
+
+```bash
+# Fedora / RHEL (latest available OpenJDK)
+sudo dnf install java-latest-openjdk-devel
+
+# Debian / Ubuntu
+sudo apt install openjdk-21-jdk
+
+# Arch
+sudo pacman -S jdk-openjdk
+
+# macOS
+brew install openjdk
+
+# Windows (winget)
+winget install EclipseAdoptium.Temurin.21.JDK
+
+# Windows (manual)
+# Download from https://adoptium.net/
+```
+
+Verify: `javac -version` should print 17 or higher.
+
+If your distro doesn't have `java-latest-openjdk-devel`, search for
+what's available: `dnf search openjdk-devel` or `apt search openjdk`.
+Any version >= 17 works.
+
+### Step 2: Install Android SDK
+
+**Option A: Android Studio** (easiest — handles everything)
+
+Download from https://developer.android.com/studio. The SDK is installed
+during first-run setup. Typical location: `~/Android/Sdk`.
+
+**Option B: Command-line only** (no IDE needed)
+
+```bash
+# 1. Create SDK directory
+mkdir -p ~/Android/Sdk/cmdline-tools
+cd ~/Android/Sdk/cmdline-tools
+
+# 2. Download command-line tools
+#    Get the URL for your platform from:
+#    https://developer.android.com/studio#command-line-tools-only
+#
+#    Linux:
+wget https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+#    macOS:
+# curl -O https://dl.google.com/android/repository/commandlinetools-mac-11076708_latest.zip
+#    Windows:
+# Download commandlinetools-win-11076708_latest.zip from the URL above
+
+# 3. Extract and rename
+unzip commandlinetools-*_latest.zip
+mv cmdline-tools latest
+
+# 4. Add to shell profile (~/.bashrc, ~/.zshrc, or ~/.bash_profile)
+echo 'export ANDROID_HOME=$HOME/Android/Sdk' >> ~/.bashrc
+echo 'export PATH=$PATH:$ANDROID_HOME/cmdline-tools/latest/bin' >> ~/.bashrc
+echo 'export PATH=$PATH:$ANDROID_HOME/platform-tools' >> ~/.bashrc
+source ~/.bashrc
+```
+
+### Step 3: Install SDK Components
+
+```bash
+# Install platform, NDK, and build tools
+sdkmanager --install \
+    'platforms;android-36' \
+    'ndk;28.2.13676358' \
+    'build-tools;36.0.0'
+
+# Accept all licenses (required on first install)
+sdkmanager --licenses
+```
+
+**Finding current version numbers:** Run `sdkmanager --list` to see all
+available versions. The versions above are pinned in the build script
+(`scripts/build/android.sh`) — check the `REQUIRED_*` variables for the
+exact versions the build expects. Newer versions generally work too
+(the NDK auto-detects the latest installed).
+
+**Or auto-install:** If sdkmanager is on your PATH, the build script
+can install everything for you:
+
+```bash
+./build.sh --setup-android
+```
+
+### Step 4: Build
+
+```bash
+./build.sh --android                # debug APK
+./build.sh --android --release      # release APK
+./build.sh --android --clean        # clean + rebuild
+
+# Install on connected device:
+adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+Or step by step:
+
+```bash
+cd android
+./setup_sdl3.sh                     # fetch SDL3 source, set up Java
+./gradlew assembleDebug             # build debug APK
+adb install app/build/outputs/apk/debug/app-debug.apk
+```
+
+### How It Works
+
+```
+build.sh --android
+    |
+    v
+scripts/build/android.sh
+    |
+    +-- Validates ANDROID_HOME and NDK
+    +-- Runs android/setup_sdl3.sh (if needed)
+    |       +-- Clones SDL3 source to android/SDL3/
+    |       +-- Symlinks SDL3 Java sources into project
+    +-- Writes android/local.properties
+    +-- Runs: gradlew assembleDebug (or assembleRelease)
+            |
+            v
+        Gradle (android/app/build.gradle)
+            |
+            +-- Compiles Java (AltirraActivity + SDLActivity)
+            +-- Runs CMake via externalNativeBuild
+            |       +-- Builds SDL3 from android/SDL3/ as shared lib
+            |       +-- Builds AltirraSDL as libmain.so
+            |       +-- Links: libmain.so -> libSDL3.so + emulation libs
+            +-- Packages APK (native libs + manifest + resources)
+```
+
+### Project Structure
+
+```
+android/
+    build.gradle                 Top-level Gradle build
+    settings.gradle              Project settings
+    gradle.properties            Gradle JVM settings
+    setup_sdl3.sh                SDL3 source fetcher + Java symlinker
+    SDL3/                        (git-ignored) SDL3 source clone
+    app/
+        build.gradle             App build config (CMake path, SDK versions, ABIs)
+        src/main/
+            AndroidManifest.xml  Permissions, activity, file associations
+            java/
+                org/altirra/app/
+                    AltirraActivity.java    Extends SDLActivity
+                org/libsdl/               (symlink to SDL3 Java sources)
+            res/
+                values/strings.xml
+                mipmap-hdpi/              (app icon — TODO)
+```
+
+### Build Configuration
+
+The `app/build.gradle` passes these to CMake:
+
+| Setting | Value | Purpose |
+|---------|-------|---------|
+| `ANDROID_STL` | `c++_shared` | C++20 standard library |
+| `ALTIRRA_SDL3` | `ON` | Build SDL3 frontend |
+| `ENABLE_LIBRASHADER` | `OFF` | No shader presets on Android (for now) |
+
+ABI targets: `arm64-v8a` (all modern phones) and `armeabi-v7a` (older
+32-bit devices). Remove `armeabi-v7a` from `abiFilters` in `build.gradle`
+to reduce APK size if 32-bit support is not needed.
+
+### Android-Specific CMake Changes
+
+The root `CMakeLists.txt` detects `ANDROID` and:
+
+1. Builds SDL3 from source via `add_subdirectory()` instead of
+   `find_package()` — system SDL3 packages don't exist on Android
+2. Defines `VD_OS_ANDROID=1` globally
+3. The `AltirraSDL/CMakeLists.txt` builds a shared library (`libmain.so`)
+   instead of an executable
+4. Links `GLESv3` + `EGL` instead of desktop `OpenGL::GL`
+5. Defines `ALTIRRA_MOBILE=1` to activate the mobile touch UI
+
+### Signing
+
+Debug builds are signed with the Android debug keystore automatically.
+For release builds:
+
+```bash
+# Generate a keystore (once):
+keytool -genkey -v -keystore altirra-release.keystore \
+    -alias altirra -keyalg RSA -keysize 2048 -validity 10000
+
+# Add to android/app/build.gradle under android.signingConfigs, or:
+jarsigner -verbose -keystore altirra-release.keystore \
+    app/build/outputs/apk/release/app-release-unsigned.apk altirra
+zipalign -v 4 app-release-unsigned.apk altirra-release.apk
+```
+
+### Debugging
+
+```bash
+# Install and launch with logcat:
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb shell am start -n org.altirra.app/.AltirraActivity
+adb logcat -s SDL AltirraSDL
+
+# Native debugging (requires Android Studio or ndk-gdb):
+# Open the android/ directory in Android Studio, set breakpoints in C++
+```
+
+### Troubleshooting
+
+| Problem | Solution |
+|---------|----------|
+| `JAVA_HOME is not set` | Install JDK 17+: see Step 1 above |
+| `java-17-openjdk-devel` not found | Your distro uses a different name. Try `java-latest-openjdk-devel` (Fedora) or `openjdk-21-jdk` (Ubuntu) |
+| `ANDROID_HOME is not set` | See Step 2 above. The build script also searches `~/Android/Sdk` automatically |
+| `Missing SDK components` | Run `./build.sh --setup-android` or `sdkmanager --install 'platforms;android-36' ...` |
+| `License not accepted` | Run `sdkmanager --licenses` and accept all |
+| `SDL3 source not found` | Run `cd android && ./setup_sdl3.sh` |
+| `NDK not found` | Install via `sdkmanager --install 'ndk;28.2.13676358'` or set `ANDROID_NDK_HOME` |
+| `No matching ABIs` | Check `abiFilters` in `app/build.gradle` |
+| `Java compilation errors` | Verify SDL3 Java symlink: `ls -la android/app/src/main/java/org/libsdl` |
+| `OpenGL ES errors` | Device must support GLES 3.0+ (virtually all post-2014 devices) |
+| `cmake version too old` | Install cmake 3.24+ via `sdkmanager --install 'cmake;3.31.6'` |
+| `Gradle wrapper not found` | The build script downloads it automatically. If it fails, install Gradle: `brew install gradle` / `sdk install gradle` |
+| `Could not find com.android.tools.build:gradle` | Check internet connectivity. Gradle downloads Android plugin on first build |
+| `Unsupported class file major version` | Your Java is too new for the Gradle version. Update `gradle-wrapper.properties` to a Gradle that supports your JDK (e.g. Gradle 9.3+ for Java 25) |
+| `Minimum supported Gradle version is X` | AGP requires a specific Gradle minimum. Update `distributionUrl` in `gradle-wrapper.properties` to the version shown in the error |
+| NDK version disagrees with `android.ndkVersion` | Install the NDK version AGP expects (shown in error), or pin `ndkVersion` in `app/build.gradle` |

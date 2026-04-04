@@ -34,6 +34,8 @@
 #include "ui_mobile.h"
 #include "ui_debugger.h"
 #include "ui_testmode.h"
+#include "ui_progress.h"
+#include "ui_emuerror.h"
 #include "display_sdl3_impl.h"
 #include "simulator.h"
 #include "mediamanager.h"
@@ -669,6 +671,67 @@ void ATUIPollDeferredActions() {
 }
 
 // =========================================================================
+// Theme / Style
+// =========================================================================
+
+static bool s_systemThemeIsDark = false;
+
+static bool ResolveIsDark(ATUIThemeMode mode) {
+	switch (mode) {
+	case ATUIThemeMode::Light:  return false;
+	case ATUIThemeMode::Dark:   return true;
+	case ATUIThemeMode::System:
+	default:                    return s_systemThemeIsDark;
+	}
+}
+
+void ATUIApplyTheme() {
+	bool dark = ResolveIsDark(g_ATOptions.mThemeMode);
+	if (dark)
+		ImGui::StyleColorsDark();
+	else
+		ImGui::StyleColorsLight();
+
+	ImGuiStyle& style = ImGui::GetStyle();
+	style.FrameRounding = 2.0f;
+	style.WindowRounding = 4.0f;
+	style.GrabRounding = 2.0f;
+
+	float alpha = std::clamp(g_ATOptions.mUIAlpha, 0.2f, 1.0f);
+
+	// ImGui's dark/light themes set WindowBg and PopupBg to alpha 0.94
+	// so the desktop or content behind can bleed through slightly.  Most
+	// other semi-transparent colors (FrameBg 0.54, TableRowBgAlt 0.06,
+	// Button 0.40, Header 0.31, etc.) are intentionally designed as
+	// overlay tints that blend with the surface beneath them inside the
+	// window — forcing those to 1.0 breaks the look (e.g. alternating
+	// table rows become solid white).
+	//
+	// At 100% opacity: override only the surface/container backgrounds
+	// to alpha 1.0 so windows are fully opaque, but leave overlay tints
+	// untouched.  Below 100%: use style.Alpha as a global multiplier.
+	if (alpha >= 1.0f) {
+		style.Alpha = 1.0f;
+		style.Colors[ImGuiCol_WindowBg].w = 1.0f;
+		style.Colors[ImGuiCol_PopupBg].w = 1.0f;
+	} else {
+		style.Alpha = alpha;
+	}
+
+	// Light theme tweaks: give a subtle grey tint to the window
+	// background so it doesn't look flat-white and sterile.
+	if (!dark) {
+		style.Colors[ImGuiCol_WindowBg] = ImVec4(0.94f, 0.94f, 0.94f, alpha >= 1.0f ? 1.0f : 0.94f);
+		style.Colors[ImGuiCol_MenuBarBg] = ImVec4(0.86f, 0.86f, 0.86f, 1.0f);
+	}
+}
+
+void ATUIUpdateSystemTheme() {
+	SDL_SystemTheme sysTheme = SDL_GetSystemTheme();
+	s_systemThemeIsDark = (sysTheme == SDL_SYSTEM_THEME_DARK);
+}
+
+// =========================================================================
 // Init / Shutdown
 // =========================================================================
 
@@ -682,11 +745,8 @@ bool ATUIInit(SDL_Window *window, IDisplayBackend *backend) {
 	io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
 	io.IniFilename = "altirrasdl_imgui.ini";
 
-	ImGui::StyleColorsDark();
-	ImGuiStyle& style = ImGui::GetStyle();
-	style.FrameRounding = 2.0f;
-	style.WindowRounding = 4.0f;
-	style.GrabRounding = 2.0f;
+	ATUIUpdateSystemTheme();
+	ATUIApplyTheme();
 
 	s_pDisplayBackend = backend;
 
@@ -732,6 +792,12 @@ void ATUIShutdown() {
 }
 
 bool ATUIProcessEvent(const SDL_Event *event) {
+	// React to OS dark/light theme changes in real time
+	if (event->type == SDL_EVENT_SYSTEM_THEME_CHANGED) {
+		ATUIUpdateSystemTheme();
+		if (g_ATOptions.mThemeMode == ATUIThemeMode::System)
+			ATUIApplyTheme();
+	}
 	return ImGui_ImplSDL3_ProcessEvent(event);
 }
 
@@ -1438,8 +1504,14 @@ void ATUIRenderFrame(ATSimulator &sim, VDVideoDisplaySDL3 &display,
 	if (state.showScreenEffects)    ATUIRenderScreenEffects(sim, state);
 	if (state.showShaderParams)     ATUIRenderShaderParameters(state);
 	if (state.showShaderSetup)      ATUIRenderShaderSetupHelp(state);
+	if (state.showCalibrate)        ATUIRenderCalibrationDialog(state);
+	if (state.showCustomizeHud)     ATUIRenderCustomizeHudDialog(state);
 	ATUIShaderPresetsPoll(backend);
 	ATUIRenderVideoRecordingDialog(window);
+
+	// Debugger dialogs (self-managed visibility)
+	ATUIRenderVerifierDialog();
+	ATUIDebuggerRenderSourceListDialog();
 
 	// HUD overlay (drive LEDs, status, FPS, pause, errors)
 	ATUIRenderHUDOverlay();
@@ -1477,6 +1549,12 @@ void ATUIRenderFrame(ATSimulator &sim, VDVideoDisplaySDL3 &display,
 			ImGui::CloseCurrentPopup();
 		ImGui::EndPopup();
 	}
+
+	// Progress dialog popup (firmware scan, background tasks)
+	ATUIRenderProgress();
+
+	// Emulation error dialog popup (program crash recovery)
+	ATUIRenderEmuErrorDialog(sim);
 
 	// Drag-and-drop visual feedback overlay
 	ATUIRenderDragDropOverlay();

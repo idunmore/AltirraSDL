@@ -27,6 +27,9 @@
 #ifdef _WIN32
 #include <wtypes.h>
 #include <winnt.h>
+#elif VD_CPU_ARM64
+#include <sys/auxv.h>
+#include <asm/hwcap.h>
 #endif
 #include <vd2/system/win32/intrin.h>
 #include <vd2/system/cpuaccel.h>
@@ -160,11 +163,21 @@ long CPUCheckForExtensions() {
 long CPUCheckForExtensions() {
 	long flags = 0;
 
+#ifdef _WIN32
 	if (IsProcessorFeaturePresent(PF_ARM_V8_CRYPTO_INSTRUCTIONS_AVAILABLE))
 		flags |= VDCPUF_SUPPORTS_CRYPTO;
 
 	if (IsProcessorFeaturePresent(PF_ARM_V8_CRC32_INSTRUCTIONS_AVAILABLE))
 		flags |= VDCPUF_SUPPORTS_CRC32;
+#else
+	unsigned long hwcap = getauxval(AT_HWCAP);
+
+	if (hwcap & HWCAP_AES)
+		flags |= VDCPUF_SUPPORTS_CRYPTO;
+
+	if (hwcap & HWCAP_CRC32)
+		flags |= VDCPUF_SUPPORTS_CRC32;
+#endif
 
 	return flags;
 }

@@ -27,7 +27,7 @@
 #include <math.h>
 #ifdef _MSC_VER
 #include <intrin.h>
-#else
+#elif VD_CPU_X86 || VD_CPU_X64
 #include <x86intrin.h>
 #endif
 
@@ -670,7 +670,7 @@ const vduint128 vduint128::operator/(const vduint128& x) const {
 			ret
 		}
 	}
-#elif !defined(VD_CPU_AMD64)
+#elif !defined(VD_CPU_AMD64) && !defined(VD_CPU_ARM64)
 	vduint128 VDUMul64x64To128(uint64 x, uint64 y) {
 		uint32 x0 = (uint32)x;
 		uint32 x1 = (uint32)(x >> 32);

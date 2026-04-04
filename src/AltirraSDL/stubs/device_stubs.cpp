@@ -16,7 +16,6 @@
 #include "cs8900a.h"
 #include "directorywatcher.h"
 #include "idephysdisk.h"
-#include "idevhdimage.h"
 #include "modem.h"
 #include "oshelper.h"
 
@@ -81,31 +80,7 @@ void ATIDEPhysicalDisk::Flush() {}
 void ATIDEPhysicalDisk::ReadSectors(void*, uint32, uint32) {}
 void ATIDEPhysicalDisk::WriteSectors(const void*, uint32, uint32) {}
 
-// ============================================================
-// IDE VHD Image stubs (idevhdimage.cpp excluded)
-// ============================================================
-
-ATIDEVHDImage::ATIDEVHDImage() : mbReadOnly(true), mbSolidState(false),
-	mFooterLocation(0), mSectorCount(0), mBlockSizeShift(0), mBlockLBAMask(0),
-	mBlockSize(0), mBlockBitmapSize(0), mCurrentBlock(0), mCurrentBlockDataOffset(0),
-	mbCurrentBlockBitmapDirty(false), mbCurrentBlockAllocated(false), mFooter{}, mDynamicHeader{} {}
-ATIDEVHDImage::~ATIDEVHDImage() {}
-int ATIDEVHDImage::AddRef() { return ++mRefCount; }
-int ATIDEVHDImage::Release() { int n = --mRefCount; if (!n) delete this; return n; }
-void *ATIDEVHDImage::AsInterface(uint32) { return nullptr; }
-void ATIDEVHDImage::GetDeviceInfo(ATDeviceInfo&) {}
-void ATIDEVHDImage::GetSettingsBlurb(VDStringW&) {}
-void ATIDEVHDImage::GetSettings(ATPropertySet&) {}
-bool ATIDEVHDImage::SetSettings(const ATPropertySet&) { return false; }
-uint32 ATIDEVHDImage::GetSectorCount() const { return 0; }
-ATBlockDeviceGeometry ATIDEVHDImage::GetGeometry() const { return {}; }
-uint32 ATIDEVHDImage::GetSerialNumber() const { return 0; }
-void ATIDEVHDImage::Init(const wchar_t*, bool, bool) {}
-void ATIDEVHDImage::Shutdown() {}
-void ATIDEVHDImage::Flush() {}
-void ATIDEVHDImage::ReadSectors(void*, uint32, uint32) {}
-void ATIDEVHDImage::WriteSectors(const void*, uint32, uint32) {}
-VDStringW ATIDEVHDImage::GetVHDDirectAccessPath() const { return {}; }
+// idevhdimage.cpp is now compiled directly (no longer stubbed)
 
 // ============================================================
 // Modem TCP driver stub (modemtcp.cpp excluded)
@@ -121,7 +96,7 @@ static void ATCreateDeviceNullStub(const ATPropertySet&, IATDevice **pp) { if (p
 
 extern const ATDeviceDefinition g_ATDeviceDefCustom      = { "custom",   nullptr, L"Custom",        ATCreateDeviceNullStub };
 extern const ATDeviceDefinition g_ATDeviceDefIDEPhysDisk = { "idephys",  nullptr, L"IDE Phys Disk", ATCreateDeviceNullStub };
-extern const ATDeviceDefinition g_ATDeviceDefIDEVHDImage = { "idevhd",   nullptr, L"IDE VHD Image", ATCreateDeviceNullStub };
+// g_ATDeviceDefIDEVHDImage now provided by idevhdimage.cpp
 extern const ATDeviceDefinition g_ATDeviceDefMidiMate    = { "midimate", nullptr, L"MidiMate",      ATCreateDeviceNullStub };
 extern const ATDeviceDefinition g_ATDeviceDefPipeSerial  = { "pipeser",  nullptr, L"Pipe Serial",   ATCreateDeviceNullStub };
 

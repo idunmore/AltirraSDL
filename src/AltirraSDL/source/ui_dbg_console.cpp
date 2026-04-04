@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <imgui.h>
+#include <imgui_internal.h>
 #include <imgui_stdlib.h>
 #include <SDL3/SDL.h>
 
@@ -74,7 +75,6 @@ private:
 	int HandleInputCallback(ImGuiInputTextCallbackData *data);
 	static int OutputTextCallback(ImGuiInputTextCallbackData *data);
 	int HandleOutputCallback(ImGuiInputTextCallbackData *data);
-
 	void OnPromptChanged(IATDebugger *target, const char *prompt);
 	void OnRunStateChanged(IATDebugger *target, bool running);
 
@@ -82,8 +82,12 @@ private:
 	bool mbFocusInput = true;
 	bool mbFirstRender = true;
 	bool mbRunning = false;       // tracks simulator run state for input disabling
-	bool mbScrollToBottom = false; // request scroll on next frame
+	int mScrollFrames = 0;         // >0 = request scroll-to-bottom for N frames
 	std::string mRenderSnapshot;  // text copied under lock, rendered without lock
+
+	// Selection tracking from InputTextMultiline callback
+	int mSelectionStart = 0;
+	int mSelectionEnd = 0;
 
 	// Event delegates for prompt/run state changes
 	VDDelegate mDelPromptChanged;
@@ -172,7 +176,7 @@ bool ATImGuiConsolePaneImpl::Render() {
 	if (g_consoleTextDirty.exchange(false)) {
 		std::lock_guard<std::mutex> lock(g_consoleMutex);
 		mRenderSnapshot = g_consoleText;
-		mbScrollToBottom = true;
+		mScrollFrames = 3;
 
 		// Trim buffer if it grows too large (cap 256KB, trim to 128KB)
 		if (g_consoleText.size() > 256 * 1024) {
@@ -185,18 +189,53 @@ bool ATImGuiConsolePaneImpl::Render() {
 
 	// Check explicit scroll-to-bottom requests (from ShowEnd())
 	if (g_consoleScrollToBottom.exchange(false))
-		mbScrollToBottom = true;
+		mScrollFrames = 3;
 
-	// Use InputTextMultiline in read-only mode — supports text selection + Ctrl+C
+	// Use InputTextMultiline in read-only mode — supports text selection + Ctrl+C.
+	// CallbackAlways tracks the selection range for the "Copy" context menu item
+	// (only fires when the widget is focused, but selection only exists then too).
 	ImGuiInputTextFlags outputFlags = ImGuiInputTextFlags_ReadOnly
 		| ImGuiInputTextFlags_CallbackAlways;
+
+	// Capture the child window ID before InputTextMultiline (which creates a
+	// child window with GetID("##ConsoleOutput") in the current window context).
+	ImGuiID childId = ImGui::GetID("##ConsoleOutput");
 
 	ImGui::InputTextMultiline("##ConsoleOutput", &mRenderSnapshot,
 		ImVec2(-FLT_MIN, -footerHeight), outputFlags,
 		OutputTextCallback, this);
 
+	// Auto-scroll: find the internal child window created by InputTextMultiline
+	// and set its scroll to the maximum.  SetNextWindowScroll doesn't work here
+	// because Begin() clamps against the previous frame's stale ScrollMax, and
+	// the CallbackAlways approach only fires when the widget is focused.
+	if (mScrollFrames > 0) {
+		ImGuiWindow *child = ImGui::FindWindowByID(childId);
+		fprintf(stderr, "[ConsoleScroll] frame=%d child=%p scrollMax=%.1f scroll=%.1f\n",
+			mScrollFrames, (void*)child,
+			child ? child->ScrollMax.y : -1.0f,
+			child ? child->Scroll.y : -1.0f);
+		if (child && child->ScrollMax.y > 0.0f) {
+			ImGui::SetScrollY(child, child->ScrollMax.y);
+		}
+		mScrollFrames--;
+	}
+
 	// Right-click context menu for the output area
 	if (ImGui::BeginPopupContextItem("ConsoleCtx")) {
+		bool hasSelection = (mSelectionStart != mSelectionEnd);
+		if (ImGui::MenuItem("Copy", "Ctrl+C", false, hasSelection)) {
+			// Ctrl+C is handled natively by InputTextMultiline when focused.
+			// This menu item covers the right-click case using tracked selection.
+			int lo = std::min(mSelectionStart, mSelectionEnd);
+			int hi = std::max(mSelectionStart, mSelectionEnd);
+			lo = std::clamp(lo, 0, (int)mRenderSnapshot.size());
+			hi = std::clamp(hi, 0, (int)mRenderSnapshot.size());
+			if (hi > lo) {
+				std::string sel = mRenderSnapshot.substr(lo, hi - lo);
+				SDL_SetClipboardText(sel.c_str());
+			}
+		}
 		if (ImGui::MenuItem("Copy All")) {
 			if (!mRenderSnapshot.empty())
 				SDL_SetClipboardText(mRenderSnapshot.c_str());
@@ -268,12 +307,9 @@ int ATImGuiConsolePaneImpl::OutputTextCallback(ImGuiInputTextCallbackData *data)
 }
 
 int ATImGuiConsolePaneImpl::HandleOutputCallback(ImGuiInputTextCallbackData *data) {
-	if (mbScrollToBottom) {
-		// Move cursor to end — ImGui will scroll to keep cursor visible
-		data->CursorPos = data->BufTextLen;
-		data->SelectionStart = data->SelectionEnd = data->CursorPos;
-		mbScrollToBottom = false;
-	}
+	// Track selection range for the "Copy" context menu item
+	mSelectionStart = data->SelectionStart;
+	mSelectionEnd = data->SelectionEnd;
 	return 0;
 }
 

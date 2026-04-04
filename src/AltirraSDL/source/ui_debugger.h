@@ -108,3 +108,20 @@ extern void ATUIDebuggerAddToWatch(const char *expr);
 // Breakpoint dialog (from ui_dbg_breakpoints.cpp)
 // Pass userIdx >= 0 to edit existing, -1 for new breakpoint
 void ATUIDebuggerShowBreakpointDialog(sint32 userIdx);
+
+// Verifier dialog (from ui_dbg_verifier.cpp)
+void ATUIShowDialogVerifier();
+void ATUIRenderVerifierDialog();
+
+// Close a specific pane by ID (used by ATCloseUIPane stub)
+void ATUIDebuggerClosePaneById(uint32 paneId);
+
+// Window management — Close/Undock/Cycle panes (replaces cmdwindow.cpp)
+void ATUIDebuggerCloseActivePane();
+void ATUIDebuggerUndockActivePane();
+void ATUIDebuggerCyclePane(int direction);  // +1 = next, -1 = previous
+bool ATUIDebuggerHasVisiblePanes();
+
+// Source file list dialog (from ui_dbg_source.cpp)
+void ATUIDebuggerShowSourceListDialog();
+void ATUIDebuggerRenderSourceListDialog();

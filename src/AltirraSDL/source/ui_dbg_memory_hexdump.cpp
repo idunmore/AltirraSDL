@@ -767,8 +767,10 @@ void ATImGuiMemoryPaneImpl::RenderHexDump() {
 	ImGui::PopStyleVar();	// ItemSpacing
 
 	// Restore mViewData bytes that were temporarily overlaid with
-	// the in-progress edit value.
-	if (editOverlayIdx >= 0) {
+	// the in-progress edit value — but NOT if CommitEdit was called
+	// this frame, because it already wrote the final value to mViewData
+	// and restoring would revert the committed change.
+	if (editOverlayIdx >= 0 && !mbEditCommittedThisFrame) {
 		mViewData[editOverlayIdx] = editSavedByte0;
 		if (editOverlayWord)
 			mViewData[editOverlayIdx + 1] = editSavedByte1;

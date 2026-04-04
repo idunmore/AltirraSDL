@@ -6,6 +6,7 @@ Altirra supports two independent build paths:
 |------------|----------|----------|--------------|
 | **Visual Studio** | Windows | Native Win32 UI (Altirra.exe) | `.sln` |
 | **CMake** | Linux, macOS, Windows | SDL3 + Dear ImGui (AltirraSDL) | CMake + `build.sh` |
+| **Android** | Android | SDL3 + Dear ImGui + Touch | Gradle + CMake + NDK via `build.sh --android` |
 
 Both paths coexist in the same repository and do not conflict (different
 output directories: `.sln` uses `out/`, CMake uses `build/`).
@@ -160,6 +161,79 @@ cmake --install build/linux-release --prefix /usr/local
 # Installs: /usr/local/bin/AltirraSDL
 #           /usr/local/share/altirra/extras/
 ```
+
+---
+
+## Android Build
+
+### Prerequisites
+
+1. **Java JDK 17+** — required by sdkmanager and Gradle
+2. **Android SDK** with command-line tools
+3. **SDK components** installed via sdkmanager
+
+```bash
+# 1. Install Java
+# Fedora:
+sudo dnf install java-latest-openjdk-devel
+# Debian/Ubuntu:
+sudo apt install openjdk-21-jdk
+# macOS:
+brew install openjdk
+
+# 2. Install Android SDK (if not using Android Studio)
+mkdir -p ~/Android/Sdk/cmdline-tools
+cd ~/Android/Sdk/cmdline-tools
+# Download from: https://developer.android.com/studio#command-line-tools-only
+unzip commandlinetools-*_latest.zip
+mv cmdline-tools latest
+
+# 3. Set environment (add to ~/.bashrc or ~/.zshrc)
+export ANDROID_HOME=$HOME/Android/Sdk
+export PATH=$PATH:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools
+
+# 4. Install SDK components
+sdkmanager --install \
+    'platforms;android-36' \
+    'ndk;28.2.13676358' \
+    'build-tools;36.0.0'
+sdkmanager --licenses
+```
+
+### Build
+
+```bash
+./build.sh --android                # debug APK
+./build.sh --android --release      # release APK
+./build.sh --android --clean        # clean + rebuild
+
+# Or auto-install SDK components + build:
+./build.sh --setup-android
+```
+
+### Output
+
+```
+android/app/build/outputs/apk/debug/app-debug.apk
+android/app/build/outputs/apk/release/app-release-unsigned.apk
+```
+
+Install on a connected device: `adb install -r <path-to-apk>`
+
+### Troubleshooting
+
+The build script validates all dependencies and prints install
+instructions if anything is missing. Common issues:
+
+- **Java package not found** — package names vary by distro. Search
+  with `dnf search openjdk-devel` or `apt search openjdk`. Any JDK >= 17 works.
+- **`Unsupported class file major version`** — Gradle is too old for
+  your Java. Update `distributionUrl` in
+  `android/gradle/wrapper/gradle-wrapper.properties`.
+- **NDK version mismatch** — install the NDK version shown in the error
+  via `sdkmanager --install 'ndk;<version>'`.
+
+See [PORTING/BUILD.md](PORTING/BUILD.md) for detailed internals.
 
 ---
 

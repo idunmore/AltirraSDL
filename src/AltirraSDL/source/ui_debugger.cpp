@@ -17,6 +17,7 @@
 #include "simulator.h"
 #include "display_sdl3_impl.h"
 #include "display_backend.h"
+#include "ui_textselection.h"
 
 extern ATSimulator g_sim;
 extern VDVideoDisplaySDL3 *g_pDisplay;
@@ -256,7 +257,20 @@ static void RenderDisplayPane() {
 					float offsetY = (avail.y - drawH) * 0.5f;
 					if (offsetX > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + offsetX);
 					if (offsetY > 0) ImGui::SetCursorPosY(ImGui::GetCursorPosY() + offsetY);
-					ImGui::Image((ImTextureID)texID, ImVec2(drawW, drawH));
+
+					// Record image position before drawing
+					ImVec2 imagePos = ImGui::GetCursorScreenPos();
+					ImVec2 imageSize(drawW, drawH);
+
+					ImGui::Image((ImTextureID)texID, imageSize);
+
+					// Text selection: handle mouse drag and draw highlight overlay.
+					// Always call when a drag is active (mouse may leave window);
+					// otherwise only when the Display window is hovered.
+					ATTextSelectionState& sel = ATUIGetTextSelection();
+					if (sel.mbDragActive || ImGui::IsWindowHovered())
+						ATUITextSelectionHandleMouse(imagePos, imageSize);
+					ATUITextSelectionDrawOverlay(imagePos, imageSize);
 				}
 			}
 		} else {
@@ -570,4 +584,88 @@ void ATUIDebuggerStepOut() {
 void ATUIDebuggerFocusDisplay() {
 	// Focus the Display pane in the debugger dockspace
 	ImGui::SetWindowFocus("Display");
+}
+
+// =========================================================================
+// Window management — Close / Undock / Cycle panes
+// =========================================================================
+
+void ATUIDebuggerClosePaneById(uint32 paneId) {
+	for (auto& e : g_debugPanes) {
+		if (e.id == paneId) {
+			e.pane->SetVisible(false);
+			return;
+		}
+	}
+}
+
+bool ATUIDebuggerHasVisiblePanes() {
+	for (auto& e : g_debugPanes) {
+		if (e.pane->IsVisible())
+			return true;
+	}
+	return false;
+}
+
+void ATUIDebuggerCloseActivePane() {
+	if (!g_debuggerOpen || g_focusedPaneId == 0)
+		return;
+
+	// Find and close the focused pane
+	for (auto& e : g_debugPanes) {
+		if (e.id == g_focusedPaneId) {
+			e.pane->SetVisible(false);
+			g_focusedPaneId = 0;
+			return;
+		}
+	}
+}
+
+void ATUIDebuggerUndockActivePane() {
+	if (!g_debuggerOpen || g_focusedPaneId == 0)
+		return;
+
+	// Find the focused pane and undock it from the docking layout
+	for (auto& e : g_debugPanes) {
+		if (e.id == g_focusedPaneId) {
+			ImGuiWindow *window = ImGui::FindWindowByName(e.pane->GetTitle());
+			if (window && window->DockId != 0) {
+				// Setting DockId to 0 undocks the window on the next frame
+				ImGui::SetWindowDock(window, 0, ImGuiCond_Always);
+			}
+			return;
+		}
+	}
+}
+
+void ATUIDebuggerCyclePane(int direction) {
+	if (!g_debuggerOpen)
+		return;
+
+	// Build ordered list of visible pane indices
+	std::vector<size_t> visibleIndices;
+	size_t currentIdx = SIZE_MAX;
+
+	for (size_t i = 0; i < g_debugPanes.size(); ++i) {
+		if (g_debugPanes[i].pane->IsVisible()) {
+			if (g_debugPanes[i].id == g_focusedPaneId)
+				currentIdx = visibleIndices.size();
+			visibleIndices.push_back(i);
+		}
+	}
+
+	if (visibleIndices.empty())
+		return;
+
+	// If no pane is focused, start from the first one
+	if (currentIdx == SIZE_MAX)
+		currentIdx = 0;
+
+	// Advance with wraparound
+	int n = (int)visibleIndices.size();
+	int next = ((int)currentIdx + direction + n) % n;
+
+	auto& target = g_debugPanes[visibleIndices[next]];
+	ImGui::SetWindowFocus(target.pane->GetTitle());
+	g_focusedPaneId = target.id;
 }

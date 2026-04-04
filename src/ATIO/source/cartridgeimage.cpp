@@ -17,6 +17,9 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
+#if defined(VD_CPU_ARM64) && !defined(_MSC_VER)
+#include <arm_neon.h>
+#endif
 #include <vd2/system/binary.h>
 #include <vd2/system/file.h>
 #include <vd2/system/zip.h>

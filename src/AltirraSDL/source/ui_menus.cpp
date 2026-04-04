@@ -24,6 +24,7 @@
 
 #include "ui_main.h"
 #include "ui_debugger.h"
+#include "ui_textselection.h"
 #include <at/atnativeui/uiframe.h>
 #include "simulator.h"
 #include "gtia.h"
@@ -826,7 +827,11 @@ static void RenderViewMenu(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 
 		ImGui::Separator();
 
-		ImGui::MenuItem("Pan/Zoom Tool", nullptr, false, false);  // placeholder
+		{
+			bool pzActive = ATUIIsPanZoomToolActive();
+			if (ImGui::MenuItem("Pan/Zoom Tool", nullptr, pzActive))
+				ATUISetPanZoomToolActive(!pzActive);
+		}
 		if (ImGui::MenuItem("Reset Pan and Zoom")) {
 			ATUISetDisplayZoom(1.0f);
 			ATUISetDisplayPanOffset({0, 0});
@@ -956,13 +961,20 @@ static void RenderViewMenu(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 		ImGui::EndMenu();
 	}
 
-	ImGui::MenuItem("Customize HUD...", nullptr, false, false);          // placeholder
-	ImGui::MenuItem("Calibrate...", nullptr, false, false);              // placeholder
+	if (ImGui::MenuItem("Customize HUD..."))
+		state.showCustomizeHud = true;
+	if (ImGui::MenuItem("Calibrate..."))
+		state.showCalibrate = true;
 
 	ImGui::Separator();
 
-	ImGui::MenuItem("Display", nullptr, false, false);                   // placeholder — dockable pane
-	ImGui::MenuItem("Printer Output", nullptr, false, false);            // placeholder — dockable pane
+	{
+		bool dbgOpen = ATUIDebuggerIsOpen();
+		if (ImGui::MenuItem("Display", nullptr, false, dbgOpen))
+			ATUIDebuggerFocusDisplay();
+		if (ImGui::MenuItem("Printer Output", nullptr, false, dbgOpen))
+			ATActivateUIPane(kATUIPaneId_PrinterOutput, true, true);
+	}
 
 	ImGui::Separator();
 
@@ -977,15 +989,22 @@ static void RenderViewMenu(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 
 	// Text Selection submenu
 	if (ImGui::BeginMenu("Text Selection")) {
-		ImGui::MenuItem("Copy Text", "Alt+Shift+C", false, false);        // placeholder — needs display text selection
-		ImGui::MenuItem("Copy Escaped Text", nullptr, false, false);      // placeholder
-		ImGui::MenuItem("Copy Hex", nullptr, false, false);               // placeholder
-		ImGui::MenuItem("Copy Unicode", nullptr, false, false);           // placeholder
+		bool hasSelection = ATUIIsTextSelected();
+		if (ImGui::MenuItem("Copy Text", "Alt+Shift+C", false, hasSelection))
+			ATUITextCopy(ATTextCopyMode::ASCII);
+		if (ImGui::MenuItem("Copy Escaped Text", nullptr, false, hasSelection))
+			ATUITextCopy(ATTextCopyMode::Escaped);
+		if (ImGui::MenuItem("Copy Hex", nullptr, false, hasSelection))
+			ATUITextCopy(ATTextCopyMode::Hex);
+		if (ImGui::MenuItem("Copy Unicode", nullptr, false, hasSelection))
+			ATUITextCopy(ATTextCopyMode::Unicode);
 		if (ImGui::MenuItem("Paste Text", "Alt+Shift+V"))
 			ATUIPasteText();
 		ImGui::Separator();
-		ImGui::MenuItem("Select All", "Alt+Shift+A", false, false);       // placeholder — needs display text selection
-		ImGui::MenuItem("Deselect", "Alt+Shift+D", false, false);         // placeholder — needs display text selection
+		if (ImGui::MenuItem("Select All", "Alt+Shift+A"))
+			ATUITextSelectAll();
+		if (ImGui::MenuItem("Deselect", "Alt+Shift+D", false, hasSelection))
+			ATUITextDeselect();
 		ImGui::EndMenu();
 	}
 }
@@ -1344,7 +1363,8 @@ static void RenderDebugMenu(ATSimulator &sim) {
 	}
 	if (ImGui::MenuItem("Open Source File...", "Alt+Shift+O", false, dbgEnabled))
 		ATUIShowOpenSourceFileDialog(g_pWindow);
-	ImGui::MenuItem("Source File List...", nullptr, false, false);       // TODO: Phase 8
+	if (ImGui::MenuItem("Source File List...", nullptr, false, dbgEnabled))
+		ATUIDebuggerShowSourceListDialog();
 
 	if (ImGui::BeginMenu("Window", dbgEnabled)) {
 		if (ImGui::MenuItem("Console"))
@@ -1447,7 +1467,8 @@ static void RenderDebugMenu(ATSimulator &sim) {
 			ATActivateUIPane(kATUIPaneId_Profiler, true);
 		ImGui::EndMenu();
 	}
-	ImGui::MenuItem("Verifier...", nullptr, false, false);              // TODO: Phase 10
+	if (ImGui::MenuItem("Verifier...", nullptr, g_sim.IsVerifierEnabled()))
+		ATUIShowDialogVerifier();
 	if (ImGui::MenuItem("Performance Analyzer..."))
 		ATActivateUIPane(kATUIPaneId_Profiler, true);
 }
@@ -1612,10 +1633,20 @@ static void RenderToolsMenu(ATSimulator &sim, ATUIState &state, SDL_Window *wind
 // =========================================================================
 
 static void RenderWindowMenu(SDL_Window *window) {
-	ImGui::MenuItem("Close", nullptr, false, false);            // placeholder — dockable pane
-	ImGui::MenuItem("Undock", nullptr, false, false);           // placeholder — dockable pane
-	ImGui::MenuItem("Next Pane", nullptr, false, false);        // placeholder — dockable pane
-	ImGui::MenuItem("Previous Pane", nullptr, false, false);    // placeholder — dockable pane
+	{
+		bool dbgOpen = ATUIDebuggerIsOpen();
+		bool hasPanes = dbgOpen && ATUIDebuggerHasVisiblePanes();
+		bool hasFocus = dbgOpen && ATUIDebuggerGetFocusedPaneId() != 0;
+
+		if (ImGui::MenuItem("Close", nullptr, false, hasFocus))
+			ATUIDebuggerCloseActivePane();
+		if (ImGui::MenuItem("Undock", nullptr, false, hasFocus))
+			ATUIDebuggerUndockActivePane();
+		if (ImGui::MenuItem("Next Pane", nullptr, false, hasPanes))
+			ATUIDebuggerCyclePane(+1);
+		if (ImGui::MenuItem("Previous Pane", nullptr, false, hasPanes))
+			ATUIDebuggerCyclePane(-1);
+	}
 	ImGui::Separator();
 
 	if (ImGui::BeginMenu("Adjust Window Size")) {

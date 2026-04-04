@@ -127,6 +127,9 @@ void ATImGuiMemoryPaneImpl::OnDebuggerEvent(ATDebugEvent eventId) {
 void ATImGuiMemoryPaneImpl::RebuildView() {
 	mbNeedsRebuild = false;
 
+	fprintf(stderr, "[RebuildView] visRows=%u cols=%u dataSize=%zu\n",
+		mVisibleRows, mColumns, mViewData.size());
+
 	if (!mbStateValid || !mLastState.mpDebugTarget || mLastState.mbRunning)
 		return;
 
@@ -296,8 +299,18 @@ void ATImGuiMemoryPaneImpl::CommitEdit() {
 		target->WriteByte(addr, (uint8)(mEditValue & 0xFF));
 	}
 
+	// DEBUG: verify write persisted
+	{
+		uint8 readBack = target->DebugReadByte(addr);
+		uint8 wrote = (uint8)(mEditValue & 0xFF);
+		fprintf(stderr, "[CommitEdit] addr=%08X wrote=%02X readback=%02X %s\n",
+			addr, wrote, readBack,
+			(readBack == wrote) ? "OK" : "MISMATCH!");
+	}
+
 	mEditValue = -1;
 	mEditPhase = 0;
+	mbEditCommittedThisFrame = true;
 	// Note: intentionally NOT setting mbNeedsRebuild here.  mViewData
 	// already contains the written value.  A full rebuild would re-read
 	// memory and could revert the display if the write went to a
@@ -408,6 +421,7 @@ void ATImGuiMemoryPaneImpl::RenderAddressBar() {
 
 bool ATImGuiMemoryPaneImpl::Render() {
 	mbEditCancelledThisFrame = false;
+	mbEditCommittedThisFrame = false;
 	bool open = true;
 
 	if (mbFocusRequested) {

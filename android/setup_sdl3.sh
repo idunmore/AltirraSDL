@@ -19,7 +19,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 SDL3_DIR="$ROOT_DIR/android/SDL3"
-SDL3_TAG="preview-3.2.14"  # Must match the version in CMakeLists.txt find_package
+SDL3_TAG="release-3.4.4"  # Latest stable; no version constraint in CMakeLists.txt
 
 echo "=== Altirra Android — SDL3 Setup ==="
 

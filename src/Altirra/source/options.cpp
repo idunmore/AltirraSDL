@@ -16,6 +16,7 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
+#include <algorithm>
 #include <vd2/system/registry.h>
 #include <at/atcore/media.h>
 #include "options.h"
@@ -120,6 +121,29 @@ void ATOptionsExchange(VDRegistryKey& key, bool write, ATOptions& opts) {
 	ATOptionsExchange(key, write, "Flash: Maxflash 8Mb flash mode", opts.mMaxflash8MbFlashChip);
 	ATOptionsExchange(key, write, "UI: Theme scale factor", opts.mThemeScale);
 	ATOptionsExchange(key, write, "UI: Use dark theme", opts.mbDarkTheme);
+
+	// Theme mode: 0=System, 1=Light, 2=Dark.  Falls back to mbDarkTheme
+	// for settings files that predate mThemeMode.
+	{
+		sint32 mode = (sint32)opts.mThemeMode;
+		if (write) {
+			key.setInt("UI: Theme mode", mode);
+		} else {
+			mode = key.getInt("UI: Theme mode", -1);
+			if (mode >= 0 && mode <= 2)
+				opts.mThemeMode = (ATUIThemeMode)mode;
+			else
+				opts.mThemeMode = opts.mbDarkTheme ? ATUIThemeMode::Dark : ATUIThemeMode::Light;
+		}
+	}
+
+	// UI window transparency (stored as percentage 20-100)
+	{
+		sint32 alphaPct = (sint32)(opts.mUIAlpha * 100.0f + 0.5f);
+		ATOptionsExchange(key, write, "UI: Window alpha percent", alphaPct);
+		if (!write)
+			opts.mUIAlpha = std::clamp(alphaPct / 100.0f, 0.2f, 1.0f);
+	}
 	ATOptionsExchange(key, write, "UI: Pause during menus", opts.mbPauseDuringMenu);
 	ATOptionsExchange(key, write, "UI: Launch with automatic profile", opts.mbLaunchAutoProfile);
 	ATOptionsExchangeEnum(key, write, "Media: Default write mode", opts.mDefaultWriteMode, (ATMediaWriteMode)(kATMediaWriteMode_All + 1));

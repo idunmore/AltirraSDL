@@ -2757,6 +2757,30 @@ __/Altirra/source/iderawimage.cpp.s:
 	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/__/Altirra/source/iderawimage.cpp.s
 .PHONY : __/Altirra/source/iderawimage.cpp.s
 
+__/Altirra/source/idevhdimage.o: __/Altirra/source/idevhdimage.cpp.o
+.PHONY : __/Altirra/source/idevhdimage.o
+
+# target to build an object file
+__/Altirra/source/idevhdimage.cpp.o:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/__/Altirra/source/idevhdimage.cpp.o
+.PHONY : __/Altirra/source/idevhdimage.cpp.o
+
+__/Altirra/source/idevhdimage.i: __/Altirra/source/idevhdimage.cpp.i
+.PHONY : __/Altirra/source/idevhdimage.i
+
+# target to preprocess a source file
+__/Altirra/source/idevhdimage.cpp.i:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/__/Altirra/source/idevhdimage.cpp.i
+.PHONY : __/Altirra/source/idevhdimage.cpp.i
+
+__/Altirra/source/idevhdimage.s: __/Altirra/source/idevhdimage.cpp.s
+.PHONY : __/Altirra/source/idevhdimage.s
+
+# target to generate assembly for a file
+__/Altirra/source/idevhdimage.cpp.s:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/__/Altirra/source/idevhdimage.cpp.s
+.PHONY : __/Altirra/source/idevhdimage.cpp.s
+
 __/Altirra/source/inputcontroller.o: __/Altirra/source/inputcontroller.cpp.o
 .PHONY : __/Altirra/source/inputcontroller.o
 
@@ -5253,6 +5277,30 @@ source/touch_layout.cpp.s:
 	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/touch_layout.cpp.s
 .PHONY : source/touch_layout.cpp.s
 
+source/ui_calibrate.o: source/ui_calibrate.cpp.o
+.PHONY : source/ui_calibrate.o
+
+# target to build an object file
+source/ui_calibrate.cpp.o:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/ui_calibrate.cpp.o
+.PHONY : source/ui_calibrate.cpp.o
+
+source/ui_calibrate.i: source/ui_calibrate.cpp.i
+.PHONY : source/ui_calibrate.i
+
+# target to preprocess a source file
+source/ui_calibrate.cpp.i:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/ui_calibrate.cpp.i
+.PHONY : source/ui_calibrate.cpp.i
+
+source/ui_calibrate.s: source/ui_calibrate.cpp.s
+.PHONY : source/ui_calibrate.s
+
+# target to generate assembly for a file
+source/ui_calibrate.cpp.s:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/ui_calibrate.cpp.s
+.PHONY : source/ui_calibrate.cpp.s
+
 source/ui_cartmapper.o: source/ui_cartmapper.cpp.o
 .PHONY : source/ui_cartmapper.o
 
@@ -5733,6 +5781,30 @@ source/ui_dbg_traceviewer_timeline.cpp.s:
 	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/ui_dbg_traceviewer_timeline.cpp.s
 .PHONY : source/ui_dbg_traceviewer_timeline.cpp.s
 
+source/ui_dbg_verifier.o: source/ui_dbg_verifier.cpp.o
+.PHONY : source/ui_dbg_verifier.o
+
+# target to build an object file
+source/ui_dbg_verifier.cpp.o:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/ui_dbg_verifier.cpp.o
+.PHONY : source/ui_dbg_verifier.cpp.o
+
+source/ui_dbg_verifier.i: source/ui_dbg_verifier.cpp.i
+.PHONY : source/ui_dbg_verifier.i
+
+# target to preprocess a source file
+source/ui_dbg_verifier.cpp.i:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/ui_dbg_verifier.cpp.i
+.PHONY : source/ui_dbg_verifier.cpp.i
+
+source/ui_dbg_verifier.s: source/ui_dbg_verifier.cpp.s
+.PHONY : source/ui_dbg_verifier.s
+
+# target to generate assembly for a file
+source/ui_dbg_verifier.cpp.s:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/ui_dbg_verifier.cpp.s
+.PHONY : source/ui_dbg_verifier.cpp.s
+
 source/ui_dbg_watch.o: source/ui_dbg_watch.cpp.o
 .PHONY : source/ui_dbg_watch.o
 
@@ -5877,6 +5949,30 @@ source/ui_display.cpp.s:
 	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/ui_display.cpp.s
 .PHONY : source/ui_display.cpp.s
 
+source/ui_emuerror.o: source/ui_emuerror.cpp.o
+.PHONY : source/ui_emuerror.o
+
+# target to build an object file
+source/ui_emuerror.cpp.o:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/ui_emuerror.cpp.o
+.PHONY : source/ui_emuerror.cpp.o
+
+source/ui_emuerror.i: source/ui_emuerror.cpp.i
+.PHONY : source/ui_emuerror.i
+
+# target to preprocess a source file
+source/ui_emuerror.cpp.i:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/ui_emuerror.cpp.i
+.PHONY : source/ui_emuerror.cpp.i
+
+source/ui_emuerror.s: source/ui_emuerror.cpp.s
+.PHONY : source/ui_emuerror.s
+
+# target to generate assembly for a file
+source/ui_emuerror.cpp.s:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/ui_emuerror.cpp.s
+.PHONY : source/ui_emuerror.cpp.s
+
 source/ui_firmware.o: source/ui_firmware.cpp.o
 .PHONY : source/ui_firmware.o
 
@@ -5900,6 +5996,30 @@ source/ui_firmware.s: source/ui_firmware.cpp.s
 source/ui_firmware.cpp.s:
 	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/ui_firmware.cpp.s
 .PHONY : source/ui_firmware.cpp.s
+
+source/ui_hud_customize.o: source/ui_hud_customize.cpp.o
+.PHONY : source/ui_hud_customize.o
+
+# target to build an object file
+source/ui_hud_customize.cpp.o:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/ui_hud_customize.cpp.o
+.PHONY : source/ui_hud_customize.cpp.o
+
+source/ui_hud_customize.i: source/ui_hud_customize.cpp.i
+.PHONY : source/ui_hud_customize.i
+
+# target to preprocess a source file
+source/ui_hud_customize.cpp.i:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/ui_hud_customize.cpp.i
+.PHONY : source/ui_hud_customize.cpp.i
+
+source/ui_hud_customize.s: source/ui_hud_customize.cpp.s
+.PHONY : source/ui_hud_customize.s
+
+# target to generate assembly for a file
+source/ui_hud_customize.cpp.s:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/ui_hud_customize.cpp.s
+.PHONY : source/ui_hud_customize.cpp.s
 
 source/ui_indicators.o: source/ui_indicators.cpp.o
 .PHONY : source/ui_indicators.o
@@ -6117,6 +6237,30 @@ source/ui_profiles.cpp.s:
 	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/ui_profiles.cpp.s
 .PHONY : source/ui_profiles.cpp.s
 
+source/ui_progress.o: source/ui_progress.cpp.o
+.PHONY : source/ui_progress.o
+
+# target to build an object file
+source/ui_progress.cpp.o:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/ui_progress.cpp.o
+.PHONY : source/ui_progress.cpp.o
+
+source/ui_progress.i: source/ui_progress.cpp.i
+.PHONY : source/ui_progress.i
+
+# target to preprocess a source file
+source/ui_progress.cpp.i:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/ui_progress.cpp.i
+.PHONY : source/ui_progress.cpp.i
+
+source/ui_progress.s: source/ui_progress.cpp.s
+.PHONY : source/ui_progress.s
+
+# target to generate assembly for a file
+source/ui_progress.cpp.s:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/ui_progress.cpp.s
+.PHONY : source/ui_progress.cpp.s
+
 source/ui_recording.o: source/ui_recording.cpp.o
 .PHONY : source/ui_recording.o
 
@@ -6260,6 +6404,30 @@ source/ui_testmode.s: source/ui_testmode.cpp.s
 source/ui_testmode.cpp.s:
 	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/ui_testmode.cpp.s
 .PHONY : source/ui_testmode.cpp.s
+
+source/ui_textselection.o: source/ui_textselection.cpp.o
+.PHONY : source/ui_textselection.o
+
+# target to build an object file
+source/ui_textselection.cpp.o:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/ui_textselection.cpp.o
+.PHONY : source/ui_textselection.cpp.o
+
+source/ui_textselection.i: source/ui_textselection.cpp.i
+.PHONY : source/ui_textselection.i
+
+# target to preprocess a source file
+source/ui_textselection.cpp.i:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/ui_textselection.cpp.i
+.PHONY : source/ui_textselection.cpp.i
+
+source/ui_textselection.s: source/ui_textselection.cpp.s
+.PHONY : source/ui_textselection.s
+
+# target to generate assembly for a file
+source/ui_textselection.cpp.s:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/ui_textselection.cpp.s
+.PHONY : source/ui_textselection.cpp.s
 
 source/ui_tool_tapeeditor.o: source/ui_tool_tapeeditor.cpp.o
 .PHONY : source/ui_tool_tapeeditor.o
@@ -6836,6 +7004,9 @@ help:
 	@echo "... __/Altirra/source/iderawimage.o"
 	@echo "... __/Altirra/source/iderawimage.i"
 	@echo "... __/Altirra/source/iderawimage.s"
+	@echo "... __/Altirra/source/idevhdimage.o"
+	@echo "... __/Altirra/source/idevhdimage.i"
+	@echo "... __/Altirra/source/idevhdimage.s"
 	@echo "... __/Altirra/source/inputcontroller.o"
 	@echo "... __/Altirra/source/inputcontroller.i"
 	@echo "... __/Altirra/source/inputcontroller.s"
@@ -7148,6 +7319,9 @@ help:
 	@echo "... source/touch_layout.o"
 	@echo "... source/touch_layout.i"
 	@echo "... source/touch_layout.s"
+	@echo "... source/ui_calibrate.o"
+	@echo "... source/ui_calibrate.i"
+	@echo "... source/ui_calibrate.s"
 	@echo "... source/ui_cartmapper.o"
 	@echo "... source/ui_cartmapper.i"
 	@echo "... source/ui_cartmapper.s"
@@ -7208,6 +7382,9 @@ help:
 	@echo "... source/ui_dbg_traceviewer_timeline.o"
 	@echo "... source/ui_dbg_traceviewer_timeline.i"
 	@echo "... source/ui_dbg_traceviewer_timeline.s"
+	@echo "... source/ui_dbg_verifier.o"
+	@echo "... source/ui_dbg_verifier.i"
+	@echo "... source/ui_dbg_verifier.s"
 	@echo "... source/ui_dbg_watch.o"
 	@echo "... source/ui_dbg_watch.i"
 	@echo "... source/ui_dbg_watch.s"
@@ -7226,9 +7403,15 @@ help:
 	@echo "... source/ui_display.o"
 	@echo "... source/ui_display.i"
 	@echo "... source/ui_display.s"
+	@echo "... source/ui_emuerror.o"
+	@echo "... source/ui_emuerror.i"
+	@echo "... source/ui_emuerror.s"
 	@echo "... source/ui_firmware.o"
 	@echo "... source/ui_firmware.i"
 	@echo "... source/ui_firmware.s"
+	@echo "... source/ui_hud_customize.o"
+	@echo "... source/ui_hud_customize.i"
+	@echo "... source/ui_hud_customize.s"
 	@echo "... source/ui_indicators.o"
 	@echo "... source/ui_indicators.i"
 	@echo "... source/ui_indicators.s"
@@ -7256,6 +7439,9 @@ help:
 	@echo "... source/ui_profiles.o"
 	@echo "... source/ui_profiles.i"
 	@echo "... source/ui_profiles.s"
+	@echo "... source/ui_progress.o"
+	@echo "... source/ui_progress.i"
+	@echo "... source/ui_progress.s"
 	@echo "... source/ui_recording.o"
 	@echo "... source/ui_recording.i"
 	@echo "... source/ui_recording.s"
@@ -7274,6 +7460,9 @@ help:
 	@echo "... source/ui_testmode.o"
 	@echo "... source/ui_testmode.i"
 	@echo "... source/ui_testmode.s"
+	@echo "... source/ui_textselection.o"
+	@echo "... source/ui_textselection.i"
+	@echo "... source/ui_textselection.s"
 	@echo "... source/ui_tool_tapeeditor.o"
 	@echo "... source/ui_tool_tapeeditor.i"
 	@echo "... source/ui_tool_tapeeditor.s"

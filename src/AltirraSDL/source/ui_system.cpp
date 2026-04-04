@@ -2254,6 +2254,36 @@ static void RenderUICategory(ATSimulator &) {
 	}
 
 	ImGui::SeparatorText("Appearance");
+
+	{
+		static const char *themeLabels[] = { "Use system setting", "Light", "Dark" };
+		int themeIdx = (int)g_ATOptions.mThemeMode;
+		if (ImGui::Combo("Theme", &themeIdx, themeLabels, 3)) {
+			ATOptions prev(g_ATOptions);
+			g_ATOptions.mThemeMode = (ATUIThemeMode)themeIdx;
+			if (g_ATOptions != prev) {
+				g_ATOptions.mbDirty = true;
+				ATOptionsRunUpdateCallbacks(&prev);
+				ATOptionsSave();
+				ATUIApplyTheme();
+			}
+		}
+	}
+
+	{
+		int alphaPct = (int)(g_ATOptions.mUIAlpha * 100.0f + 0.5f);
+		if (ImGui::SliderInt("Window opacity (%)", &alphaPct, 20, 100)) {
+			ATOptions prev(g_ATOptions);
+			g_ATOptions.mUIAlpha = alphaPct / 100.0f;
+			if (g_ATOptions != prev) {
+				g_ATOptions.mbDirty = true;
+				ATOptionsRunUpdateCallbacks(&prev);
+				ATOptionsSave();
+				ATUIApplyTheme();
+			}
+		}
+	}
+
 	int scale = g_ATOptions.mThemeScale;
 	if (scale <= 0) scale = 100;
 	if (ImGui::SliderInt("UI scale (%)", &scale, 50, 300)) {

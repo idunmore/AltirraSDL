@@ -33,6 +33,9 @@
 #include "ui_main.h"
 #include "ui_debugger.h"
 #include "ui_testmode.h"
+#include "ui_textselection.h"
+#include "ui_progress.h"
+#include "ui_emuerror.h"
 
 #include "simulator.h"
 #include "uikeyboard.h"
@@ -48,6 +51,7 @@
 #include "firmwaremanager.h"
 #include "settings.h"
 #include "uitypes.h"
+#include "uirender.h"
 
 #include <at/atcore/constants.h>
 #include <algorithm>
@@ -157,6 +161,30 @@ float ATUIGetMeasuredFPS() {
 }
 
 // =========================================================================
+// Pan/Zoom tool state
+// =========================================================================
+
+static bool g_panZoomActive = false;
+static bool g_panZoomDragging = false;
+static bool g_panZoomZooming = false;  // Ctrl+LMB zoom mode
+static float g_panZoomLastX = 0, g_panZoomLastY = 0;
+
+bool ATUIIsPanZoomToolActive() { return g_panZoomActive; }
+
+void ATUISetPanZoomToolActive(bool active) {
+	g_panZoomActive = active;
+	g_panZoomDragging = false;
+	g_panZoomZooming = false;
+	IATUIRenderer *r = g_sim.GetUIRenderer();
+	if (r) {
+		if (active)
+			r->SetStatusMessage(L"Pan/Zoom: LMB to pan, Ctrl+LMB or wheel to zoom, Esc to exit");
+		else
+			r->SetStatusMessage(nullptr);
+	}
+}
+
+// =========================================================================
 // Event handling
 // =========================================================================
 
@@ -255,6 +283,12 @@ static void HandleEvents() {
 			// Right-Alt releases mouse capture (matches Windows behavior)
 			if (ATUIIsMouseCaptured() && ev.key.scancode == SDL_SCANCODE_RALT) {
 				ATUIReleaseMouse();
+				break;
+			}
+
+			// ESC exits Pan/Zoom tool
+			if (g_panZoomActive && ev.key.key == SDLK_ESCAPE && !ATUIWantCaptureKeyboard()) {
+				ATUISetPanZoomToolActive(false);
 				break;
 			}
 
@@ -394,6 +428,12 @@ static void HandleEvents() {
 							ATUIPasteText();
 						else if (ev.key.key == SDLK_M)             // Edit.CopyFrame (Alt+Shift+M)
 							g_copyFrameRequested = true;
+						else if (ev.key.key == SDLK_C)             // Edit.CopyText (Alt+Shift+C)
+							ATUITextCopy(ATTextCopyMode::ASCII);
+						else if (ev.key.key == SDLK_A)             // Edit.SelectAll (Alt+Shift+A)
+							ATUITextSelectAll();
+						else if (ev.key.key == SDLK_D)             // Edit.Deselect (Alt+Shift+D)
+							ATUITextDeselect();
 						else
 							dispHandled = false;
 					} else
@@ -432,6 +472,35 @@ static void HandleEvents() {
 			break;
 
 		case SDL_EVENT_MOUSE_MOTION:
+			// Pan/Zoom tool: handle drag
+			if (g_panZoomActive && !ATUIWantCaptureMouse() && (g_panZoomDragging || g_panZoomZooming)) {
+				float dx = ev.motion.x - g_panZoomLastX;
+				float dy = ev.motion.y - g_panZoomLastY;
+				g_panZoomLastX = ev.motion.x;
+				g_panZoomLastY = ev.motion.y;
+
+				if (g_panZoomZooming) {
+					// Ctrl+LMB drag: vertical motion zooms
+					float oldZoom = ATUIGetDisplayZoom();
+					float newZoom = oldZoom * powf(2.0f, -dy / 100.0f);
+					newZoom = std::clamp(newZoom, 0.01f, 100.0f);
+					ATUISetDisplayZoom(newZoom);
+				} else {
+					// LMB drag: pan (use display rect size for consistent feel,
+					// matching Windows ATUIDisplayToolPanAndZoom which uses outputRect)
+					float dw = g_displayRect.w;
+					float dh = g_displayRect.h;
+					if (dw > 0 && dh > 0) {
+						vdfloat2 pan = ATUIGetDisplayPanOffset();
+						pan.x -= dx / dw;
+						pan.y -= dy / dh;
+						pan.x = std::clamp(pan.x, -10.0f, 10.0f);
+						pan.y = std::clamp(pan.y, -10.0f, 10.0f);
+						ATUISetDisplayPanOffset(pan);
+					}
+				}
+				break;
+			}
 			if (!ATUIWantCaptureMouse()) {
 				ATInputManager *im = g_sim.GetInputManager();
 				// Forward motion when captured, or in absolute mode without
@@ -450,6 +519,21 @@ static void HandleEvents() {
 			break;
 
 		case SDL_EVENT_MOUSE_BUTTON_DOWN:
+			// Pan/Zoom tool: start drag
+			if (g_panZoomActive && !ATUIWantCaptureMouse() &&
+				ev.button.button == SDL_BUTTON_LEFT) {
+				g_panZoomLastX = ev.button.x;
+				g_panZoomLastY = ev.button.y;
+				SDL_Keymod mod = SDL_GetModState();
+				if (mod & SDL_KMOD_CTRL) {
+					g_panZoomZooming = true;
+					g_panZoomDragging = false;
+				} else {
+					g_panZoomDragging = true;
+					g_panZoomZooming = false;
+				}
+				break;
+			}
 			if (!ATUIWantCaptureMouse()) {
 				// Middle-click releases mouse capture when MMB isn't mapped
 				// as an input (matches Windows behavior).
@@ -494,6 +578,12 @@ static void HandleEvents() {
 			break;
 
 		case SDL_EVENT_MOUSE_BUTTON_UP:
+			// Pan/Zoom tool: end drag
+			if (g_panZoomActive && ev.button.button == SDL_BUTTON_LEFT) {
+				g_panZoomDragging = false;
+				g_panZoomZooming = false;
+				break;
+			}
 			if (!ATUIWantCaptureMouse()) {
 				ATInputManager *im = g_sim.GetInputManager();
 				if (im && (ATUIIsMouseCaptured() || im->IsMouseAbsoluteMode())) {
@@ -512,6 +602,43 @@ static void HandleEvents() {
 			break;
 
 		case SDL_EVENT_MOUSE_WHEEL:
+			// Pan/Zoom tool: wheel to zoom (pinned to cursor)
+			if (g_panZoomActive && !ATUIWantCaptureMouse() && ev.wheel.y != 0) {
+				float oldZoom = ATUIGetDisplayZoom();
+				float newZoom = oldZoom * powf(2.0f, ev.wheel.y / 4.0f);
+				newZoom = std::clamp(newZoom, 0.01f, 100.0f);
+
+				// Pinned zoom: keep the point under cursor stationary.
+				// The display rect uses: left = w*(relOrigin.x - 1) + vW/2
+				// where relOrigin = {0.5,0.5} - pan, w = baseW*zoom.
+				// For cursor at (sx,sy), its fractional position in the display:
+				//   frac = (sx - left) / w = (sx - vW/2)/w - relOrigin.x + 1
+				//        = (sx - vW/2)/w + 0.5 + pan.x
+				// After zoom change we need: same frac at same sx, so:
+				//   newPan.x = pan.x + (sx - vW/2)*(1/oldW - 1/newW)
+				// Since oldW = g_displayRect.w and newW = oldW * (newZoom/oldZoom):
+				float mx, my;
+				SDL_GetMouseState(&mx, &my);
+				int winW, winH;
+				SDL_GetWindowSize(g_pWindow, &winW, &winH);
+				float dw = g_displayRect.w;
+				float dh = g_displayRect.h;
+				if (dw > 0 && dh > 0 && winW > 0 && winH > 0) {
+					float zoomRatio = newZoom / oldZoom;
+					float cxOff = mx - winW * 0.5f;  // cursor offset from viewport center
+					float cyOff = my - winH * 0.5f;
+
+					vdfloat2 pan = ATUIGetDisplayPanOffset();
+					pan.x += (cxOff / dw) * (1.0f - 1.0f / zoomRatio);
+					pan.y += (cyOff / dh) * (1.0f - 1.0f / zoomRatio);
+					pan.x = std::clamp(pan.x, -10.0f, 10.0f);
+					pan.y = std::clamp(pan.y, -10.0f, 10.0f);
+					ATUISetDisplayPanOffset(pan);
+				}
+
+				ATUISetDisplayZoom(newZoom);
+				break;
+			}
 			// Mouse wheel is always forwarded to input manager (matches
 			// Windows which doesn't require capture for wheel events).
 			if (!ATUIWantCaptureMouse()) {
@@ -526,6 +653,9 @@ static void HandleEvents() {
 			break;
 
 		case SDL_EVENT_WINDOW_MOUSE_LEAVE:
+			// Release pan/zoom drag on mouse leave
+			g_panZoomDragging = false;
+			g_panZoomZooming = false;
 			// Reset virtual stick to center when mouse leaves window
 			// (matches Windows OnMouseLeave)
 			{
@@ -594,6 +724,9 @@ static void HandleEvents() {
 
 		case SDL_EVENT_WINDOW_FOCUS_LOST:
 			g_winActive = false;
+			// Release pan/zoom drag state to prevent stuck drag
+			g_panZoomDragging = false;
+			g_panZoomZooming = false;
 			// Release all held keys/buttons to prevent stuck input
 			ATInputSDL3_ReleaseAllKeys();
 			// Release held mouse buttons in input manager
@@ -1110,6 +1243,9 @@ int main(int argc, char *argv[]) {
 		return 1;
 	}
 
+	// Register ImGui progress handler (replaces Windows ATUIInitProgressDialog)
+	ATUIInitProgressSDL3();
+
 	// Initialize test mode automation (no-op if --test-mode not passed)
 	if (!ATTestModeInit()) {
 		fprintf(stderr, "[AltirraSDL] Failed to initialize test mode\n");
@@ -1267,6 +1403,10 @@ int main(int argc, char *argv[]) {
 		ATInitDebugger();
 	}
 
+	// Register emulation error handler (matches Windows main.cpp:4007).
+	// Must be after debugger init so OnDebuggerOpen event is available.
+	ATInitEmuErrorHandlerSDL3(&g_sim);
+
 	// Initialize compatibility database (matches Windows main.cpp:3933).
 	// The internal DB is embedded as a Windows resource (IDR_COMPATDB) which
 	// is not available in SDL3 builds — ATLockResource returns nullptr and
@@ -1423,6 +1563,10 @@ int main(int argc, char *argv[]) {
 		ATCompatShutdown();
 	}
 
+	// Shut down emulation error handler before debugger (must unsubscribe
+	// from OnDebuggerOpen before debugger is destroyed).
+	ATShutdownEmuErrorHandlerSDL3();
+
 	// Shut down debugger before simulator (matches Windows cleanup order)
 	extern void ATShutdownDebugger();
 	ATShutdownDebugger();
@@ -1438,6 +1582,7 @@ int main(int argc, char *argv[]) {
 	extern void ATSocketShutdown();
 	ATSocketShutdown();
 
+	ATUIShutdownProgressSDL3();
 	ATTouchControls_Shutdown();
 	ATTestModeShutdown();
 	ATUIShutdown();

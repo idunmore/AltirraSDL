@@ -14,6 +14,7 @@
 #include <at/atcore/propertyset.h>
 #include <at/atcore/device.h>
 #include "devicemanager.h"
+#include "idevhdimage.h"
 #include "ui_main.h"
 #include "ui_devconfig.h"
 
@@ -669,10 +670,291 @@ bool RenderPocketModemConfig(ATPropertySet& props, ATDeviceConfigState& st) {
 }
 
 // =========================================================================
+// Create VHD Image dialog
+// =========================================================================
+
+struct CreateVHDState {
+	bool open = false;
+	bool justOpened = false;
+	char pathBuf[1024] = {};
+	char parentPathBuf[1024] = {};
+	int diskType = 1;		// 0=Fixed, 1=Dynamic, 2=Differencing
+	int sizeInMB = 8;
+	int sizeInSectors = 8 * 2048;
+	int geometryMode = 0;	// 0=Auto, 1=Manual
+	int heads = 15;
+	int spt = 63;
+	bool inhibitSizeSync = false;
+	bool createdOK = false;
+	uint32 resultSectorCount = 0;
+	char resultPath[1024] = {};
+	char errorMsg[512] = {};
+	bool showError = false;
+	bool showSuccess = false;
+};
+
+static CreateVHDState s_createVHD;
+
+static void CreateVHDUpdateGeometry(CreateVHDState& st) {
+	// VHD spec geometry calculation (matches Windows ATUIDialogCreateVHDImage2::UpdateGeometry)
+	uint32 secCount = std::min<uint32>((uint32)st.sizeInSectors, 65535U * 16 * 255);
+
+	if (secCount >= 65535U * 16 * 63) {
+		st.spt = 255;
+		st.heads = 16;
+	} else {
+		st.spt = 17;
+
+		uint32 tracks = secCount / 17;
+		uint32 heads = (tracks + 1023) >> 10;
+
+		if (heads < 4)
+			heads = 4;
+
+		if (tracks >= (heads * 1024) || heads > 16) {
+			st.spt = 31;
+			heads = 16;
+			tracks = secCount / 31;
+		}
+
+		if (tracks >= (heads * 1024)) {
+			st.spt = 63;
+			heads = 16;
+		}
+
+		st.heads = (int)heads;
+	}
+}
+
+// Ensure path has .vhd extension (matches Windows save dialog default extension behavior)
+static void EnsureVHDExtension(char *buf, size_t bufSize) {
+	size_t len = strlen(buf);
+	if (len == 0)
+		return;
+
+	// Check if it already ends with .vhd (case-insensitive)
+	if (len >= 4) {
+		const char *ext = buf + len - 4;
+		if (ext[0] == '.' &&
+			(ext[1] == 'v' || ext[1] == 'V') &&
+			(ext[2] == 'h' || ext[2] == 'H') &&
+			(ext[3] == 'd' || ext[3] == 'D'))
+			return;
+	}
+
+	// Append .vhd if there's no extension at all (no dot after last separator)
+	const char *lastSep = strrchr(buf, '/');
+	const char *lastDot = strrchr(buf, '.');
+	if (!lastDot || (lastSep && lastDot < lastSep)) {
+		if (len + 4 < bufSize) {
+			strcat(buf, ".vhd");
+		}
+	}
+}
+
+// Renders the Create VHD dialog. Returns true when a VHD was successfully created.
+static bool RenderCreateVHDDialog(CreateVHDState& st) {
+	if (!st.open)
+		return false;
+
+	bool result = false;
+
+	ImGui::SetNextWindowSize(ImVec2(480, 0), ImGuiCond_Appearing);
+	ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(),
+		ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+
+	if (ImGui::Begin("Create VHD Image", &st.open,
+		ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoDocking))
+	{
+		// Path
+		if (InputTextWithBrowse("Path", st.pathBuf, sizeof(st.pathBuf), "browseVHDPath")) {
+			static const SDL_DialogFileFilter kVHDFilters[] = {
+				{ "Virtual hard disk image", "vhd" },
+				{ "All files", "*" },
+			};
+			DevBrowseForSaveFile(st.pathBuf, sizeof(st.pathBuf), kVHDFilters, 1);
+		}
+
+		// Type
+		ImGui::SeparatorText("Type");
+		ImGui::RadioButton("Fixed size disk image", &st.diskType, 0);
+		ImGui::RadioButton("Dynamic disk image", &st.diskType, 1);
+		ImGui::RadioButton("Differencing disk image", &st.diskType, 2);
+
+		bool isDifferencing = (st.diskType == 2);
+
+		// Parent path (only for differencing — matches Windows UpdateEnables)
+		if (isDifferencing) {
+			ImGui::SeparatorText("Parent");
+			if (InputTextWithBrowse("Parent path", st.parentPathBuf, sizeof(st.parentPathBuf), "browseVHDParent")) {
+				static const SDL_DialogFileFilter kVHDFilters[] = {
+					{ "Virtual hard disk image", "vhd" },
+					{ "All files", "*" },
+				};
+				DevBrowseForFile(st.parentPathBuf, sizeof(st.parentPathBuf), kVHDFilters, 1);
+			}
+		}
+
+		// Size (disabled for differencing disks — inherits from parent)
+		if (!isDifferencing) {
+			ImGui::SeparatorText("Size");
+
+			if (ImGui::InputInt("Size (MB)", &st.sizeInMB)) {
+				st.sizeInMB = std::clamp(st.sizeInMB, 1, 4095);
+				if (!st.inhibitSizeSync) {
+					st.inhibitSizeSync = true;
+					st.sizeInSectors = st.sizeInMB * 2048;
+					st.inhibitSizeSync = false;
+				}
+				if (st.geometryMode == 0)
+					CreateVHDUpdateGeometry(st);
+			}
+
+			if (ImGui::InputInt("Size (sectors)", &st.sizeInSectors)) {
+				st.sizeInSectors = std::clamp(st.sizeInSectors, 2048, (int)0x7FFFFFFEU);
+				if (!st.inhibitSizeSync) {
+					st.inhibitSizeSync = true;
+					st.sizeInMB = st.sizeInSectors >> 11;
+					st.inhibitSizeSync = false;
+				}
+				if (st.geometryMode == 0)
+					CreateVHDUpdateGeometry(st);
+			}
+
+			// Geometry
+			ImGui::SeparatorText("Geometry");
+			ImGui::RadioButton("Auto", &st.geometryMode, 0);
+			ImGui::SameLine();
+			ImGui::RadioButton("Manual", &st.geometryMode, 1);
+
+			if (st.geometryMode == 0) {
+				// Show computed geometry as read-only
+				ImGui::BeginDisabled();
+				ImGui::InputInt("Heads", &st.heads);
+				ImGui::InputInt("Sectors per track", &st.spt);
+				ImGui::EndDisabled();
+			} else {
+				ImGui::InputInt("Heads", &st.heads);
+				st.heads = std::clamp(st.heads, 1, 16);
+				ImGui::InputInt("Sectors per track", &st.spt);
+				st.spt = std::clamp(st.spt, 1, 255);
+			}
+		}
+
+		// OK / Cancel
+		ImGui::Separator();
+		if (ImGui::Button("OK", ImVec2(120, 0))) {
+			if (st.pathBuf[0] == 0) {
+				snprintf(st.errorMsg, sizeof(st.errorMsg), "Please specify a path for the VHD image.");
+				st.showError = true;
+			} else if (isDifferencing && st.parentPathBuf[0] == 0) {
+				snprintf(st.errorMsg, sizeof(st.errorMsg), "Parent path is needed for a differencing disk image.");
+				st.showError = true;
+			} else {
+				// Ensure .vhd extension
+				EnsureVHDExtension(st.pathBuf, sizeof(st.pathBuf));
+
+				try {
+					ATIDEVHDImage parentVhd;
+					ATIDEVHDImage vhd;
+
+					VDStringW vhdPath(U8ToW(st.pathBuf));
+
+					if (isDifferencing) {
+						VDStringW parentPath(U8ToW(st.parentPathBuf));
+						parentVhd.Init(parentPath.c_str(), false, true);
+					}
+
+					bool dynamic = (st.diskType != 0);
+
+					if (st.geometryMode == 0)
+						CreateVHDUpdateGeometry(st);
+
+					vhd.InitNew(vhdPath.c_str(),
+						(uint8)st.heads, (uint8)st.spt,
+						(uint32)st.sizeInSectors,
+						dynamic,
+						isDifferencing ? &parentVhd : nullptr);
+					vhd.Flush();
+
+					st.resultSectorCount = (uint32)st.sizeInSectors;
+					snprintf(st.resultPath, sizeof(st.resultPath), "%s", st.pathBuf);
+					st.createdOK = true;
+					st.showSuccess = true;
+				} catch(const MyUserAbortError&) {
+					// User cancelled progress dialog (e.g. during fixed disk creation) — silent
+				} catch(const MyError& e) {
+					snprintf(st.errorMsg, sizeof(st.errorMsg), "VHD creation failed: %s", e.c_str());
+					st.showError = true;
+				}
+			}
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+			st.open = false;
+		}
+
+		// Error popup
+		if (st.showError) {
+			ImGui::OpenPopup("VHD Error");
+			st.showError = false;
+		}
+		if (ImGui::BeginPopupModal("VHD Error", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
+			ImGui::TextWrapped("%s", st.errorMsg);
+			if (ImGui::Button("OK", ImVec2(120, 0)))
+				ImGui::CloseCurrentPopup();
+			ImGui::EndPopup();
+		}
+
+		// Success popup
+		if (st.showSuccess) {
+			ImGui::OpenPopup("VHD Created");
+			st.showSuccess = false;
+		}
+		if (ImGui::BeginPopupModal("VHD Created", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
+			ImGui::Text("VHD creation was successful.");
+			if (ImGui::Button("OK", ImVec2(120, 0))) {
+				ImGui::CloseCurrentPopup();
+				st.open = false;
+				result = true;
+			}
+			ImGui::EndPopup();
+		}
+	}
+	ImGui::End();
+
+	return result;
+}
+
+// =========================================================================
+// Hard Disk config — helper to compute CHS from sector count
+// (matches Windows ATUIDialogDeviceHardDisk::UpdateCapacityBySectorCount)
+// =========================================================================
+
+static void HDComputeCHSFromSectors(uint64 sectors, int& cylinders, int& heads, int& spt) {
+	// Use fixed heads=15, spt=63 and derive cylinders (matches Windows)
+	spt = 63;
+	heads = 15;
+	cylinders = 1;
+
+	if (sectors > UINT32_MAX)
+		sectors = UINT32_MAX;
+
+	if (sectors)
+		cylinders = (int)(sectors / ((uint32)heads * (uint32)spt));
+}
+
+// =========================================================================
 // Hard Disk — path + CHS geometry + options
+// Matches Windows IDD_DEVICE_HARDDISK / ATUIDialogDeviceHardDisk
 // =========================================================================
 
 bool RenderHardDiskConfig(ATPropertySet& props, ATDeviceConfigState& st) {
+	// intVal[0..2] = cylinders, heads, sectors_per_track
+	// intVal[3..4] = resulting size (MB), LBA sector count (display only)
+	// check[0]     = read only
+	// combo[0]     = device speed: 0=fast(solid-state), 1=slow(spinning)
+	// addrBuf      = last probed VHD path (for auto-geometry detection)
 	if (st.justOpened) {
 		const wchar_t *path = props.GetString("path", L"");
 		snprintf(st.pathBuf, sizeof(st.pathBuf), "%s", WToU8(path).c_str());
@@ -680,7 +962,33 @@ bool RenderHardDiskConfig(ATPropertySet& props, ATDeviceConfigState& st) {
 		st.intVal[1] = (int)props.GetUint32("heads", 0);
 		st.intVal[2] = (int)props.GetUint32("sectors_per_track", 0);
 		st.check[0] = !props.GetBool("write_enabled", false); // inverted: readonly
-		st.check[1] = props.GetBool("solid_state", false);
+		st.combo[0] = props.GetBool("solid_state", false) ? 0 : 1;
+
+		// Initialize addrBuf to current path so VHD auto-probe doesn't
+		// overwrite stored geometry on dialog open (matches Windows: auto-
+		// detect only runs on explicit browse, not on dialog open).
+		snprintf(st.addrBuf, sizeof(st.addrBuf), "%s", st.pathBuf);
+
+		// Compute initial size display from CHS or stored sector count
+		if (st.intVal[0] > 0 && st.intVal[1] > 0 && st.intVal[2] > 0) {
+			uint64 sectors = (uint64)st.intVal[0] * (uint64)st.intVal[1] * (uint64)st.intVal[2];
+			st.intVal[3] = (int)(sectors >> 11);
+			st.intVal[4] = (int)std::min<uint64>(sectors, INT_MAX);
+		} else {
+			uint32 totalSectors = props.GetUint32("sectors", 0);
+			if (totalSectors) {
+				int c, h, s;
+				HDComputeCHSFromSectors(totalSectors, c, h, s);
+				st.intVal[0] = c;
+				st.intVal[1] = h;
+				st.intVal[2] = s;
+				st.intVal[3] = (int)(totalSectors >> 11);
+				st.intVal[4] = (int)totalSectors;
+			} else {
+				st.intVal[3] = 0;
+				st.intVal[4] = 0;
+			}
+		}
 	}
 
 	if (InputTextWithBrowse("Image path", st.pathBuf, sizeof(st.pathBuf), "browseHD")) {
@@ -691,14 +999,97 @@ bool RenderHardDiskConfig(ATPropertySet& props, ATDeviceConfigState& st) {
 		DevBrowseForFile(st.pathBuf, sizeof(st.pathBuf), kHDFilters, 2);
 	}
 
-	ImGui::SeparatorText("CHS Geometry (0 = auto-detect)");
-	ImGui::InputInt("Cylinders", &st.intVal[0]);
-	ImGui::InputInt("Heads", &st.intVal[1]);
-	ImGui::InputInt("Sectors/track", &st.intVal[2]);
+	// When the path changes to a .vhd file, try to read geometry from it
+	// (matches Windows OnBrowseImage behavior).
+	// Use addrBuf to store the last probed path — re-probe only when path changes.
+	if (st.pathBuf[0]) {
+		size_t plen = strlen(st.pathBuf);
+		if (plen >= 4 && strcasecmp(st.pathBuf + plen - 4, ".vhd") == 0) {
+			if (strcmp(st.pathBuf, st.addrBuf) != 0) {
+				snprintf(st.addrBuf, sizeof(st.addrBuf), "%s", st.pathBuf);
+				try {
+					vdrefptr<ATIDEVHDImage> vhdImage(new ATIDEVHDImage);
+					VDStringW wpath(U8ToW(st.pathBuf));
+					vhdImage->Init(wpath.c_str(), false, false);
+					uint32 secCount = vhdImage->GetSectorCount();
+					int c, h, s;
+					HDComputeCHSFromSectors(secCount, c, h, s);
+					st.intVal[0] = c;
+					st.intVal[1] = h;
+					st.intVal[2] = s;
+					st.intVal[3] = (int)(secCount >> 11);
+					st.intVal[4] = (int)secCount;
+				} catch(const MyError&) {
+					// Not a valid VHD or not found — don't auto-fill
+				}
+			}
+		}
+	}
 
-	ImGui::SeparatorText("Options");
+	if (ImGui::Button("Create VHD Image...")) {
+		s_createVHD = CreateVHDState{};
+		s_createVHD.open = true;
+		s_createVHD.justOpened = true;
+		CreateVHDUpdateGeometry(s_createVHD);
+	}
+
+	// Render the Create VHD dialog (if open) and apply results
+	if (RenderCreateVHDDialog(s_createVHD)) {
+		// VHD was created — fill in path and geometry from sector count
+		// (matches Windows OnCreateVHD -> UpdateCapacityBySectorCount)
+		snprintf(st.pathBuf, sizeof(st.pathBuf), "%s", s_createVHD.resultPath);
+		uint32 secCount = s_createVHD.resultSectorCount;
+		int c, h, s;
+		HDComputeCHSFromSectors(secCount, c, h, s);
+		st.intVal[0] = c;
+		st.intVal[1] = h;
+		st.intVal[2] = s;
+		st.intVal[3] = (int)(secCount >> 11);
+		st.intVal[4] = (int)secCount;
+		snprintf(st.addrBuf, sizeof(st.addrBuf), "%s", st.pathBuf); // mark as already probed
+	}
+
+	ImGui::SeparatorText("Geometry");
+
+	// Live CHS <-> size sync (matches Windows UpdateCapacityByCHS)
+	bool chsChanged = false;
+	chsChanged |= ImGui::InputInt("Cylinders", &st.intVal[0]);
+	chsChanged |= ImGui::InputInt("Heads", &st.intVal[1]);
+	chsChanged |= ImGui::InputInt("Sectors/track", &st.intVal[2]);
+
+	if (chsChanged) {
+		st.intVal[0] = std::max(st.intVal[0], 0);
+		st.intVal[1] = std::clamp(st.intVal[1], 0, 16);
+		st.intVal[2] = std::clamp(st.intVal[2], 0, 255);
+
+		if (st.intVal[0] > 0 && st.intVal[1] > 0 && st.intVal[2] > 0) {
+			uint64 sectors = (uint64)st.intVal[0] * (uint64)st.intVal[1] * (uint64)st.intVal[2];
+			if (sectors <= UINT32_MAX) {
+				st.intVal[3] = (int)(sectors >> 11);
+				st.intVal[4] = (int)sectors;
+			} else {
+				st.intVal[3] = 0;
+				st.intVal[4] = 0;
+			}
+		} else {
+			st.intVal[3] = 0;
+			st.intVal[4] = 0;
+		}
+	}
+
+	// Resulting size display (matches Windows IDC_IDE_SIZE / IDC_SECTOR_COUNT)
+	ImGui::BeginDisabled();
+	ImGui::InputInt("Resulting size (MB)", &st.intVal[3]);
+	ImGui::InputInt("LBA sector count", &st.intVal[4]);
+	ImGui::EndDisabled();
+
+	ImGui::SeparatorText("Device speed");
+	ImGui::RadioButton("Solid-state (fast)", &st.combo[0], 0);
+	ImGui::SameLine();
+	ImGui::RadioButton("Spinning platter (slow)", &st.combo[0], 1);
+
+	ImGui::SeparatorText("More options");
 	ImGui::Checkbox("Read only", &st.check[0]);
-	ImGui::Checkbox("Solid state (SSD)", &st.check[1]);
 
 	ImGui::Separator();
 	if (ImGui::Button("OK", ImVec2(120, 0))) {
@@ -708,19 +1099,15 @@ bool RenderHardDiskConfig(ATPropertySet& props, ATDeviceConfigState& st) {
 		}
 		props.Clear();
 		props.SetString("path", U8ToW(st.pathBuf).c_str());
-		if (st.intVal[0] > 0)
-			props.SetUint32("cylinders", (uint32)std::clamp(st.intVal[0], 0, 16777216));
-		if (st.intVal[1] > 0)
-			props.SetUint32("heads", (uint32)std::clamp(st.intVal[1], 0, 16));
-		if (st.intVal[2] > 0)
-			props.SetUint32("sectors_per_track", (uint32)std::clamp(st.intVal[2], 0, 255));
-		props.SetBool("write_enabled", !st.check[0]);
-		if (st.check[1]) props.SetBool("solid_state", true);
-		// Compute total sector count from CHS geometry (matches Windows)
 		if (st.intVal[0] > 0 && st.intVal[1] > 0 && st.intVal[2] > 0) {
+			props.SetUint32("cylinders", (uint32)std::clamp(st.intVal[0], 0, 16777216));
+			props.SetUint32("heads", (uint32)std::clamp(st.intVal[1], 0, 16));
+			props.SetUint32("sectors_per_track", (uint32)std::clamp(st.intVal[2], 0, 255));
 			uint32 sectors = (uint32)st.intVal[0] * (uint32)st.intVal[1] * (uint32)st.intVal[2];
 			props.SetUint32("sectors", sectors);
 		}
+		props.SetBool("write_enabled", !st.check[0]);
+		props.SetBool("solid_state", st.combo[0] == 0);
 		return true;
 	}
 	ImGui::SameLine();

@@ -52,7 +52,11 @@ if(WIN32)
         source/w32assist.cpp
     )
 else()
-    find_package(SDL3 REQUIRED)
+    # On Android, SDL3 is added via add_subdirectory() in the root CMakeLists.txt,
+    # so the SDL3::SDL3 target already exists — no find_package needed.
+    if(NOT ANDROID)
+        find_package(SDL3 REQUIRED)
+    endif()
     set(SYSTEM_PLATFORM_SOURCES
         source/date_sdl3.cpp
         source/debug_sdl3.cpp

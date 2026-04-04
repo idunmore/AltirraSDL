@@ -19,6 +19,7 @@
 #include <stdafx.h>
 
 #if defined(VD_CPU_ARM64)
+#include <intrin.h>
 #include <arm_neon.h>
 
 void ATArtifactNTSCAccum_NEON(void *rout, const void *table, const void *src, uint32 count) {

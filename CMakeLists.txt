@@ -55,7 +55,22 @@ endif()
 # SDL3 — required when the SDL3 frontend is enabled, or on non-Windows where
 # the system libraries use SDL3 for threading/timing.
 if(ALTIRRA_SDL3 OR NOT WIN32)
-    find_package(SDL3 REQUIRED)
+    if(ANDROID)
+        # On Android, SDL3 must be built from source alongside the project.
+        # The android/setup_sdl3.sh script clones SDL3 into android/SDL3/.
+        # We add it as a subdirectory so it builds as a shared library
+        # that the Android activity loads.
+        set(SDL3_SOURCE_DIR "${CMAKE_SOURCE_DIR}/android/SDL3")
+        if(EXISTS "${SDL3_SOURCE_DIR}/CMakeLists.txt")
+            add_subdirectory("${SDL3_SOURCE_DIR}" SDL3)
+        else()
+            message(FATAL_ERROR
+                "SDL3 source not found at ${SDL3_SOURCE_DIR}\n"
+                "Run: cd android && ./setup_sdl3.sh")
+        endif()
+    else()
+        find_package(SDL3 REQUIRED)
+    endif()
 endif()
 
 # Dear ImGui (docking branch) — built as static library for the SDL3 frontend
