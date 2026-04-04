@@ -214,6 +214,9 @@ bool MatchSwitch(const char *arg, const char *name) {
 
 // Check if argv[i] is a switch with the given name and consume its value
 // argument from argv[i+1].  Returns nullptr if not matched or missing arg.
+// If the next argument starts with "--" (is itself a switch), it is not
+// consumed — the switch is treated as having an empty value, matching the
+// Windows VDCommandLine::FindAndRemoveSwitch behavior.
 const char *ConsumeArg(int argc, char **argv, int &i,
 					   std::vector<bool> &consumed, const char *name) {
 	if (!MatchSwitch(argv[i] + 2, name))
@@ -221,6 +224,11 @@ const char *ConsumeArg(int argc, char **argv, int &i,
 	consumed[i] = true;
 	if (i + 1 >= argc) {
 		fprintf(stderr, "[AltirraSDL] --%s requires an argument\n", name);
+		return nullptr;
+	}
+	// Don't consume the next argument if it looks like a switch
+	if (argv[i + 1][0] == '-' && argv[i + 1][1] == '-' && argv[i + 1][2] != '\0') {
+		fprintf(stderr, "[AltirraSDL] --%s requires an argument (got switch %s)\n", name, argv[i + 1]);
 		return nullptr;
 	}
 	consumed[++i] = true;
@@ -276,6 +284,26 @@ bool ATProcessCommandLineSDL3(int argc, char **argv) {
 
 		const char *sw = arg + 2;  // skip "--"
 		const char *val = nullptr;
+
+		// ---- Help ----
+		if (MatchSwitch(sw, "help") || MatchSwitch(sw, "?")) {
+			consumed[i] = true;
+			fprintf(stderr,
+				"Usage: AltirraSDL [options] [image-file ...]\n\n"
+				"Display:  --f  --ntsc --pal --secam --ntsc50 --pal60\n"
+				"          --artifact <mode>  --vsync/--novsync\n"
+				"Hardware: --hardware <mode>  --kernel <name>  --memsize <size>\n"
+				"          --stereo/--nostereo  --basic/--nobasic\n"
+				"Media:    --cart/--disk/--run/--runbas/--tape <file>\n"
+				"          --bootro/--bootrw/--bootvrw/--bootvrwsafe\n"
+				"Devices:  --adddevice/--setdevice/--removedevice <spec>\n"
+				"          --cleardevices  --pclink <mode,path>  --hdpath <path>\n"
+				"Debugger: --debug  --debugcmd <cmd>  --autotest\n"
+				"Other:    --type <text>  --rawkeys  --diskemu <mode>\n\n"
+				"Use Help > Command-Line Help in the menu for full details.\n"
+			);
+			continue;
+		}
 
 		// ---- Autotest ----
 		if (MatchSwitch(sw, "autotest")) {
@@ -800,6 +828,10 @@ bool ATProcessCommandLineSDL3(int argc, char **argv) {
 			continue;
 		}
 		if ((val = ConsumeArg(argc, argv, i, consumed, "disk")) != nullptr) {
+			if (diskIndex >= 15) {
+				fprintf(stderr, "[AltirraSDL] Warning: --disk index %d exceeds maximum (15 drives), ignoring '%s'\n", diskIndex, val);
+				continue;
+			}
 			if (!haveUnloadedAllImages) {
 				g_sim.UnloadAll(ATUIGetBootUnloadStorageMask());
 				haveUnloadedAllImages = true;
@@ -859,12 +891,13 @@ bool ATProcessCommandLineSDL3(int argc, char **argv) {
 			VDStringRefW tag;
 
 			if (!params.split(L',', tag)) {
-				params.clear();
 				tag = VDStringRefW(wval);
+				params = VDStringRefW();
 			}
 
 			ATPropertySet pset;
-			pset.ParseFromCommandLineString(params.data());
+			if (params.data())
+				pset.ParseFromCommandLineString(params.data());
 
 			const VDStringA tagA = VDTextWToA(tag);
 			const ATDeviceDefinition *def = dm.GetDeviceDefinition(tagA.c_str());
@@ -873,12 +906,18 @@ bool ATProcessCommandLineSDL3(int argc, char **argv) {
 				fprintf(stderr, "[AltirraSDL] Unknown device type: %s\n", val);
 			} else if (def->mFlags & kATDeviceDefFlag_Internal) {
 				IATDevice *dev = dm.GetDeviceByTag(tagA.c_str());
-				if (dev)
-					dm.ReconfigureDevice(*dev, pset);
-				else
+				if (dev) {
+					try { dm.ReconfigureDevice(*dev, pset); }
+					catch (const MyError& e) {
+						fprintf(stderr, "[AltirraSDL] Error configuring device '%s': %s\n", val, e.c_str());
+					}
+				} else
 					fprintf(stderr, "[AltirraSDL] Missing internal device: %s\n", val);
 			} else {
-				dm.AddDevice(def, pset);
+				try { dm.AddDevice(def, pset); }
+				catch (const MyError& e) {
+					fprintf(stderr, "[AltirraSDL] Error adding device '%s': %s\n", val, e.c_str());
+				}
 			}
 			continue;
 		}
@@ -889,12 +928,13 @@ bool ATProcessCommandLineSDL3(int argc, char **argv) {
 			VDStringRefW tag;
 
 			if (!params.split(L',', tag)) {
-				params.clear();
 				tag = VDStringRefW(wval);
+				params = VDStringRefW();
 			}
 
 			ATPropertySet pset;
-			pset.ParseFromCommandLineString(params.data());
+			if (params.data())
+				pset.ParseFromCommandLineString(params.data());
 
 			const VDStringA tagA = VDTextWToA(tag);
 			const ATDeviceDefinition *def = dm.GetDeviceDefinition(tagA.c_str());
@@ -902,17 +942,21 @@ bool ATProcessCommandLineSDL3(int argc, char **argv) {
 			if (!def || (def->mFlags & kATDeviceDefFlag_Hidden)) {
 				fprintf(stderr, "[AltirraSDL] Unknown device type: %s\n", val);
 			} else {
-				IATDevice *dev = dm.GetDeviceByTag(tagA.c_str());
-				if (def->mFlags & kATDeviceDefFlag_Internal) {
-					if (dev)
-						dm.ReconfigureDevice(*dev, pset);
-					else
-						fprintf(stderr, "[AltirraSDL] Missing internal device: %s\n", val);
-				} else {
-					if (dev)
-						dm.ReconfigureDevice(*dev, pset);
-					else
-						dm.AddDevice(def, pset);
+				try {
+					IATDevice *dev = dm.GetDeviceByTag(tagA.c_str());
+					if (def->mFlags & kATDeviceDefFlag_Internal) {
+						if (dev)
+							dm.ReconfigureDevice(*dev, pset);
+						else
+							fprintf(stderr, "[AltirraSDL] Missing internal device: %s\n", val);
+					} else {
+						if (dev)
+							dm.ReconfigureDevice(*dev, pset);
+						else
+							dm.AddDevice(def, pset);
+					}
+				} catch (const MyError& e) {
+					fprintf(stderr, "[AltirraSDL] Error with --setdevice '%s': %s\n", val, e.c_str());
 				}
 			}
 			continue;

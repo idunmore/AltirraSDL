@@ -121,11 +121,18 @@ add_executable(AltirraSDL
     source/ui_tool_tapeeditor_view.cpp
     source/ui_tool_tapeeditor_ops.cpp
 
-    # Test mode (headless automated testing via stdin/stdout commands)
+    # Test mode (automated testing via IPC — Unix sockets / Windows named pipes)
+    source/testmode_ipc.cpp
     source/ui_testmode.cpp
 
     # Command-line processing (mirrors Windows uicommandline.cpp)
     source/commandline_sdl3.cpp
+
+    # Mobile touch UI (Android — compiled on all platforms for testability,
+    # active only when ALTIRRA_MOBILE is defined at runtime)
+    source/touch_layout.cpp
+    source/touch_controls.cpp
+    source/ui_mobile.cpp
 
     # Registry persistence (filtered out by ui* regex, so add explicitly)
     ${CMAKE_SOURCE_DIR}/src/Altirra/source/uiregistry.cpp
@@ -235,7 +242,7 @@ endif()
 if(WIN32)
     target_compile_definitions(AltirraSDL PRIVATE VD_OS_WINDOWS=1)
 elseif(ANDROID)
-    target_compile_definitions(AltirraSDL PRIVATE VD_OS_ANDROID=1)
+    target_compile_definitions(AltirraSDL PRIVATE VD_OS_ANDROID=1 ALTIRRA_MOBILE=1)
 elseif(APPLE)
     target_compile_definitions(AltirraSDL PRIVATE VD_OS_MACOS=1)
 elseif(UNIX)
@@ -299,6 +306,70 @@ add_custom_target(package_altirra
         "${ALTIRRA_PKG_DIR}/Copying"
     COMMENT "Packaging AltirraSDL ${PROJECT_VERSION} -> ${ALTIRRA_PKG_DIR}"
 )
+
+# Bundle librashader shared library if found on the system
+if(ENABLE_LIBRASHADER)
+    # Platform-specific library name
+    if(WIN32)
+        set(_LIBRA_NAME "librashader.dll")
+    elseif(APPLE)
+        set(_LIBRA_NAME "librashader.dylib")
+    else()
+        set(_LIBRA_NAME "librashader.so")
+    endif()
+
+    # Search order:
+    #   1. Project source root (user may drop the library alongside the repo)
+    #   2. Build output directory (next to the executable)
+    #   3. Platform-specific system locations
+    set(_LIBRA_SEARCH_PATHS
+        "${CMAKE_SOURCE_DIR}"
+        "${CMAKE_BINARY_DIR}"
+        "${CMAKE_BINARY_DIR}/src/AltirraSDL"
+    )
+
+    if(WIN32)
+        # On Windows, also check common install locations and PATH
+        list(APPEND _LIBRA_SEARCH_PATHS
+            "$ENV{LOCALAPPDATA}/librashader"
+            "$ENV{ProgramFiles}/librashader"
+        )
+    else()
+        list(APPEND _LIBRA_SEARCH_PATHS
+            /usr/local/lib /usr/local/lib64
+            /usr/lib /usr/lib64
+        )
+    endif()
+
+    # First try find_library (handles lib prefix on Unix, .lib/.dll on Windows)
+    find_library(LIBRASHADER_LIBRARY
+        NAMES rashader librashader
+        NAMES_PER_DIR
+        PATHS ${_LIBRA_SEARCH_PATHS}
+        DOC "Path to librashader shared library (optional, for packaging)"
+    )
+
+    # Also try the exact filename (e.g. librashader.so, librashader.dll)
+    if(NOT LIBRASHADER_LIBRARY)
+        find_file(LIBRASHADER_LIBRARY
+            NAMES ${_LIBRA_NAME}
+            PATHS ${_LIBRA_SEARCH_PATHS}
+            DOC "Path to librashader shared library (optional, for packaging)"
+        )
+    endif()
+
+    if(LIBRASHADER_LIBRARY)
+        message(STATUS "librashader runtime: ${LIBRASHADER_LIBRARY} (will be bundled in package)")
+        add_custom_command(TARGET package_altirra POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy
+                "${LIBRASHADER_LIBRARY}"
+                "${ALTIRRA_PKG_DIR}/"
+            COMMENT "Bundling ${_LIBRA_NAME} into package"
+        )
+    else()
+        message(STATUS "librashader runtime: not found (shader presets will require user to install it)")
+    endif()
+endif()
 
 # Per-file SIMD flags for GCC/Clang (MSVC handles this via /arch: flags)
 if(NOT MSVC AND CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64|AMD64)")

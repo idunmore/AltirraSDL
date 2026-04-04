@@ -31,6 +31,7 @@
 #include <at/atcore/serializable.h>
 
 #include "ui_main.h"
+#include "ui_mobile.h"
 #include "ui_debugger.h"
 #include "ui_testmode.h"
 #include "display_sdl3_impl.h"
@@ -53,7 +54,6 @@
 #include "firmwaremanager.h"
 #include "oshelper.h"
 #include "resource.h"
-#include "display_backend.h"
 
 extern ATSimulator g_sim;
 extern ATUIKeyboardOptions g_kbdOpts;
@@ -333,9 +333,6 @@ void ATUIRenderCompatWarning(ATSimulator &sim, ATUIState &state) {
 	ImGui::End();
 }
 
-// =========================================================================
-// Save Frame state — file path set by dialog callback, consumed by render
-// =========================================================================
 // =========================================================================
 // Save Frame state — file path set by dialog callback, consumed by render
 // =========================================================================
@@ -751,7 +748,20 @@ bool ATUIWantCaptureMouse() { return ImGui::GetIO().WantCaptureMouse; }
 // old surface.
 
 static const void *ClipboardDataCallback(void *userdata, const char *mime_type, size_t *size) {
+	// SDL3 does not free the returned data, so we cache it and free the
+	// previous allocation on each call to avoid leaking.
+	static void *s_cachedBmp = nullptr;
+
 	SDL_Surface *surface = static_cast<SDL_Surface *>(userdata);
+
+	// Callback with NULL mime_type means clipboard cleared — free cache.
+	if (!mime_type) {
+		SDL_free(s_cachedBmp);
+		s_cachedBmp = nullptr;
+		*size = 0;
+		return nullptr;
+	}
+
 	if (!surface || strcmp(mime_type, "image/bmp") != 0) {
 		*size = 0;
 		return nullptr;
@@ -787,6 +797,10 @@ static const void *ClipboardDataCallback(void *userdata, const char *mime_type, 
 
 	SDL_ReadIO(mem, bmpData, (size_t)bmpSize);
 	SDL_CloseIO(mem);
+
+	SDL_free(s_cachedBmp);
+	s_cachedBmp = bmpData;
+
 	*size = (size_t)bmpSize;
 	return bmpData;
 }
@@ -846,7 +860,7 @@ static void CopyFrameToClipboard(IDisplayBackend *backend) {
 // =========================================================================
 
 static void RenderCommandLineHelpDialog(ATUIState &state) {
-	ImGui::SetNextWindowSize(ImVec2(520, 400), ImGuiCond_Appearing);
+	ImGui::SetNextWindowSize(ImVec2(580, 520), ImGuiCond_Appearing);
 	ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
 	if (!ImGui::Begin("Command-Line Help", &state.showCommandLineHelp, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings)) {
 		ImGui::End();
@@ -859,15 +873,111 @@ static void RenderCommandLineHelpDialog(ATUIState &state) {
 		return;
 	}
 
-	ImGui::TextWrapped("Usage: AltirraSDL [options] [image-file]");
+	ImGui::TextWrapped("Usage: AltirraSDL [options] [image-file ...]");
 	ImGui::Separator();
 
-	ImGui::TextWrapped(
-		"Positional arguments:\n"
-		"  image-file            Load and boot the given disk/cartridge/tape image\n\n"
-		"The emulator accepts ATR, XEX, BIN, ROM, CAR, CAS, WAV, and ATX files.\n"
-		"Drag-and-drop onto the window also loads an image.\n\n"
-		"Settings are stored in ~/.config/altirra/settings.ini");
+	if (ImGui::BeginChild("##cmdhelp_scroll", ImVec2(0, -ImGui::GetFrameHeightWithSpacing() - 4), ImGuiChildFlags_None)) {
+		ImGui::TextWrapped(
+			"Positional arguments are loaded as boot images (ATR, XEX, BIN, ROM, CAR, CAS, WAV, ATX).\n"
+			"Drag-and-drop onto the window also loads an image.\n"
+			"Settings are stored in ~/.config/altirra/settings.ini\n");
+
+		if (ImGui::CollapsingHeader("Display & Video", ImGuiTreeNodeFlags_DefaultOpen)) {
+			ImGui::TextWrapped(
+				"  --f                   Start in fullscreen\n"
+				"  --ntsc / --pal / --secam / --ntsc50 / --pal60\n"
+				"                        Set video standard\n"
+				"  --artifact <mode>     Artifacting: none, ntsc, ntschi, pal, palhi\n"
+				"  --vsync / --novsync   Enable/disable VSync");
+		}
+
+		if (ImGui::CollapsingHeader("Hardware")) {
+			ImGui::TextWrapped(
+				"  --hardware <mode>     800, 800xl, 1200xl, 130xe, xegs, 1400xl, 5200\n"
+				"  --kernel <name>       default, osa, osb, xl, xegs, 1200xl, 5200,\n"
+				"                        lle, llexl, hle, 5200lle\n"
+				"  --kernelref <ref>     Select kernel by firmware reference string\n"
+				"  --basicref <ref>      Select BASIC by firmware reference string\n"
+				"  --memsize <size>      8K..1088K (e.g. 64K, 128K, 320KCOMPY)\n"
+				"  --axlonmemsize <size> none, 64K..4096K\n"
+				"  --highbanks <n>       na, 0, 1, 3, 15, 63\n"
+				"  --stereo / --nostereo Enable/disable dual POKEY\n"
+				"  --basic / --nobasic   Enable/disable BASIC ROM");
+		}
+
+		if (ImGui::CollapsingHeader("Acceleration")) {
+			ImGui::TextWrapped(
+				"  --burstio / --noburstio   Burst disk I/O\n"
+				"  --siopatch / --siopatchsafe / --nosiopatch\n"
+				"                        SIO patch mode\n"
+				"  --fastboot / --nofastboot\n"
+				"                        Fast boot (skip OS memory test)\n"
+				"  --accuratedisk / --noaccuratedisk\n"
+				"                        Accurate disk timing");
+		}
+
+		if (ImGui::CollapsingHeader("Cassette")) {
+			ImGui::TextWrapped(
+				"  --casautoboot / --nocasautoboot\n"
+				"                        Auto-boot cassette images\n"
+				"  --casautobasicboot / --nocasautobasicboot\n"
+				"                        Auto-boot with BASIC\n"
+				"  --tape <file>         Mount cassette image\n"
+				"  --tapepos <time>      Set initial tape position (HH:MM:SS.sss)");
+		}
+
+		if (ImGui::CollapsingHeader("Media Loading")) {
+			ImGui::TextWrapped(
+				"  --cart <file>         Load cartridge image\n"
+				"  --disk <file>         Mount disk image (repeatable: D1:, D2:, ...)\n"
+				"  --run <file>          Load program (EXE/XEX)\n"
+				"  --runbas <file>       Load BASIC program\n"
+				"  --bootro / --bootrw / --bootvrw / --bootvrwsafe\n"
+				"                        Set write mode for loaded images\n"
+				"  --cartmapper <id>     Force cartridge mapper ID\n"
+				"  --nocartchecksum      Ignore cartridge checksum");
+		}
+
+		if (ImGui::CollapsingHeader("Devices")) {
+			ImGui::TextWrapped(
+				"  --soundboard <base>   Add SoundBoard (d2c0, d500, d600)\n"
+				"  --nosoundboard        Remove SoundBoard\n"
+				"  --slightsid / --noslightsid\n"
+				"  --covox / --nocovox\n"
+				"  --cleardevices        Remove all devices\n"
+				"  --adddevice <tag[,params]>\n"
+				"                        Add device (e.g. --adddevice soundboard)\n"
+				"  --setdevice <tag[,params]>\n"
+				"                        Add or reconfigure device\n"
+				"  --removedevice <tag>  Remove device\n"
+				"  --pclink <mode,path>  Mount PCLink directory (mode: ro, rw)\n"
+				"  --nopclink            Remove PCLink device\n"
+				"  --hdpath <path>       Mount H: device (read-only)\n"
+				"  --hdpathrw <path>     Mount H: device (read-write)\n"
+				"  --nohdpath            Remove H: device");
+		}
+
+		if (ImGui::CollapsingHeader("Debugger")) {
+			ImGui::TextWrapped(
+				"  --debug               Open debugger console\n"
+				"  --debugcmd <cmd>      Queue debugger command (repeatable)\n"
+				"  --debugbrkrun / --nodebugbrkrun\n"
+				"                        Break on EXE run address\n"
+				"  --autotest            Register autotest debugger commands");
+		}
+
+		if (ImGui::CollapsingHeader("Other")) {
+			ImGui::TextWrapped(
+				"  --type <text>         Type text into emulator after boot\n"
+				"                        (~ = Enter, ` = quote)\n"
+				"  --rawkeys / --norawkeys\n"
+				"                        Raw keyboard mode\n"
+				"  --diskemu <mode>      Disk emulation mode for all drives\n"
+				"  --nocheats            Disable cheat engine\n"
+				"  --cheats <file>       Load cheat file");
+		}
+	}
+	ImGui::EndChild();
 
 	ImGui::Spacing();
 	float buttonWidth = 80.0f;
@@ -1276,7 +1386,16 @@ void ATUIRenderFrame(ATSimulator &sim, VDVideoDisplaySDL3 &display,
 
 	SDL_Window *window = backend->GetWindow();
 
+#ifdef ALTIRRA_MOBILE
+	// Mobile UI: render touch controls, hamburger menu, file browser, settings
+	// instead of the desktop menu bar
+	{
+		extern ATMobileUIState g_mobileState;
+		ATMobileUI_Render(sim, state, g_mobileState, window);
+	}
+#else
 	ATUIRenderMainMenu(sim, window, backend, state);
+#endif
 	RenderStatusOverlay(sim);
 
 	// Pick up pending cartridge mapper dialog from deferred actions

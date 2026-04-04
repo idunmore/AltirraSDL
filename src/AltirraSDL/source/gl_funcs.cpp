@@ -23,6 +23,7 @@ GL_FUNC(GLenum, glGetError, void)
 GL_FUNC(const GLubyte*, glGetString, GLenum name)
 GL_FUNC(void, glGetIntegerv, GLenum pname, GLint *params)
 GL_FUNC(void, glPolygonMode, GLenum face, GLenum mode)
+GL_FUNC(void, glColorMask, GLboolean r, GLboolean g, GLboolean b, GLboolean a)
 GL_FUNC(void, glGenTextures, GLsizei n, GLuint *textures)
 GL_FUNC(void, glDeleteTextures, GLsizei n, const GLuint *textures)
 GL_FUNC(void, glBindTexture, GLenum target, GLuint texture)
@@ -86,7 +87,10 @@ bool GLLoadFunctions() {
 	GL_LOAD(glGetError);
 	GL_LOAD(glGetString);
 	GL_LOAD(glGetIntegerv);
-	GL_LOAD(glPolygonMode);
+	// glPolygonMode is optional — not available on macOS core profile.
+	// ImGui uses it for wireframe debug mode; silently skip if missing.
+	glPolygonMode = (PFN_glPolygonMode)SDL_GL_GetProcAddress("glPolygonMode");
+	GL_LOAD(glColorMask);
 	GL_LOAD(glGenTextures);
 	GL_LOAD(glDeleteTextures);
 	GL_LOAD(glBindTexture);

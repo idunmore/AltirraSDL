@@ -157,9 +157,13 @@ private:
 	int mMaskTexW = 0;
 	int mMaskTexH = 0;
 
-	// Bicubic filter textures
+	// Bicubic filter textures (regenerated when src/dst dimensions change)
 	GLuint mBicubicFilterTexH = 0;  // horizontal pass filter weights
 	GLuint mBicubicFilterTexV = 0;  // vertical pass filter weights
+	int mBicubicFilterSrcW = 0;
+	int mBicubicFilterSrcH = 0;
+	int mBicubicFilterDstW = 0;
+	int mBicubicFilterDstH = 0;
 	GLuint mBicubicProgram = 0;
 	GLint mBicubicLoc_SourceTex = -1;
 	GLint mBicubicLoc_FilterTex = -1;

@@ -24,6 +24,16 @@
 extern ATSimulator g_sim;
 
 // =========================================================================
+// Enable CPU History callback
+// =========================================================================
+
+static ATImGuiTraceViewerEnableCPUHistoryFn s_enableCPUHistoryFn = nullptr;
+
+void ATImGuiTraceViewer_SetEnableCPUHistoryCallback(ATImGuiTraceViewerEnableCPUHistoryFn fn) {
+	s_enableCPUHistoryFn = fn;
+}
+
+// =========================================================================
 // CPU History tab state
 // =========================================================================
 
@@ -33,6 +43,7 @@ struct HistoryState {
 	double mLastFocusTime = -1;
 	vdfastvector<ATCPUHistoryEntry> mEntries;
 	uint32 mFocusEntryIndex = 0;
+	uint32 mBaseIndex = 0; // absolute index of mEntries[0] in the channel
 	bool mbValid = false;
 	bool mbScrollToFocus = false;
 };
@@ -81,6 +92,7 @@ struct LogState {
 	IATTraceChannel *mpLastChannel = nullptr;
 	double mTimestampOrigin = 0;	// offset for relative timestamps
 	int mSelectedRow = -1;
+	bool mbScrollToSelected = false;
 };
 
 static LogState s_logState;
@@ -93,7 +105,17 @@ static LogState s_logState;
 
 static void RenderCPUHistory(ATImGuiTraceViewerContext& ctx) {
 	if (!ctx.mpCPUHistoryChannel) {
-		ImGui::TextUnformatted("No CPU history in this trace. Enable 'CPU Instruction History' in Trace settings.");
+		ImGui::TextUnformatted("No CPU history in this trace.");
+		ImGui::TextUnformatted("Enable 'CPU Instruction History' in Trace settings and re-record.");
+		if (!ctx.mSettings.mbTraceCpuInsns) {
+			if (ImGui::Button("Enable CPU Instruction History and Start Trace")) {
+				ctx.mSettings.mbTraceCpuInsns = true;
+				if (s_enableCPUHistoryFn)
+					s_enableCPUHistoryFn();
+			}
+		} else {
+			ImGui::TextDisabled("(CPU Instruction History is now enabled. Start a new trace to capture data.)");
+		}
 		return;
 	}
 
@@ -106,13 +128,14 @@ static void RenderCPUHistory(ATImGuiTraceViewerContext& ctx) {
 		s_histState.mbValid = false;
 
 		if (ctx.mFocusTime >= 0 && cpuCh.GetEventCount() > 0) {
-			// Find the event at focus time and read surrounding entries
-			auto cursor = cpuCh.StartHistoryIteration(ctx.mFocusTime, -100);
+			// Use a zero-based cursor since FindEvent returns absolute positions
+			// and ReadHistoryEvents adds cursor.mIterPos to the offset
+			auto cursor = cpuCh.StartHistoryIteration(0, 0);
 			uint32 focusIdx = cpuCh.FindEvent(cursor, ctx.mFocusTime);
 
-			// Read a window of entries around focus
-			uint32 startIdx = (focusIdx > 100) ? focusIdx - 100 : 0;
-			uint32 endIdx = std::min(startIdx + 200, cpuCh.GetEventCount());
+			// Read a window of entries around focus (400K window, matching Windows)
+			uint32 startIdx = (focusIdx > 200000) ? focusIdx - 200000 : 0;
+			uint32 endIdx = std::min(startIdx + 400000, cpuCh.GetEventCount());
 
 			const ATCPUHistoryEntry *hents[256];
 			uint32 pos = startIdx;
@@ -132,11 +155,13 @@ static void RenderCPUHistory(ATImGuiTraceViewerContext& ctx) {
 			}
 
 			s_histState.mFocusEntryIndex = relFocusIdx;
+			s_histState.mBaseIndex = startIdx;
 			s_histState.mbValid = !s_histState.mEntries.empty();
 			s_histState.mbScrollToFocus = s_histState.mbValid;
 		}
 
-		ctx.mbFocusTimeChanged = false;
+		// Note: mbFocusTimeChanged is NOT cleared here — the main Render() clears
+		// it after all panels have processed it, so Log tab also sees the change.
 	}
 
 	if (!s_histState.mbValid) {
@@ -149,7 +174,7 @@ static void RenderCPUHistory(ATImGuiTraceViewerContext& ctx) {
 	ImGuiTableFlags tableFlags = ImGuiTableFlags_ScrollY | ImGuiTableFlags_RowBg
 		| ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingFixedFit;
 
-	if (ImGui::BeginTable("##CPUHistory", 7, tableFlags)) {
+	if (ImGui::BeginTable("##CPUHistory", 8, tableFlags)) {
 		ImGui::TableSetupScrollFreeze(0, 1);
 		ImGui::TableSetupColumn("Cycle", ImGuiTableColumnFlags_WidthFixed, 70);
 		ImGui::TableSetupColumn("PC", ImGuiTableColumnFlags_WidthFixed, 50);
@@ -157,6 +182,7 @@ static void RenderCPUHistory(ATImGuiTraceViewerContext& ctx) {
 		ImGui::TableSetupColumn("A", ImGuiTableColumnFlags_WidthFixed, 30);
 		ImGui::TableSetupColumn("X", ImGuiTableColumnFlags_WidthFixed, 30);
 		ImGui::TableSetupColumn("Y", ImGuiTableColumnFlags_WidthFixed, 30);
+		ImGui::TableSetupColumn("S", ImGuiTableColumnFlags_WidthFixed, 30);
 		ImGui::TableSetupColumn("Flags", ImGuiTableColumnFlags_WidthFixed, 80);
 		ImGui::TableHeadersRow();
 
@@ -176,7 +202,19 @@ static void RenderCPUHistory(ATImGuiTraceViewerContext& ctx) {
 
 				// Cycle
 				ImGui::TableSetColumnIndex(0);
-				ImGui::Text("%u", he.mCycle - baseCycle);
+				// Make the first column selectable for click-to-navigate
+				char labelBuf[32];
+				snprintf(labelBuf, sizeof(labelBuf), "%u", he.mCycle - baseCycle);
+				if (ImGui::Selectable(labelBuf, isFocus, ImGuiSelectableFlags_SpanAllColumns)) {
+					// Navigate to this instruction's time
+					uint32 absIdx = s_histState.mBaseIndex + (uint32)row;
+					auto cursor = cpuCh.StartHistoryIteration(0, 0);
+					double t = cpuCh.GetEventTime(cursor, absIdx);
+					if (t >= 0) {
+						ctx.mFocusTime = t;
+						ctx.mbFocusTimeChanged = true;
+					}
+				}
 
 				// PC
 				ImGui::TableSetColumnIndex(1);
@@ -197,9 +235,11 @@ static void RenderCPUHistory(ATImGuiTraceViewerContext& ctx) {
 				ImGui::Text("%02X", he.mX);
 				ImGui::TableSetColumnIndex(5);
 				ImGui::Text("%02X", he.mY);
+				ImGui::TableSetColumnIndex(6);
+				ImGui::Text("%02X", he.mS);
 
 				// Flags
-				ImGui::TableSetColumnIndex(6);
+				ImGui::TableSetColumnIndex(7);
 				{
 					char flags[9];
 					flags[0] = (he.mP & 0x80) ? 'N' : '-';
@@ -222,6 +262,8 @@ static void RenderCPUHistory(ATImGuiTraceViewerContext& ctx) {
 			float itemHeight = ImGui::GetTextLineHeightWithSpacing();
 			float targetY = s_histState.mFocusEntryIndex * itemHeight - ImGui::GetWindowHeight() * 0.5f;
 			if (targetY < 0) targetY = 0;
+			float maxY = ImGui::GetScrollMaxY();
+			if (targetY > maxY) targetY = maxY;
 			ImGui::SetScrollY(targetY);
 		}
 
@@ -245,7 +287,8 @@ static void BuildProfile(ATImGuiTraceViewerContext& ctx) {
 		return;
 
 	ATCPUProfileBuilder builder;
-	builder.Init(s_profState.mMode, kATProfileCounterMode_None, kATProfileCounterMode_None);
+	builder.Init(s_profState.mMode, ctx.mProfileCounterModes[0], ctx.mProfileCounterModes[1]);
+	builder.SetGlobalAddressesEnabled(ctx.mbGlobalAddressesEnabled);
 
 	uint32 baseCycle = cpuCh.GetHistoryBaseCycle();
 	const ATCPUTimestampDecoder& tsDecoder = cpuCh.GetTimestampDecoder();
@@ -258,7 +301,9 @@ static void BuildProfile(ATImGuiTraceViewerContext& ctx) {
 		rangeEnd = std::max(ctx.mSelectStart, ctx.mSelectEnd);
 	}
 
-	auto cursor = cpuCh.StartHistoryIteration(rangeStart, 0);
+	// Use a zero-based cursor since FindEvent returns absolute positions
+	// and ReadHistoryEvents adds cursor.mIterPos to the offset
+	auto cursor = cpuCh.StartHistoryIteration(0, 0);
 	uint32 startIdx = cpuCh.FindEvent(cursor, rangeStart);
 	uint32 endIdx = cpuCh.FindEvent(cursor, rangeEnd);
 	if (endIdx <= startIdx)
@@ -280,7 +325,7 @@ static void BuildProfile(ATImGuiTraceViewerContext& ctx) {
 		if (n <= 1)
 			break;
 
-		builder.Update(tsDecoder, hents, n - 1, false);
+		builder.Update(tsDecoder, hents, n - 1, ctx.mbGlobalAddressesEnabled);
 		pos += n - 1;
 	}
 
@@ -328,13 +373,23 @@ static void BuildProfile(ATImGuiTraceViewerContext& ctx) {
 static void RenderCPUProfile(ATImGuiTraceViewerContext& ctx) {
 	if (!ctx.mpCPUHistoryChannel) {
 		ImGui::TextUnformatted("No CPU history in this trace.");
+		ImGui::TextUnformatted("Enable 'CPU Instruction History' in Trace settings and re-record.");
+		if (!ctx.mSettings.mbTraceCpuInsns) {
+			if (ImGui::Button("Enable CPU Instruction History and Start Trace")) {
+				ctx.mSettings.mbTraceCpuInsns = true;
+				if (s_enableCPUHistoryFn)
+					s_enableCPUHistoryFn();
+			}
+		} else {
+			ImGui::TextDisabled("(CPU Instruction History is now enabled. Start a new trace to capture data.)");
+		}
 		return;
 	}
 
 	// Mode selector
-	const char *modeLabels[] = { "Instructions", "Functions", "Call Graph", "Basic Blocks" };
+	const char *modeLabels[] = { "Instructions", "Functions", "Call Graph", "Basic Blocks", "Basic Lines" };
 	int modeIdx = (int)s_profState.mMode;
-	if (ImGui::Combo("Mode", &modeIdx, modeLabels, 4)) {
+	if (ImGui::Combo("Mode", &modeIdx, modeLabels, 5)) {
 		s_profState.mMode = (ATProfileMode)modeIdx;
 		s_profState.mbNeedsRefresh = true;
 	}
@@ -342,6 +397,43 @@ static void RenderCPUProfile(ATImGuiTraceViewerContext& ctx) {
 	ImGui::SameLine();
 	if (ImGui::Button("Refresh"))
 		s_profState.mbNeedsRefresh = true;
+
+	ImGui::SameLine();
+	if (ImGui::Button("Options"))
+		ImGui::OpenPopup("ProfileOptions");
+
+	if (ImGui::BeginPopup("ProfileOptions")) {
+		static const char *kCounterNames[] = { "Branch Taken", "Branch Not Taken", "Page Crossing", "Redundant Op" };
+		uint32 activeMask = 0;
+		for (auto cm : ctx.mProfileCounterModes)
+			if (cm) activeMask |= (1 << (cm - 1));
+		bool allSlotsFull = (ctx.mProfileCounterModes[0] != kATProfileCounterMode_None && ctx.mProfileCounterModes[1] != kATProfileCounterMode_None);
+
+		for (int i = 0; i < 4; ++i) {
+			ATProfileCounterMode mode = (ATProfileCounterMode)(i + 1);
+			bool active = (activeMask & (1 << i)) != 0;
+			bool enabled = active || !allSlotsFull;
+			if (ImGui::MenuItem(kCounterNames[i], nullptr, active, enabled)) {
+				if (active) {
+					// Remove it
+					for (auto& cm : ctx.mProfileCounterModes)
+						if (cm == mode) { cm = kATProfileCounterMode_None; break; }
+				} else {
+					// Add to first free slot
+					for (auto& cm : ctx.mProfileCounterModes)
+						if (cm == kATProfileCounterMode_None) { cm = mode; break; }
+				}
+				s_profState.mbNeedsRefresh = true;
+			}
+		}
+
+		ImGui::Separator();
+		if (ImGui::MenuItem("Enable Global Addresses", nullptr, ctx.mbGlobalAddressesEnabled)) {
+			ctx.mbGlobalAddressesEnabled = !ctx.mbGlobalAddressesEnabled;
+			s_profState.mbNeedsRefresh = true;
+		}
+		ImGui::EndPopup();
+	}
 
 	if (ctx.mbSelectionValid) {
 		ImGui::SameLine();
@@ -357,12 +449,18 @@ static void RenderCPUProfile(ATImGuiTraceViewerContext& ctx) {
 		s_profState.mbValid = false;
 	}
 
-	// Check if selection changed
-	if (ctx.mbSelectionValid &&
-		(ctx.mSelectStart != s_profState.mLastSelectStart || ctx.mSelectEnd != s_profState.mLastSelectEnd)) {
+	// Check if selection changed or was cleared
+	if (ctx.mbSelectionValid) {
+		if (ctx.mSelectStart != s_profState.mLastSelectStart || ctx.mSelectEnd != s_profState.mLastSelectEnd) {
+			s_profState.mbNeedsRefresh = true;
+			s_profState.mLastSelectStart = ctx.mSelectStart;
+			s_profState.mLastSelectEnd = ctx.mSelectEnd;
+		}
+	} else if (s_profState.mLastSelectStart >= 0) {
+		// Selection was cleared — re-profile full range
 		s_profState.mbNeedsRefresh = true;
-		s_profState.mLastSelectStart = ctx.mSelectStart;
-		s_profState.mLastSelectEnd = ctx.mSelectEnd;
+		s_profState.mLastSelectStart = -1;
+		s_profState.mLastSelectEnd = -1;
 	}
 
 	if (s_profState.mbNeedsRefresh && ctx.mpCPUHistoryChannel && ctx.mpCPUHistoryChannel->GetEventCount() > 0)
@@ -489,27 +587,27 @@ static void FormatLogTimestamp(char *buf, size_t bufSize, double time, int mode,
 		case 0:		// None
 			buf[0] = 0;
 			break;
-		case 1: {	// Beam position: (Frame:Y,X)
+		case 1: {	// Beam position: (Frame:Y,X) — padded to match Windows
 			if (ctx.mpCPUHistoryChannel) {
 				uint32 cycle = (uint32)(time / ctx.mpCPUHistoryChannel->GetSecondsPerTick());
 				ATCPUBeamPosition bp = ctx.mTimestampDecoder.GetBeamPosition(cycle);
-				snprintf(buf, bufSize, "(%u:%u,%u)", bp.mFrame, bp.mY, bp.mX);
+				snprintf(buf, bufSize, "(%5u:%3u,%3u) ", bp.mFrame, bp.mY, bp.mX);
 			} else {
 				buf[0] = 0;
 			}
 			break;
 		}
-		case 2:		// Cycle: (T[relative_cycles])
+		case 2:		// Cycle: (T±cycles) — padded to match Windows
 			if (ctx.mpCPUHistoryChannel) {
 				double secsPerTick = ctx.mpCPUHistoryChannel->GetSecondsPerTick();
 				sint64 relCycles = (sint64)(relTime / secsPerTick);
-				snprintf(buf, bufSize, "(T%+lld)", (long long)relCycles);
+				snprintf(buf, bufSize, "(T%+-9lld) ", (long long)relCycles);
 			} else {
-				snprintf(buf, bufSize, "%.6f", relTime);
+				snprintf(buf, bufSize, "(%9.6f) ", relTime);
 			}
 			break;
-		case 3:		// Microseconds: (seconds.microseconds)
-			snprintf(buf, bufSize, "(%.6f)", relTime);
+		case 3:		// Microseconds: (seconds.microseconds) — padded to match Windows
+			snprintf(buf, bufSize, "(%9.6f) ", relTime);
 			break;
 		default:
 			buf[0] = 0;
@@ -529,7 +627,6 @@ static void CopyLogEntries(const ATImGuiTraceViewerContext& ctx, bool allEntries
 		if (s_logState.mTimestampMode > 0) {
 			FormatLogTimestamp(tsBuf, sizeof(tsBuf), entry.mTime, s_logState.mTimestampMode, ctx);
 			result += tsBuf;
-			result += ' ';
 		}
 		result += entry.mName;
 		result += '\n';
@@ -553,6 +650,28 @@ static void RenderLog(ATImGuiTraceViewerContext& ctx) {
 		RebuildLogEntries(ctx);
 		if (!s_logState.mbValid)
 			return;
+	}
+
+	// Auto-select nearest log entry when focus time changes
+	if (ctx.mbFocusTimeChanged && ctx.mFocusTime >= 0 && !s_logState.mEntries.empty()) {
+		// Binary search for nearest entry
+		int best = 0;
+		int lo = 0, hi = (int)s_logState.mEntries.size() - 1;
+		while (lo <= hi) {
+			int mid = (lo + hi) / 2;
+			if (s_logState.mEntries[mid].mTime < ctx.mFocusTime)
+				lo = mid + 1;
+			else
+				hi = mid - 1;
+		}
+		// lo is now the first entry >= focusTime; check lo and lo-1
+		best = lo;
+		if (best >= (int)s_logState.mEntries.size())
+			best = (int)s_logState.mEntries.size() - 1;
+		if (best > 0 && fabs(s_logState.mEntries[best - 1].mTime - ctx.mFocusTime) < fabs(s_logState.mEntries[best].mTime - ctx.mFocusTime))
+			best = best - 1;
+		s_logState.mSelectedRow = best;
+		s_logState.mbScrollToSelected = true;
 	}
 
 	// Timestamp mode selector
@@ -645,8 +764,41 @@ static void RenderLog(ATImGuiTraceViewerContext& ctx) {
 			ImGui::EndPopup();
 		}
 
+		// Auto-scroll to selected entry
+		if (s_logState.mbScrollToSelected && s_logState.mSelectedRow >= 0) {
+			s_logState.mbScrollToSelected = false;
+			float itemHeight = ImGui::GetTextLineHeightWithSpacing();
+			float targetY = s_logState.mSelectedRow * itemHeight - ImGui::GetWindowHeight() * 0.5f;
+			if (targetY < 0) targetY = 0;
+			float maxY = ImGui::GetScrollMaxY();
+			if (targetY > maxY) targetY = maxY;
+			ImGui::SetScrollY(targetY);
+		}
+
 		ImGui::EndTable();
 	}
+}
+
+// =========================================================================
+// Reset static panel state (call when collection changes to avoid
+// dangling pointers to freed channels/collections).
+// =========================================================================
+
+void ATImGuiTraceViewer_ResetPanelState() {
+	s_histState.mEntries.clear();
+	s_histState.mbValid = false;
+	s_histState.mLastFocusTime = -1;
+
+	s_profState.mbValid = false;
+	s_profState.mbNeedsRefresh = true;
+	s_profState.mSortedRecords.clear();
+	s_profState.mpMergedFrame.clear();
+	s_profState.mLastSelectStart = -1;
+	s_profState.mLastSelectEnd = -1;
+
+	s_logState.mbValid = false;
+	s_logState.mEntries.clear();
+	s_logState.mpLastChannel = nullptr;
 }
 
 // =========================================================================

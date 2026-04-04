@@ -27,6 +27,8 @@
 #include "display_backend_sdl.h"
 #include "gl_funcs.h"
 #include "input_sdl3.h"
+#include "touch_controls.h"
+#include "ui_mobile.h"
 #include "options.h"
 #include "ui_main.h"
 #include "ui_debugger.h"
@@ -61,6 +63,7 @@ static IATJoystickManager *g_pJoystickMgr = nullptr;
 static bool g_running = true;
 static bool g_winActive = true;
 static ATUIState g_uiState;
+static ATMobileUIState g_mobileState;
 
 // Forward declaration — defined in window placement section below
 void ATUpdateWindowedGeometry(SDL_Window *window);
@@ -231,6 +234,12 @@ static void HandleEvents() {
 
 	SDL_Event ev;
 	while (SDL_PollEvent(&ev)) {
+		// Route touch events to mobile controls before ImGui processing
+#ifdef ALTIRRA_MOBILE
+		if (ATMobileUI_HandleEvent(ev, g_mobileState))
+			continue;
+#endif
+
 		ATUIProcessEvent(&ev);
 
 		switch (ev.type) {
@@ -600,6 +609,8 @@ static void HandleEvents() {
 			}
 			// Release mouse capture on focus loss
 			ATUIReleaseMouse();
+			// Release all touch controls on focus loss
+			ATTouchControls_ReleaseAll();
 			break;
 
 		default:
@@ -735,9 +746,21 @@ static void SyncScreenFXToBackend() {
 		s_lastAppliedSharpness = curSharpness;
 	}
 
-	// Read screen FX info produced by GTIA (set via SetSourcePersistent)
+	// Read screen FX info produced by GTIA (set via SetSourcePersistent
+	// or PostBuffer).  When GTIA has accel post-processing active, the
+	// frame carries a non-null mpScreenFX with the current effect state.
+	// When all accel effects are disabled, mpScreenFX is null and
+	// HasScreenFX() returns false — we must still push a default (all-off)
+	// state to the backend so it stops rendering stale effects.
 	if (g_pDisplay->HasScreenFX()) {
 		g_pBackend->UpdateScreenFX(g_pDisplay->GetLastScreenFX());
+	} else {
+		// Push an all-off state so the backend stops rendering stale effects.
+		// Note: mGamma must be 1.0 (identity), not 0 (the struct default) —
+		// a gamma of 0 triggers the screen FX shader path and produces black.
+		VDVideoDisplayScreenFXInfo offFX {};
+		offFX.mGamma = 1.0f;
+		g_pBackend->UpdateScreenFX(offFX);
 	}
 }
 
@@ -1148,6 +1171,13 @@ int main(int argc, char *argv[]) {
 
 	ATInputSDL3_Init(&g_sim.GetPokey(), g_sim.GetInputManager(), &g_sim.GetGTIA());
 
+	// Initialize touch controls (active on Android, available for testing on desktop)
+	ATTouchControls_Init(g_sim.GetInputManager(), &g_sim.GetGTIA());
+
+#ifdef ALTIRRA_MOBILE
+	ATMobileUI_Init();
+#endif
+
 	// Register device extended commands (copy/paste, explore disk, mount VHD, etc.)
 	extern void ATRegisterDeviceXCmds(ATDeviceManager& dm);
 	ATRegisterDeviceXCmds(*g_sim.GetDeviceManager());
@@ -1408,6 +1438,7 @@ int main(int argc, char *argv[]) {
 	extern void ATSocketShutdown();
 	ATSocketShutdown();
 
+	ATTouchControls_Shutdown();
 	ATTestModeShutdown();
 	ATUIShutdown();
 

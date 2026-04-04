@@ -9,6 +9,7 @@
 
 #include <stdafx.h>
 #include <imgui.h>
+#include <algorithm>
 #include <cmath>
 
 #include "ui_main.h"
@@ -19,6 +20,7 @@
 #include <vd2/VDDisplay/displaytypes.h>
 
 extern ATSimulator g_sim;
+void ATUIResizeDisplay();
 
 // Helper: logarithmic slider (for bloom radius and dot pitch)
 static bool SliderFloatLog(const char *label, float *v, float vMin, float vMax, const char *format = "%.2f") {
@@ -32,7 +34,19 @@ static bool SliderFloatLog(const char *label, float *v, float vMin, float vMax, 
 	return false;
 }
 
-static void RenderMainPage(ATArtifactingParams &params, bool &changed, bool hwSupport) {
+static void RenderMainPage(ATGTIAEmulator &gtia, ATArtifactingParams &params, bool &changed, bool hwSupport) {
+	// Scanlines enable — mirrors the checkbox in Configure System > Video.
+	// This is an SDL3 UI convenience: Windows only has the intensity slider
+	// here, with the enable/disable in Configure System.  We show both so
+	// the user can control scanlines from a single dialog.
+	{
+		bool scanlines = gtia.AreScanlinesEnabled();
+		if (ImGui::Checkbox("Enable Scanlines", &scanlines)) {
+			gtia.SetScanlinesEnabled(scanlines);
+			ATUIResizeDisplay();
+		}
+	}
+
 	// Scanline intensity: ticks 0-8, displayed as percentage
 	{
 		int tick = (int)(params.mScanlineIntensity * 8.0f + 0.5f);
@@ -169,13 +183,15 @@ static void RenderMaskPage(VDDScreenMaskParams &maskParams, bool &changed) {
 
 	ImGui::BeginDisabled(maskParams.mType == VDDScreenMaskType::None);
 
-	// Dot pitch (logarithmic)
+	// Dot pitch (logarithmic).  Windows uses a trackbar range of -60..0
+	// mapped via 2^(value/20), giving a range of 0.125..1.0 color clocks.
+	// We replicate the same log2 scale and range.
 	{
 		float pitch = maskParams.mSourcePixelsPerDot;
-		if (pitch < 0.5f) pitch = 0.5f;
-		ImGui::Text("Dot Pitch: %.1f color clocks", pitch);
-		if (SliderFloatLog("##DotPitch", &pitch, 0.5f, 20.0f)) {
-			maskParams.mSourcePixelsPerDot = pitch;
+		if (pitch < 0.01f) pitch = 0.125f;
+		ImGui::Text("Dot Pitch: %.2f color clocks", pitch);
+		if (SliderFloatLog("##DotPitch", &pitch, 0.125f, 1.0f)) {
+			maskParams.mSourcePixelsPerDot = std::clamp(pitch, 0.01f, 1.0f);
 			changed = true;
 		}
 	}
@@ -254,7 +270,7 @@ void ATUIRenderScreenEffects(ATSimulator &sim, ATUIState &state) {
 	if (ImGui::BeginTabBar("ScreenFXTabs")) {
 		if (ImGui::BeginTabItem("Main")) {
 			ImGui::Spacing();
-			RenderMainPage(params, changed, hwSupport);
+			RenderMainPage(gtia, params, changed, hwSupport);
 			ImGui::EndTabItem();
 		}
 		if (ImGui::BeginTabItem("Bloom")) {

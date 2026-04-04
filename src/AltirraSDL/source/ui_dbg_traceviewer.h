@@ -4,6 +4,7 @@
 #ifndef f_UI_DBG_TRACEVIEWER_H
 #define f_UI_DBG_TRACEVIEWER_H
 
+#include <atomic>
 #include <vector>
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/VDString.h>
@@ -11,6 +12,7 @@
 #include <vd2/system/vdstl.h>
 #include "trace.h"
 #include "tracecpu.h"
+#include "profiler.h"
 
 // =========================================================================
 // Shared context passed between trace viewer sub-renderers
@@ -34,6 +36,7 @@ struct ATImGuiTraceViewerContext {
 
 	// ---- Recording ----
 	bool mbRecording = false;
+	std::atomic<bool> mbTraceLimitReached{false}; // set from emulation thread
 	ATTraceSettings mSettings {};
 
 	// ---- Focus time (for synchronizing timeline ↔ panels) ----
@@ -73,8 +76,18 @@ struct ATImGuiTraceViewerContext {
 	// ---- Vertical scroll (shared between labels and events) ----
 	float mScrollY = 0;
 
+	// ---- Draggable splitter width ----
+	float mLabelWidth = 150.0f;
+
 	// ---- Generation counter (bumped on collection change) ----
 	uint32 mCollectionGeneration = 0;
+
+	// ---- Trace limit event callback ----
+	uint32 mSimEventIdTraceLimited = 0;
+
+	// ---- Profile options (shared with panels) ----
+	ATProfileCounterMode mProfileCounterModes[2] = { kATProfileCounterMode_None, kATProfileCounterMode_None };
+	bool mbGlobalAddressesEnabled = false;
 
 	// ---- Zoom helper ----
 	void ZoomDeltaSteps(double centerTime, sint32 steps, float viewWidthPixels);
@@ -86,5 +99,10 @@ struct ATImGuiTraceViewerContext {
 
 void ATImGuiTraceViewer_RenderTimeline(ATImGuiTraceViewerContext& ctx);
 void ATImGuiTraceViewer_RenderPanels(ATImGuiTraceViewerContext& ctx);
+void ATImGuiTraceViewer_ResetPanelState();
+
+// Callback: request the pane to enable CPU history and restart tracing
+using ATImGuiTraceViewerEnableCPUHistoryFn = void(*)();
+void ATImGuiTraceViewer_SetEnableCPUHistoryCallback(ATImGuiTraceViewerEnableCPUHistoryFn fn);
 
 #endif // f_UI_DBG_TRACEVIEWER_H

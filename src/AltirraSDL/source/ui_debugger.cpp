@@ -379,13 +379,17 @@ void ATUIDebuggerRenderPanes(ATSimulator &sim, ATUIState &state) {
 
 void ATUIDebuggerTick() {
 	IATDebugger *dbg = ATGetDebugger();
-	if (!dbg || !dbg->IsEnabled())
+	if (!dbg)
 		return;
 
 	// Process all pending commands, not just one.  Windows does this via
 	// the idle loop (Tick returns true → loop again immediately).  We
 	// replicate by looping here, with a safety limit to avoid blocking
 	// the UI if a command generates infinite sub-commands.
+	//
+	// No IsEnabled() guard — Windows calls Tick() unconditionally, and
+	// --debugcmd queues commands before the debugger UI is opened.
+	// Tick() is a no-op when no commands are queued.
 	for (int safety = 0; safety < 1000; ++safety) {
 		if (!dbg->Tick())
 			break;

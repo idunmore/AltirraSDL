@@ -25,6 +25,7 @@
 #include "traceio.h"
 #include "savestateio.h"
 #include "profiler.h"
+#include "simeventmanager.h"
 
 extern ATSimulator g_sim;
 extern SDL_Window *g_pWindow;
@@ -58,6 +59,7 @@ void ATImGuiTraceViewerContext::ZoomDeltaSteps(double centerTime, sint32 steps, 
 class ATImGuiTraceViewerPane final : public ATImGuiDebuggerPane {
 public:
 	ATImGuiTraceViewerPane();
+	~ATImGuiTraceViewerPane();
 
 	bool Render() override;
 
@@ -73,7 +75,7 @@ private:
 	void DoExportChrome();
 
 	void ExportToChromeTrace(const wchar_t *path) const;
-	void Load(const wchar_t *path);
+	bool Load(const wchar_t *path);
 	void Save(const wchar_t *path) const;
 	void ImportA800(const wchar_t *path);
 
@@ -87,10 +89,42 @@ private:
 	VDStringW mTraceName;
 };
 
+// Static pointer used by the enable-CPU-history callback (panels → pane)
+static ATImGuiTraceViewerPane *s_pActiveTraceViewerPane = nullptr;
+
 ATImGuiTraceViewerPane::ATImGuiTraceViewerPane()
 	: ATImGuiDebuggerPane(kATUIPaneId_Profiler, "Performance Analyzer")
 {
 	mContext.mSettings.mbTraceCpuInsns = true;
+
+	// Register trace limit callback — fires from emulation thread, so set
+	// an atomic flag that the main thread checks each frame.
+	mContext.mSimEventIdTraceLimited = g_sim.GetEventManager()->AddEventCallback(
+		kATSimEvent_TracingLimitReached,
+		[this] { mContext.mbTraceLimitReached.store(true, std::memory_order_release); }
+	);
+
+	// Register enable-CPU-history callback for the panels
+	s_pActiveTraceViewerPane = this;
+	ATImGuiTraceViewer_SetEnableCPUHistoryCallback([] {
+		if (s_pActiveTraceViewerPane) {
+			// Setting is already toggled by the caller; just start tracing
+			if (!s_pActiveTraceViewerPane->mContext.mbRecording)
+				s_pActiveTraceViewerPane->StartStopTracing();
+		}
+	});
+}
+
+ATImGuiTraceViewerPane::~ATImGuiTraceViewerPane() {
+	if (mContext.mSimEventIdTraceLimited) {
+		g_sim.GetEventManager()->RemoveEventCallback(mContext.mSimEventIdTraceLimited);
+		mContext.mSimEventIdTraceLimited = 0;
+	}
+
+	if (s_pActiveTraceViewerPane == this) {
+		s_pActiveTraceViewerPane = nullptr;
+		ATImGuiTraceViewer_SetEnableCPUHistoryCallback(nullptr);
+	}
 }
 
 // =========================================================================
@@ -127,17 +161,39 @@ bool ATImGuiTraceViewerPane::Render() {
 	RenderMenuBar();
 	RenderToolbar();
 
+	// Check for deferred trace limit stop (set from emulation thread)
+	if (mContext.mbTraceLimitReached.exchange(false, std::memory_order_acquire)) {
+		if (mContext.mbRecording)
+			StartStopTracing();
+	}
+
 	// Timeline takes ~60% of remaining space, panels take ~40%
 	float availH = ImGui::GetContentRegionAvail().y;
 	float timelineH = availH * 0.6f;
 
 	ImGui::BeginChild("##TVTimeline", ImVec2(0, timelineH), ImGuiChildFlags_Borders);
+	float eventAreaWidth = ImGui::GetContentRegionAvail().x - mContext.mLabelWidth - 4;
 	ATImGuiTraceViewer_RenderTimeline(mContext);
 	ImGui::EndChild();
 
 	ImGui::BeginChild("##TVPanels", ImVec2(0, 0), ImGuiChildFlags_Borders);
 	ATImGuiTraceViewer_RenderPanels(mContext);
 	ImGui::EndChild();
+
+	// Auto-scroll timeline when focus time is outside visible range
+	if (mContext.mbFocusTimeChanged && mContext.mFocusTime >= 0 && eventAreaWidth > 0) {
+		double viewWidthTime = mContext.mSecondsPerPixel * (double)eventAreaWidth;
+		if (mContext.mFocusTime < mContext.mStartTime || mContext.mFocusTime > mContext.mStartTime + viewWidthTime) {
+			mContext.mStartTime = mContext.mFocusTime - viewWidthTime * 0.5;
+			if (mContext.mStartTime < 0)
+				mContext.mStartTime = 0;
+			if (mContext.mTraceDuration > 0 && mContext.mStartTime > mContext.mTraceDuration)
+				mContext.mStartTime = mContext.mTraceDuration;
+		}
+	}
+
+	// Clear focus-changed flag AFTER all panels have processed it
+	mContext.mbFocusTimeChanged = false;
 
 	if (mbShowMemStats)
 		RenderMemoryStatisticsPopup();
@@ -186,6 +242,24 @@ void ATImGuiTraceViewerPane::RenderMenuBar() {
 		ImGui::SeparatorText("Settings");
 		ImGui::MenuItem("CPU Instruction History", nullptr, &mContext.mSettings.mbTraceCpuInsns);
 		ImGui::MenuItem("Trace Video", nullptr, &mContext.mSettings.mbTraceVideo);
+
+		if (mContext.mSettings.mbTraceVideo) {
+			ImGui::Indent(16.0f);
+			const char *rateLabels[] = { "All frames", "Every 2 frames", "Every 3 frames" };
+			int rateIdx = mContext.mSettings.mTraceVideoDivisor <= 1 ? 0 : (int)mContext.mSettings.mTraceVideoDivisor - 1;
+			if (rateIdx > 2) rateIdx = 0;
+			if (ImGui::Combo("Video Rate", &rateIdx, rateLabels, 3))
+				mContext.mSettings.mTraceVideoDivisor = (uint32)(rateIdx + 1);
+
+			const char *sizeLabels[] = { "Small (128)", "Medium (192)", "Large (256)" };
+			int sizeIdx = mContext.mSettings.mVideoFrameSize <= 128 ? 0 : mContext.mSettings.mVideoFrameSize <= 192 ? 1 : 2;
+			if (ImGui::Combo("Video Size", &sizeIdx, sizeLabels, 3)) {
+				static const uint32 kSizes[] = { 128, 192, 256 };
+				mContext.mSettings.mVideoFrameSize = kSizes[sizeIdx];
+			}
+			ImGui::Unindent(16.0f);
+		}
+
 		ImGui::MenuItem("Trace BASIC", nullptr, &mContext.mSettings.mbTraceBasic);
 		ImGui::MenuItem("Auto-Limit Memory", nullptr, &mContext.mSettings.mbAutoLimitTraceMemory);
 		ImGui::EndMenu();
@@ -238,6 +312,7 @@ void ATImGuiTraceViewerPane::SetCollection(ATTraceCollection *coll) {
 	mContext.mbFocusTimeChanged = false;
 	mContext.mScrollY = 0;
 	++mContext.mCollectionGeneration;
+	ATImGuiTraceViewer_ResetPanelState();
 	RebuildViews();
 }
 
@@ -337,7 +412,7 @@ void ATImGuiTraceViewerPane::StartNativeTrace() {
 	SetCollection(nullptr);
 
 	ATNativeTraceSettings nts;
-	nts.mbAutoLimitTraceMemory = mContext.mSettings.mbAutoLimitTraceMemory;
+	static_cast<ATBaseTraceSettings&>(nts) = mContext.mSettings;
 	g_sim.StartNativeTracing(nts);
 	g_sim.Resume();
 }
@@ -356,8 +431,8 @@ void ATImGuiTraceViewerPane::DoLoad() {
 			auto *self = static_cast<ATImGuiTraceViewerPane *>(ud);
 			try {
 				VDStringW wpath = VDTextU8ToW(VDStringA(fl[0]));
-				self->Load(wpath.c_str());
-				self->mTraceName = wpath;
+				if (self->Load(wpath.c_str()))
+					self->mTraceName = wpath;
 			} catch (const MyError& e) {
 				LOG_ERROR("TraceViewer", "Load failed: %s", e.c_str());
 			}
@@ -422,7 +497,9 @@ void ATImGuiTraceViewerPane::DoExportChrome() {
 // Load / Save / Import / Export
 // =========================================================================
 
-void ATImGuiTraceViewerPane::Load(const wchar_t *path) {
+bool ATImGuiTraceViewerPane::Load(const wchar_t *path) {
+	SetCollection(nullptr);
+
 	VDFileStream file(path);
 	VDZipArchive ziparch;
 	ziparch.Init(&file);
@@ -441,9 +518,10 @@ void ATImGuiTraceViewerPane::Load(const wchar_t *path) {
 			);
 
 			SetCollection(traceCollection);
-			return;
+			return true;
 		}
 	}
+	return false;
 }
 
 void ATImGuiTraceViewerPane::Save(const wchar_t *path) const {
@@ -481,12 +559,16 @@ void ATImGuiTraceViewerPane::ExportToChromeTrace(const wchar_t *path) const {
 	if (!mContext.mpCollection || !mContext.mpCPUHistoryChannel)
 		return;
 
+	IATDebugger *dbg = ATGetDebugger();
+	if (!dbg)
+		return;
+
 	ATTraceChannelCPUHistory& cpuTrace = *mContext.mpCPUHistoryChannel;
 
 	VDFileStream fileOutput(path, nsVDFile::kWrite | nsVDFile::kCreateAlways | nsVDFile::kDenyRead | nsVDFile::kSequential);
 	VDTextOutputStream textOutput(&fileOutput);
 
-	textOutput.PutLine("{\n");
+	textOutput.PutLine("{");
 	textOutput.PutLine("\"traceEvents\": [");
 
 	// Meta events for CPU history (PID 1)
@@ -549,7 +631,7 @@ void ATImGuiTraceViewerPane::ExportToChromeTrace(const wchar_t *path) const {
 
 				textOutput.FormatLine(R"--(%s"ph":"M","name":"thread_name","args":{"name":"%s"}})--",
 					prefix.c_str(), VDTextWToU8(VDStringSpanW(channel->GetName())).c_str());
-				textOutput.FormatLine(R"--(%s"ph":"M","name":"thread_sort_index","args":{"sort_index":"%u"}})--",
+				textOutput.FormatLine(R"--(%s"ph":"M","name":"thread_sort_index","args":{"sort_index":%u}})--",
 					prefix.c_str(), tid);
 
 				do {
@@ -689,7 +771,7 @@ void ATImGuiTraceViewerPane::ExportToChromeTrace(const wchar_t *path) const {
 					}
 
 					textOutput.FormatLine(R"--(,{"pid":1,"tid":%d,"ph":"B","name":"%s","sf":%u,"ts": %.2f})--",
-						ctid, ATGetDebugger()->GetAddressText(extpc, false, true).c_str(), frameId, ts);
+						ctid, dbg->GetAddressText(extpc, false, true).c_str(), frameId, ts);
 				}
 
 				adjustStack = false;
@@ -719,10 +801,10 @@ void ATImGuiTraceViewerPane::ExportToChromeTrace(const wchar_t *path) const {
 		const auto [parentFrameId, extpc] = callFrameTable[i];
 		if (parentFrameId)
 			textOutput.FormatLine(R"--("%u":{"category":"pc","name":"%s","parent":%u}%s)--",
-				(unsigned)(i + 1), ATGetDebugger()->GetAddressText(extpc, false, true).c_str(), parentFrameId, (i != numFrames - 1) ? "," : "");
+				(unsigned)(i + 1), dbg->GetAddressText(extpc, false, true).c_str(), parentFrameId, (i != numFrames - 1) ? "," : "");
 		else
 			textOutput.FormatLine(R"--("%u":{"category":"pc","name":"%s"}%s)--",
-				(unsigned)(i + 1), ATGetDebugger()->GetAddressText(extpc, false, true).c_str(), (i != numFrames - 1) ? "," : "");
+				(unsigned)(i + 1), dbg->GetAddressText(extpc, false, true).c_str(), (i != numFrames - 1) ? "," : "");
 	}
 
 	textOutput.PutLine("}");
@@ -759,7 +841,7 @@ void ATImGuiTraceViewerPane::RenderMemoryStatisticsPopup() {
 						groupName8.c_str(), channelName8.c_str(), (double)traceSize / 1048576.0);
 
 					auto *cpuChannel = vdpoly_cast<ATTraceChannelCPUHistory *>(channel);
-					if (cpuChannel) {
+					if (cpuChannel && cpuChannel->GetEventCount() > 0) {
 						VDStringA extra;
 						extra.sprintf(" (%u insns @ %.2f bytes/insn)",
 							cpuChannel->GetEventCount(),

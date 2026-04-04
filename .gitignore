@@ -2,6 +2,9 @@
 build/
 CMakeUserPresets.json
 
+# Auto-fetched vendor dependencies (created by CMake FetchContent)
+src/AltirraSDL/vendor/
+
 # Prerequisites
 *.d
 

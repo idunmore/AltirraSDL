@@ -1,10 +1,12 @@
 //	AltirraSDL - UI Test Automation Framework
 //	Lightweight test harness using ImGui's IMGUI_ENABLE_TEST_ENGINE hooks.
-//	Activated by --test-mode flag. Provides a Unix domain socket interface
-//	for external agents (LLM, scripts) to interact with the UI.
+//	Activated by --test-mode flag. Provides an IPC interface for external
+//	agents (LLM, scripts) to interact with the UI.
 //
 //	Protocol: newline-delimited text commands in, single-line JSON out.
-//	Socket path: /tmp/altirra-test-<pid>.sock
+//	Transport:
+//	  POSIX:   Unix domain socket at /tmp/altirra-test-<pid>.sock
+//	  Windows: Named pipe at \\.\pipe\altirra-test-<pid>
 
 #pragma once
 

@@ -114,6 +114,7 @@
 	#define GL_SCISSOR_TEST                   0x0C11
 	#define GL_STENCIL_TEST                   0x0B90
 	#define GL_DITHER                         0x0BD0
+	#define GL_FRAMEBUFFER_SRGB               0x8DB9
 
 	// Blend
 	#define GL_ZERO                           0
@@ -172,6 +173,7 @@ GL_FUNC(GLenum, glGetError, void)
 GL_FUNC(const GLubyte*, glGetString, GLenum name)
 GL_FUNC(void, glGetIntegerv, GLenum pname, GLint *params)
 GL_FUNC(void, glPolygonMode, GLenum face, GLenum mode)
+GL_FUNC(void, glColorMask, GLboolean r, GLboolean g, GLboolean b, GLboolean a)
 
 // Texture functions
 GL_FUNC(void, glGenTextures, GLsizei n, GLuint *textures)
@@ -243,6 +245,7 @@ GL_FUNC(GLenum, glGetError, void)
 GL_FUNC(const GLubyte*, glGetString, GLenum name)
 GL_FUNC(void, glGetIntegerv, GLenum pname, GLint *params)
 GL_FUNC(void, glPolygonMode, GLenum face, GLenum mode)
+GL_FUNC(void, glColorMask, GLboolean r, GLboolean g, GLboolean b, GLboolean a)
 GL_FUNC(void, glGenTextures, GLsizei n, GLuint *textures)
 GL_FUNC(void, glDeleteTextures, GLsizei n, const GLuint *textures)
 GL_FUNC(void, glBindTexture, GLenum target, GLuint texture)

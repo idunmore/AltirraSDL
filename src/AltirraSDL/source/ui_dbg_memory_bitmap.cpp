@@ -104,6 +104,7 @@ void ATImGuiMemoryPaneImpl::GenerateBitmapRow(
 	case InterpretMode::Graphics4Bpp: {
 		// 16-level grayscale palette matching Windows: range [16, 240]
 		// Windows: palette[0] = 16, palette[i] = 16 + (240*i+7)/15 for i=1..15
+		// Windows: palette[0] = 16, palext[j] = 16 + (240*j+7)/15 for j=0..14
 		static constexpr uint8 kPal4Bpp[16] = {
 			16, 16, 32, 48, 64, 80, 96, 112,
 			128, 144, 160, 176, 192, 208, 224, 240

@@ -100,7 +100,17 @@ void ATImGuiMemoryPaneImpl::LoadSettings() {
 
 void ATImGuiMemoryPaneImpl::OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state) {
 	ATImGuiDebuggerPane::OnDebuggerSystemStateUpdate(state);
-	mLastCycle = state.mCycle;
+
+	// When the debugger cycle changes (step, break), snapshot the current
+	// mViewData as the reference for change detection.  This matches
+	// Windows' RemakeView cycle-change snapshot (uidbgmemory.cpp:1325-1330).
+	if (state.mCycle != mLastCycle) {
+		mRefData = mViewData;
+		mRefViewStart = mViewStart;
+		mRefCycle = mLastCycle;
+		mLastCycle = state.mCycle;
+	}
+
 	if (!state.mbRunning)
 		mbNeedsRebuild = true;
 }
@@ -130,7 +140,6 @@ void ATImGuiMemoryPaneImpl::RebuildView() {
 	if (totalBytes > spaceSize)
 		totalBytes = spaceSize;
 
-	mPrevData = mViewData;
 	mViewData.resize(totalBytes);
 	mChanged.assign(totalBytes, false);
 
@@ -142,10 +151,24 @@ void ATImGuiMemoryPaneImpl::RebuildView() {
 		target->DebugReadMemory(spaceBase, mViewData.data() + firstChunk,
 								totalBytes - firstChunk);
 
-	// Change detection
-	if (mPrevData.size() == mViewData.size()) {
-		for (uint32 i = 0; i < totalBytes; ++i)
-			mChanged[i] = (mViewData[i] != mPrevData[i]);
+	// Change detection — compare current data against the reference
+	// snapshot from the previous debugger cycle.  The reference is only
+	// updated when the cycle changes (OnDebuggerSystemStateUpdate), so
+	// change highlighting persists across repaints, scrolling, and resizes
+	// within the same cycle.  This matches Windows' mRefViewData mechanism.
+	if (!mRefData.empty()
+		&& (mRefViewStart & kATAddressSpaceMask) == spaceBase) {
+		uint32 refOff = mRefViewStart & kATAddressOffsetMask;
+		uint32 refSize = (uint32)mRefData.size();
+
+		for (uint32 i = 0; i < totalBytes; ++i) {
+			// Map view index i to an offset within the reference data
+			uint32 addr = (offset + i) & spaceMask;
+			uint32 refIdx = (addr - refOff) & spaceMask;
+
+			if (refIdx < refSize)
+				mChanged[i] = (mViewData[i] != mRefData[refIdx]);
+		}
 	}
 }
 
@@ -244,6 +267,25 @@ void ATImGuiMemoryPaneImpl::CommitEdit() {
 	if (!target) { mEditValue = -1; return; }
 
 	uint32 addr = mHighlightedAddress.value();
+
+	// Update mViewData directly so the display reflects the edit
+	// immediately, without waiting for a full rebuild.  This matches
+	// Windows CommitEdit (uidbgmemory.cpp:1670-1678).
+	sint32 viewIdx = AddrToIndex(addr);
+	if (viewIdx >= 0 && (uint32)viewIdx < (uint32)mViewData.size()) {
+		mViewData[viewIdx] = (uint8)(mEditValue & 0xFF);
+
+		if (IsWordMode() && !mbHighlightedData
+			&& (uint32)(viewIdx + 1) < (uint32)mViewData.size()) {
+			mViewData[viewIdx + 1] = (uint8)((mEditValue >> 8) & 0xFF);
+		}
+
+		// Mark as changed for blue-highlight feedback
+		if ((uint32)viewIdx < mChanged.size())
+			mChanged[viewIdx] = true;
+	}
+
+	// Write to the emulated target memory
 	if (IsWordMode() && !mbHighlightedData) {
 		uint8 buf[2] = {
 			(uint8)(mEditValue & 0xFF),
@@ -256,7 +298,10 @@ void ATImGuiMemoryPaneImpl::CommitEdit() {
 
 	mEditValue = -1;
 	mEditPhase = 0;
-	mbNeedsRebuild = true;
+	// Note: intentionally NOT setting mbNeedsRebuild here.  mViewData
+	// already contains the written value.  A full rebuild would re-read
+	// memory and could revert the display if the write went to a
+	// read-only region.  Windows also skips the rebuild on commit.
 }
 
 void ATImGuiMemoryPaneImpl::CancelEdit() {
@@ -388,13 +433,15 @@ bool ATImGuiMemoryPaneImpl::Render() {
 	}
 
 	// Calculate visible rows from window height.
-	// In font bitmap modes, each row is taller than a text line
-	// (matching Windows' UpdateLineHeight enlargement for fonts).
+	// Apply zoom factor to match the scaled font inside the hex dump child
+	// (which uses SetWindowFontScale).  For font bitmap modes, rows are
+	// enlarged to at least 24 px × zoom, rounded to a multiple of 8.
 	float contentH = ImGui::GetContentRegionAvail().y
 		- ImGui::GetFrameHeightWithSpacing() * 2;
-	float lineH = ImGui::GetTextLineHeightWithSpacing();
+	float lineH = ImGui::GetTextLineHeightWithSpacing() * mZoomFactor;
 	if (IsFontMode()) {
-		float fontH = std::max(ImGui::GetTextLineHeight(), 24.0f * mZoomFactor);
+		float fontH = std::max(ImGui::GetTextLineHeight() * mZoomFactor,
+							   24.0f * mZoomFactor);
 		fontH = std::ceil(fontH / 8.0f) * 8.0f;
 		lineH = fontH;
 	}

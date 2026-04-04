@@ -11,6 +11,7 @@
 
 #include <stdafx.h>
 #include <algorithm>
+#include <mutex>
 #include <unordered_map>
 #include <SDL3/SDL.h>
 #include <imgui.h>
@@ -287,7 +288,7 @@ static const char *GetNameForKeyCode(uint32 c) {
 	case 0xDC: return "Ctrl+Shift+Esc";
 	case 0xEC: return "Ctrl+Shift+Tab";
 	case 0xE7: return "Ctrl+Shift+Invert (Fuji)";
-	case 0xD1: return "Ctrl+Help";
+	case 0xD1: return "Ctrl+Shift+Help";
 	case 0xFC: return "Ctrl+Shift+Caps";
 	default: return nullptr;
 	}
@@ -955,6 +956,12 @@ struct KbdCustomizeState {
 	bool captureJustCompleted = false;   // one-shot: auto-search bindings after capture
 	bool pendingAddConflict = false;     // waiting for conflict confirmation
 	uint32 pendingAddMapping = 0;        // mapping to add after confirm
+
+	// Deferred file operations — set by async SDL file dialog callbacks,
+	// processed on the main thread in ATUIRenderKeyboardCustomize.
+	std::mutex pendingFileMutex;
+	std::string pendingImportPath;
+	std::string pendingExportPath;
 };
 
 static KbdCustomizeState s_kc;
@@ -1236,13 +1243,17 @@ static void ExportToFile(const char *utf8Path) {
 }
 
 static void SDLCALL ImportFileCallback(void *, const char * const *filelist, int) {
-	if (filelist && filelist[0])
-		ImportFromFile(filelist[0]);
+	if (filelist && filelist[0]) {
+		std::lock_guard<std::mutex> lock(s_kc.pendingFileMutex);
+		s_kc.pendingImportPath = filelist[0];
+	}
 }
 
 static void SDLCALL ExportFileCallback(void *, const char * const *filelist, int) {
-	if (filelist && filelist[0])
-		ExportToFile(filelist[0]);
+	if (filelist && filelist[0]) {
+		std::lock_guard<std::mutex> lock(s_kc.pendingFileMutex);
+		s_kc.pendingExportPath = filelist[0];
+	}
 }
 
 // =========================================================================
@@ -1255,6 +1266,19 @@ void ATUIRenderKeyboardCustomize(ATUIState &state) {
 
 	if (!s_kc.initialized)
 		InitDialog();
+
+	// Process deferred file operations from async SDL file dialog callbacks
+	{
+		std::lock_guard<std::mutex> lock(s_kc.pendingFileMutex);
+		if (!s_kc.pendingImportPath.empty()) {
+			ImportFromFile(s_kc.pendingImportPath.c_str());
+			s_kc.pendingImportPath.clear();
+		}
+		if (!s_kc.pendingExportPath.empty()) {
+			ExportToFile(s_kc.pendingExportPath.c_str());
+			s_kc.pendingExportPath.clear();
+		}
+	}
 
 	const ImVec2 center = ImGui::GetMainViewport()->GetCenter();
 	ImGui::SetNextWindowSize(ImVec2(740, 520), ImGuiCond_Appearing);
@@ -1278,8 +1302,12 @@ void ATUIRenderKeyboardCustomize(ATUIState &state) {
 
 	// Search
 	ImGui::SetNextItemWidth(200);
-	if (ImGui::InputTextWithHint("##Search", "Search emulated keys...", s_kc.searchBuf, sizeof(s_kc.searchBuf)))
+	if (ImGui::InputTextWithHint("##Search", "Search emulated keys...", s_kc.searchBuf, sizeof(s_kc.searchBuf))) {
 		RebuildFilteredList();
+		// Reset left panel selection — matches Windows ReloadEmuKeyList() which
+		// clears and rebuilds the list (implicitly deselecting).
+		s_kc.selectedScanCodeIdx = -1;
+	}
 
 	ImGui::Separator();
 

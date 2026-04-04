@@ -3,6 +3,7 @@
 //	Provides memory search, active cheat management, and .atcheats file I/O.
 
 #include <stdafx.h>
+#include <mutex>
 #include <SDL3/SDL.h>
 #include <imgui.h>
 
@@ -135,36 +136,23 @@ static void RenderEditCheatPopupContent(ATCheatEngine *ce) {
 	ImGui::EndPopup();
 }
 
-// File dialog callbacks for load/save
-static void LoadCheatsCallback(void *userdata, const char * const *filelist, int filter) {
+// Deferred file operations from async SDL file dialog callbacks.
+static std::mutex s_cheatFileMutex;
+static std::string s_pendingCheatLoadPath;
+static std::string s_pendingCheatSavePath;
+
+static void LoadCheatsCallback(void *, const char * const *filelist, int) {
 	if (!filelist || !filelist[0])
 		return;
-
-	ATCheatEngine *ce = (ATCheatEngine *)userdata;
-	VDStringW wpath = VDTextU8ToW(VDStringSpanA(filelist[0]));
-	try {
-		ce->Load(wpath.c_str());
-		// Load calls Clear() which wipes search state — reset our cached results
-		s_resultCount = 0;
-		s_totalMatches = 0;
-		s_selectedResult = -1;
-		s_selectedCheat = -1;
-	} catch (const MyError &e) {
-		fprintf(stderr, "[AltirraSDL] Failed to load cheats: %s\n", e.c_str());
-	}
+	std::lock_guard<std::mutex> lock(s_cheatFileMutex);
+	s_pendingCheatLoadPath = filelist[0];
 }
 
-static void SaveCheatsCallback(void *userdata, const char * const *filelist, int filter) {
+static void SaveCheatsCallback(void *, const char * const *filelist, int) {
 	if (!filelist || !filelist[0])
 		return;
-
-	ATCheatEngine *ce = (ATCheatEngine *)userdata;
-	VDStringW wpath = VDTextU8ToW(VDStringSpanA(filelist[0]));
-	try {
-		ce->Save(wpath.c_str());
-	} catch (const MyError &e) {
-		fprintf(stderr, "[AltirraSDL] Failed to save cheats: %s\n", e.c_str());
-	}
+	std::lock_guard<std::mutex> lock(s_cheatFileMutex);
+	s_pendingCheatSavePath = filelist[0];
 }
 
 void ATUIRenderCheater(ATSimulator &sim, ATUIState &state) {
@@ -175,6 +163,33 @@ void ATUIRenderCheater(ATSimulator &sim, ATUIState &state) {
 	ATCheatEngine *ce = sim.GetCheatEngine();
 	if (!ce)
 		return;
+
+	// Process deferred file operations from async SDL file dialog callbacks
+	{
+		std::lock_guard<std::mutex> lock(s_cheatFileMutex);
+		if (!s_pendingCheatLoadPath.empty()) {
+			VDStringW wpath = VDTextU8ToW(VDStringSpanA(s_pendingCheatLoadPath.c_str()));
+			s_pendingCheatLoadPath.clear();
+			try {
+				ce->Load(wpath.c_str());
+				s_resultCount = 0;
+				s_totalMatches = 0;
+				s_selectedResult = -1;
+				s_selectedCheat = -1;
+			} catch (const MyError &e) {
+				fprintf(stderr, "[AltirraSDL] Failed to load cheats: %s\n", e.c_str());
+			}
+		}
+		if (!s_pendingCheatSavePath.empty()) {
+			VDStringW wpath = VDTextU8ToW(VDStringSpanA(s_pendingCheatSavePath.c_str()));
+			s_pendingCheatSavePath.clear();
+			try {
+				ce->Save(wpath.c_str());
+			} catch (const MyError &e) {
+				fprintf(stderr, "[AltirraSDL] Failed to save cheats: %s\n", e.c_str());
+			}
+		}
+	}
 
 	ImGui::SetNextWindowSize(ImVec2(680, 480), ImGuiCond_Appearing);
 	ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(),
@@ -340,7 +355,7 @@ void ATUIRenderCheater(ATSimulator &sim, ATUIState &state) {
 			{ "Altirra cheat set", "atcheats" },
 			{ "All Files", "*" },
 		};
-		SDL_ShowOpenFileDialog(LoadCheatsCallback, ce,
+		SDL_ShowOpenFileDialog(LoadCheatsCallback, nullptr,
 			SDL_GetKeyboardFocus(), kCheatFilters, 2, nullptr, false);
 	}
 	ImGui::SameLine();
@@ -349,7 +364,7 @@ void ATUIRenderCheater(ATSimulator &sim, ATUIState &state) {
 			{ "Altirra cheat set", "atcheats" },
 			{ "All Files", "*" },
 		};
-		SDL_ShowSaveFileDialog(SaveCheatsCallback, ce,
+		SDL_ShowSaveFileDialog(SaveCheatsCallback, nullptr,
 			SDL_GetKeyboardFocus(), kCheatFilters, 2, nullptr);
 	}
 

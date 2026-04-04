@@ -118,10 +118,19 @@ public:
 	std::vector<VDStringA> mAddressHistory;		// most-recent-first, max 20
 
 	// View data and change detection
+	// mViewData      — current memory contents (re-read on every rebuild)
+	// mRefData       — reference snapshot from the previous debugger cycle;
+	//                   frozen until the cycle changes (matching Windows'
+	//                   mRefViewData / mOldViewData mechanism)
+	// mRefViewStart  — the mViewStart that was active when mRefData was
+	//                   captured, so we can realign when the view scrolls
+	// mChanged       — per-byte flag: true if byte differs from reference
 	std::vector<uint8> mViewData;
-	std::vector<uint8> mPrevData;
+	std::vector<uint8> mRefData;
+	uint32 mRefViewStart = 0;
 	std::vector<bool> mChanged;
 	uint32 mLastCycle = 0;
+	uint32 mRefCycle = 0;		// cycle at which mRefData was last updated
 
 	// Selection / highlight (mirrors Windows mHighlightedAddress system)
 	std::optional<uint32> mHighlightedAddress;	// absolute address

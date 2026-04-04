@@ -64,6 +64,7 @@ cmake --build build/windows-sdl-release --config Release
 | Option | Default | Description |
 |--------|---------|-------------|
 | `ALTIRRA_SDL3` | ON (non-Windows), OFF (Windows) | Build the SDL3+ImGui frontend |
+| `ENABLE_LIBRASHADER` | ON | Fetch librashader C headers and enable shader preset support |
 
 Override on the command line:
 ```bash
@@ -72,6 +73,9 @@ cmake .. -DALTIRRA_SDL3=ON
 
 # Build only libraries on Linux (no frontend)
 cmake .. -DALTIRRA_SDL3=OFF
+
+# Disable librashader support
+cmake .. -DENABLE_LIBRASHADER=OFF
 ```
 
 ### CMake Presets
@@ -280,9 +284,36 @@ brew install cmake sdl3
 vcpkg install sdl3:x64-windows
 ```
 
-Dear ImGui is fetched automatically via CMake FetchContent (no manual
-install needed). SDL3_net is **not** required — `ATNetworkSockets` uses
-POSIX sockets (or Winsock on Windows) directly.
+Dear ImGui and librashader C headers are fetched automatically via CMake
+FetchContent (no manual install needed). SDL3_net is **not** required —
+`ATNetworkSockets` uses POSIX sockets (or Winsock on Windows) directly.
+
+### librashader (Optional Runtime Dependency)
+
+librashader enables RetroArch shader preset support (.slangp/.glslp).
+The **C headers** are fetched automatically by CMake — no Rust toolchain
+needed. At runtime, the shared library is loaded via `dlopen`/`LoadLibrary`.
+
+To install the runtime library:
+
+```bash
+# Build from source (requires Rust toolchain)
+git clone https://github.com/SnowflakePowered/librashader.git
+cd librashader
+cargo build --release -p librashader-capi
+# Copy target/release/librashader.so to /usr/local/lib/
+
+# Or install from distro packages if available
+# Fedora: dnf install librashader
+# Arch:   pacman -S librashader
+```
+
+If the shared library is not installed, AltirraSDL runs normally — shader
+preset features are simply unavailable. The UI shows installation
+instructions when librashader is not found.
+
+When packaging (`cmake --build . --target package_altirra`), the shared
+library is bundled automatically if found on the build system.
 
 ## Future: Android
 

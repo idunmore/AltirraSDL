@@ -1,5 +1,6 @@
 DEBUGGER TODO LIST
 ==================
+Updated: 2026-04-04 (verified against actual source code)
 
 Phase 1: Enable debugger.cpp compilation               [DONE]
   [x] Create stub header stubs/at/atnativeui/uiframe.h
@@ -118,74 +119,95 @@ Phase 9: Debug menu completion                          [MOSTLY DONE]
   [x] Configure System > Debugger page (symbol loading, script auto-load,
       system/kernel symbols, debug link)
 
-Phase 9b: Context menu gaps                             [TODO]
-  Disassembly context menu (ui_dbg_disassembly.cpp) — 4/18 items:
-  [ ] Show Code Bytes toggle
-  [ ] Show Labels toggle
-  [ ] Show Label Namespaces toggle
-  [ ] Show Procedure Breaks toggle
-  [ ] Show Call Previews toggle
-  [ ] Show Mixed Source/Disasm toggle
-  [ ] 65C816 M/X mode submenu (7 items: Auto, Current Context, M8X8,
+Phase 9b: Context menu gaps                             [DONE]
+  Disassembly context menu (ui_dbg_disassembly.cpp) — DONE (18/18 items):
+  [x] Go to Source, Set/Show Next Statement, Toggle Breakpoint
+  [x] Show Code Bytes, Labels, Label Namespaces, Procedure Breaks,
+      Call Previews, Mixed Source/Disasm toggles
+  [x] 65C816 Mode Handling submenu (Auto, Current Context, M8X8,
       M8X16, M16X8, M16X16, Emulation)
-  [ ] Use DP Register State toggle
+  [x] Use DP Register State toggle
 
-  Memory context menu (ui_dbg_memory.cpp) — done:
-  [x] Show Values As submenu (Bytes, Bytes Dec, Words, Words Dec)
+  Memory context menu (ui_dbg_memory_hexdump.cpp) — DONE (all items):
+  [x] Show Values As submenu (Bytes Hex, Bytes Dec, Words Hex, Words Dec)
   [x] Interpret As submenu (None, ATASCII, Internal, 1/2-bpp Font,
       1/2/4/8-bpp Graphics)
-  [x] Reset Zoom
-  [x] Track On-Screen (on-screen watch overlay, 8 slots)
+  [x] Reset Zoom, Toggle Read/Write Breakpoint, Add to Watch, Track On-Screen
 
-  History context menu (ui_dbg_history.cpp) — 1/21 items:
-  [ ] Show options (PC Address, Global PC, Registers, Special Registers,
-      Flags, Code Bytes, Labels, Label Namespaces)
-  [ ] Collapse options (Loops, Calls, Interrupts)
-  [ ] Timestamp modes (Reset/Set Origin, Beam Position, Microseconds,
-      Cycles, Unhalted Cycles, Tape Position Samples/Seconds)
-  [ ] Copy Visible to Clipboard
+  History context menu (ui_dbg_history.cpp) — DONE (21/21 items):
+  [x] Go to Source
+  [x] Show: PC Address, Global PC, Registers, Special Registers,
+      Flags, Code Bytes, Labels, Label Namespaces
+  [x] Collapse: Loops, Calls, Interrupts
+  [x] Reset/Set Timestamp Origin
+  [x] Timestamp modes: Beam Position, Microseconds, Cycles,
+      Unhalted Cycles, Tape Position (Samples/Seconds)
+  [x] Copy Visible to Clipboard
 
-  Console context menu (ui_dbg_console.cpp) — missing Copy
-  Debug Display context menu — 3 missing (Force Update, palette modes)
-  Source context menu — 2 missing (File Explorer, Default Editor)
+  Console context menu (ui_dbg_console.cpp) — DONE (Copy All + Clear All)
+  Debug Display context menu — DONE (Force Update, Filter Mode, Palette)
+  Source context menu — DONE (including Open In > File Explorer, Default Editor)
 
-Phase 10: Verifier and breakpoint editor                [TODO]
-  [ ] ui_dbg_verifier.cpp - 11 verification checks
+Phase 10: Verifier and breakpoint editor                [PARTIAL]
+  [x] ui_dbg_verifier.cpp - 11 verification checks (IMPLEMENTED)
+      Full dialog with ATUIShowDialogVerifier() + ATUIRenderVerifierDialog()
+      All 11 flags with checkboxes, OK/Cancel buttons
+      NOTE: Not yet wired to Debug menu item (menu stub still disabled)
+  [ ] Wire verifier dialog to Debug.VerifierDialog menu item
   [ ] Breakpoint editor dialog (add/edit) - location type (PC address),
       condition editor (expression), action (stop/trace), command-on-hit
   [ ] Enable cpuheatmap trap commands
 
-Phase 11: Profiler and trace viewer                     [TODO]
-  [ ] ui_dbg_profiler.cpp - Profile View pane:
-      - Profile mode menu (instruction/function/call graph/basic block/BASIC sampling)
-      - Counter options (cycles/insns/branch taken/not taken/page crossing/redundant)
-      - Frame trigger (VBlank/PC address)
-      - Profile list with CSV export
-      - Global addresses toggle
-  [ ] ui_dbg_traceviewer.cpp - Performance Analyzer:
-      - Multi-track timeline (CPU history, ANTIC, POKEY, PIA events)
-      - CPU profile tab, event log tab
-      - Timescale bar
-      - Import Atari800 trace / Export Chrome trace
-      - Start Native Trace
-      - View Memory Statistics
-      - Tape position correlation
-  [ ] Trace settings dialog
+Phase 11: Profiler and trace viewer                     [MOSTLY DONE]
+  [x] ui_dbg_traceviewer.cpp - Performance Analyzer (IMPLEMENTED):
+      - Main pane registered as kATUIPaneId_Profiler ("Performance Analyzer")
+      - Menu bar: File (Open/Import Atari800 trace), View, Settings
+      - Toolbar with zoom and control buttons
+      - Memory Statistics popup
+      - Trace settings as inline menu items (CPU History, Trace Video,
+        Trace BASIC, Auto-Limit Memory)
+  [x] ui_dbg_traceviewer_timeline.cpp - Timeline view (IMPLEMENTED):
+      - Timescale ruler with tick marks and labels
+      - Channel event rendering as colored rectangles
+      - Frame boundaries and VBLANK shading
+      - Zoom/pan with mouse wheel and dragging
+      - Selection overlay (time range)
+      - Focus time indicator (yellow line)
+      - Frame channel support
+      - Draggable label/event splitter
+      - Horizontal/vertical scrollbars
+      - Tooltip support for events
+  [x] ui_dbg_traceviewer_panels.cpp - Bottom panels (IMPLEMENTED):
+      - CPU History tab: instructions around focus time, cycle/PC/disasm/
+        registers columns, auto-scroll, ImGui table with clipper
+      - CPU Profile tab: 5 modes (Instructions, Functions, Call Graph,
+        Basic Blocks, Basic Lines), sortable columns, counter mode
+        selection (Branch Taken/Not Taken, Page Crossing, Redundant Op),
+        global addresses toggle
+      - Log tab: timestamp modes (None, Beam Position, Cycle, Microseconds),
+        Copy Selected/All, double-click to navigate
+  [x] Wire trace viewer to Debug menu — "Performance Analyzer..." at line 1435
+      calls ATActivateUIPane(kATUIPaneId_Profiler, true). "Profile View" also
+      wired at line 1430. Both are functional menu items.
+  [ ] Profile list CSV export context menu
   [ ] Profiler boundary rule dialog
+  [ ] "Go To Tape Editor" in trace viewer tape menu
 
-Phase 12: Tape Editor                                   [TODO]
-  [ ] ui_tool_tapeeditor.cpp - Full tape waveform editor:
-      - File menu: Open, Reload, Save As CAS/WAV
-      - Edit menu: Undo/Redo, Cut/Copy/Paste/Delete,
-        Convert Standard/Raw Block, Repeat Analysis
-      - View menu: FSK/Turbo/No Signal/Waveform/Spectrogram,
-        Frequency Guidelines
-      - Data menu: Extract C: File
-      - Options: Capture SIO, Store Waveform On Load
-      - Peak waveform visualization
+Phase 12: Tape Editor                                   [DONE]
+  [x] ui_tool_tapeeditor.cpp (795 lines) - Main window and UI
+  [x] ui_tool_tapeeditor_ops.cpp (1333 lines) - Operations
+  [x] ui_tool_tapeeditor_view.cpp (700 lines) - Rendering
+  [x] ui_tool_tapeeditor.h - Header with ATTapeEditorState
+      Full implementation (~2800 lines total) including:
+      - File handling (open, reload, save as CAS/WAV)
+      - Waveform/spectrogram support
+      - Complete tape editing operations
+      - Persistent state management
   Note: Disk Explorer is already in ui_tools.cpp (not a debugger tool)
 
 Phase 13: Polish                                        [TODO]
   [ ] Debug font dialog (IDD_DEBUG_CHOOSE_FONT)
+  [ ] Wire verifier to menu (change `false` to `true` at ui_menus.cpp:1434,
+      call ATUIShowDialogVerifier, render via ATUIRenderVerifierDialog)
   [ ] Debugger settings persistence verification
   [ ] Autotest command compilation verification

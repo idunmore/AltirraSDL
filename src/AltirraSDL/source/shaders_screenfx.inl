@@ -96,9 +96,12 @@ void main() {
 #endif
 
 #ifdef FEAT_SHARP
-	// Sharp bilinear: snap to nearest source pixel center with controlled blend
-	vec2 f = floor(uv + 0.5);
-	vec2 d = f - uv;
+	// Sharp bilinear: snap to nearest source pixel center with controlled blend.
+	// uv is in normalized [0,1] space; convert to texel space first.
+	// uSharpnessInfo.zw = (1/srcW, 1/srcH) for converting back to normalized UV.
+	vec2 texUV = uv / uSharpnessInfo.zw;  // texel space [0, srcW] x [0, srcH]
+	vec2 f = floor(texUV + 0.5);
+	vec2 d = f - texUV;
 	uv = (f - clamp(d * uSharpnessInfo.xy + 0.5, 0.0, 1.0) + 0.5) * uSharpnessInfo.zw;
 #endif
 

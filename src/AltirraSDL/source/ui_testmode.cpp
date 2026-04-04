@@ -1,5 +1,5 @@
 //	AltirraSDL - UI Test Automation Framework
-//	Implementation of Unix domain socket IPC, ImGui test engine hooks,
+//	Implementation of cross-platform IPC, ImGui test engine hooks,
 //	item registry, and command dispatcher.
 
 #include <stdafx.h>
@@ -13,12 +13,7 @@
 #include <mutex>
 #include <algorithm>
 
-#include <sys/socket.h>
-#include <sys/un.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <errno.h>
-
+#include "testmode_ipc.h"
 #include "ui_testmode.h"
 #include "ui_main.h"
 #include "simulator.h"
@@ -27,77 +22,16 @@
 bool g_testModeEnabled = false;
 
 // =========================================================================
-// Socket IPC
+// IPC transport (cross-platform wrapper)
 // =========================================================================
 
-static int g_listenFd = -1;
-static int g_clientFd = -1;
-static std::string g_sockPath;
+static TestModeIPC g_ipc;
+static std::string g_ipcAddress;   // socket path or pipe name (for display)
 static std::string g_recvBuf;      // accumulates partial reads
 static std::string g_sendBuf;      // accumulates responses to flush
 
-static bool CreateListenSocket() {
-	g_sockPath = "/tmp/altirra-test-" + std::to_string(getpid()) + ".sock";
-
-	// Remove stale socket file if it exists
-	unlink(g_sockPath.c_str());
-
-	g_listenFd = socket(AF_UNIX, SOCK_STREAM, 0);
-	if (g_listenFd < 0) {
-		fprintf(stderr, "[TestMode] socket() failed: %s\n", strerror(errno));
-		return false;
-	}
-
-	struct sockaddr_un addr;
-	memset(&addr, 0, sizeof(addr));
-	addr.sun_family = AF_UNIX;
-	strncpy(addr.sun_path, g_sockPath.c_str(), sizeof(addr.sun_path) - 1);
-
-	if (bind(g_listenFd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-		fprintf(stderr, "[TestMode] bind(%s) failed: %s\n", g_sockPath.c_str(), strerror(errno));
-		close(g_listenFd);
-		g_listenFd = -1;
-		return false;
-	}
-
-	if (listen(g_listenFd, 1) < 0) {
-		fprintf(stderr, "[TestMode] listen() failed: %s\n", strerror(errno));
-		close(g_listenFd);
-		g_listenFd = -1;
-		unlink(g_sockPath.c_str());
-		return false;
-	}
-
-	// Non-blocking accept
-	fcntl(g_listenFd, F_SETFL, O_NONBLOCK);
-
-	fprintf(stderr, "[TestMode] Listening on %s\n", g_sockPath.c_str());
-	return true;
-}
-
-static void DestroySocket() {
-	if (g_clientFd >= 0) { close(g_clientFd); g_clientFd = -1; }
-	if (g_listenFd >= 0) { close(g_listenFd); g_listenFd = -1; }
-	if (!g_sockPath.empty()) { unlink(g_sockPath.c_str()); g_sockPath.clear(); }
-}
-
-static void TryAcceptClient() {
-	if (g_clientFd >= 0 || g_listenFd < 0)
-		return;
-
-	int fd = accept(g_listenFd, nullptr, nullptr);
-	if (fd < 0)
-		return;
-
-	fcntl(fd, F_SETFL, O_NONBLOCK);
-	g_clientFd = fd;
-	g_recvBuf.clear();
-	g_sendBuf.clear();
-	fprintf(stderr, "[TestMode] Client connected\n");
-}
-
 static void SendResponse(const std::string &json) {
-	if (g_clientFd < 0)
+	if (!g_ipc.HasClient())
 		return;
 	g_sendBuf += json;
 	g_sendBuf += '\n';
@@ -107,19 +41,18 @@ static void SendResponse(const std::string &json) {
 static void ResetClientState();
 
 static void FlushSendBuffer() {
-	if (g_clientFd < 0 || g_sendBuf.empty())
+	if (!g_ipc.HasClient() || g_sendBuf.empty())
 		return;
 
-	ssize_t sent = send(g_clientFd, g_sendBuf.data(), g_sendBuf.size(), MSG_NOSIGNAL);
+	int sent = g_ipc.Send(g_sendBuf.data(), g_sendBuf.size());
 	if (sent < 0) {
-		if (errno == EAGAIN || errno == EWOULDBLOCK)
-			return;  // try again next frame
 		fprintf(stderr, "[TestMode] Client disconnected (send error)\n");
-		close(g_clientFd);
-		g_clientFd = -1;
+		g_ipc.DisconnectClient();
 		ResetClientState();
 		return;
 	}
+	if (sent == 0)
+		return;  // would block, try again next frame
 	g_sendBuf.erase(0, (size_t)sent);
 }
 
@@ -747,7 +680,8 @@ bool ATTestModeInit() {
 	if (!g_testModeEnabled)
 		return true;
 
-	if (!CreateListenSocket())
+	g_ipcAddress = g_ipc.Init();
+	if (g_ipcAddress.empty())
 		return false;
 
 	// Enable ImGui test engine hooks
@@ -757,7 +691,7 @@ bool ATTestModeInit() {
 	// Register NewFrame hook to clear item registry each frame
 	EnsureHookRegistered();
 
-	fprintf(stderr, "[TestMode] Initialized (PID %d)\n", getpid());
+	fprintf(stderr, "[TestMode] Initialized (PID %lu)\n", (unsigned long)SDL_GetCurrentThreadID());
 	return true;
 }
 
@@ -770,7 +704,8 @@ void ATTestModeShutdown() {
 	if (ctx)
 		ctx->TestEngineHookItems = false;
 
-	DestroySocket();
+	g_ipc.Shutdown();
+	g_ipcAddress.clear();
 	g_items.clear();
 	ResetClientState();
 	fprintf(stderr, "[TestMode] Shutdown\n");
@@ -780,25 +715,24 @@ void ATTestModePollCommands(ATSimulator &sim, ATUIState &state) {
 	if (!g_testModeEnabled)
 		return;
 
-	TryAcceptClient();
+	g_ipc.TryAccept();
 
-	if (g_clientFd < 0)
+	if (!g_ipc.HasClient())
 		return;
 
 	// Read available data
 	char buf[4096];
-	ssize_t n = recv(g_clientFd, buf, sizeof(buf), 0);
+	int n = g_ipc.Recv(buf, sizeof(buf));
 	if (n > 0) {
 		g_recvBuf.append(buf, n);
-	} else if (n == 0) {
-		// Client disconnected
+	} else if (n < 0) {
+		// Client disconnected or error
 		fprintf(stderr, "[TestMode] Client disconnected\n");
-		close(g_clientFd);
-		g_clientFd = -1;
+		g_ipc.DisconnectClient();
 		ResetClientState();
 		return;
 	}
-	// n < 0 with EAGAIN/EWOULDBLOCK is fine — no data available
+	// n == 0: no data available (would block)
 
 	// Process complete lines — stop if a blocking command (wait_frames) is active
 	size_t pos;

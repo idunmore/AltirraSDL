@@ -1,0 +1,87 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'org.altirra.app'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "org.altirra.app"
+        minSdk 24           // Android 7.0 — covers 99%+ of active devices
+        targetSdk 34
+        versionCode 440
+        versionName "4.40"
+
+        ndk {
+            // arm64-v8a is the primary target (all modern phones)
+            // armeabi-v7a adds support for older 32-bit devices
+            abiFilters 'arm64-v8a', 'armeabi-v7a'
+        }
+
+        externalNativeBuild {
+            cmake {
+                arguments "-DANDROID_STL=c++_shared",
+                          "-DALTIRRA_SDL3=ON",
+                          "-DENABLE_LIBRASHADER=OFF"
+                // NDK Clang uses c++_shared by default for C++20 features
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            debuggable true
+            jniDebuggable true
+        }
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt')
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            // Point at the project root CMakeLists.txt
+            path "../../CMakeLists.txt"
+            version "3.24.0+"
+        }
+    }
+
+    // SDL3 uses Java sources for the Android activity layer.
+    // The SDLActivity.java (and related files) are fetched by CMake
+    // FetchContent alongside the SDL3 native library, so we add the
+    // SDL3 Java source directory dynamically.
+    //
+    // If SDL3 is installed as a system package (rare on Android), the
+    // Java files are in the SDL3 source tree. For FetchContent builds,
+    // they end up in the CMake build directory under _deps/sdl3-src/.
+    //
+    // We handle both paths: the build script sets SDL3_JAVA_DIR as a
+    // Gradle property if needed.
+    sourceSets {
+        main {
+            java.srcDirs += ['src/main/java']
+            // SDL3 Java sources are added by the build script via
+            // a gradle property or symlink — see android/setup_sdl3.sh
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+
+    // Don't compress assets — SDL3 needs raw access
+    androidResources {
+        noCompress 'xex', 'atr', 'car', 'cas', 'rom', 'bin'
+    }
+
+    lint {
+        abortOnError false
+    }
+}
+
+dependencies {
+    // No external Java dependencies — pure native SDL3 app
+}

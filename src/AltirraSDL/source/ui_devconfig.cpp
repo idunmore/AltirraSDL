@@ -162,6 +162,10 @@ static bool DispatchDeviceDialog(const char *tag, ATPropertySet& props, ATDevice
 }
 
 void ATUIRenderDeviceConfig(ATDeviceManager *devMgr) {
+	// Apply pending file browse results from async callbacks (thread safety)
+	extern void DevBrowseApplyPending();
+	DevBrowseApplyPending();
+
 	if (!g_devCfg.open)
 		return;
 

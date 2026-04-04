@@ -20,6 +20,32 @@
 // =========================================================================
 // Browse helpers — async SDL3 file/folder dialogs writing to a char buffer
 // =========================================================================
+// SDL file dialog callbacks may fire on a background thread. We store
+// the result in a pending queue and copy it to the target buffer on the
+// main thread (in DevBrowseApplyPending, called each frame).
+
+#include <mutex>
+
+struct DevBrowsePending {
+	char *buf;
+	int maxLen;
+	std::string path;
+};
+
+static std::mutex s_devBrowseMutex;
+static std::vector<DevBrowsePending> s_devBrowsePending;
+
+// Call each frame from the main thread to apply pending browse results.
+void DevBrowseApplyPending() {
+	std::lock_guard<std::mutex> lock(s_devBrowseMutex);
+	for (auto &p : s_devBrowsePending) {
+		if (p.buf) {
+			strncpy(p.buf, p.path.c_str(), p.maxLen - 1);
+			p.buf[p.maxLen - 1] = 0;
+		}
+	}
+	s_devBrowsePending.clear();
+}
 
 struct DevBrowseTarget {
 	char *buf;
@@ -29,8 +55,8 @@ struct DevBrowseTarget {
 static void DevBrowseFileCallback(void *userdata, const char * const *filelist, int /*filter*/) {
 	auto *tgt = (DevBrowseTarget *)userdata;
 	if (filelist && filelist[0] && tgt && tgt->buf) {
-		strncpy(tgt->buf, filelist[0], tgt->maxLen - 1);
-		tgt->buf[tgt->maxLen - 1] = 0;
+		std::lock_guard<std::mutex> lock(s_devBrowseMutex);
+		s_devBrowsePending.push_back({tgt->buf, tgt->maxLen, filelist[0]});
 	}
 	delete tgt;
 }
@@ -38,8 +64,8 @@ static void DevBrowseFileCallback(void *userdata, const char * const *filelist, 
 static void DevBrowseFolderCallback(void *userdata, const char * const *filelist, int /*filter*/) {
 	auto *tgt = (DevBrowseTarget *)userdata;
 	if (filelist && filelist[0] && tgt && tgt->buf) {
-		strncpy(tgt->buf, filelist[0], tgt->maxLen - 1);
-		tgt->buf[tgt->maxLen - 1] = 0;
+		std::lock_guard<std::mutex> lock(s_devBrowseMutex);
+		s_devBrowsePending.push_back({tgt->buf, tgt->maxLen, filelist[0]});
 	}
 	delete tgt;
 }

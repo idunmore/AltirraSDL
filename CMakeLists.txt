@@ -23,13 +23,9 @@ include(FetchContent)
 ###############################################################################
 
 # ALTIRRA_SDL3 — build the SDL3+ImGui frontend.
-# Defaults ON for non-Windows, OFF for Windows (use .sln for native).
-# Override with -DALTIRRA_SDL3=ON to get the SDL3 build on any platform.
-if(WIN32)
-    option(ALTIRRA_SDL3 "Build SDL3+ImGui frontend" OFF)
-else()
-    option(ALTIRRA_SDL3 "Build SDL3+ImGui frontend" ON)
-endif()
+# Always ON: CMake exclusively builds the SDL3+ImGui frontend.
+# The native Win32 UI is built via the Visual Studio .sln, never via CMake.
+option(ALTIRRA_SDL3 "Build SDL3+ImGui frontend" ON)
 
 # Platform compile definitions — belt-and-suspenders with vdtypes.h auto-detect
 if(WIN32)
@@ -71,6 +67,37 @@ if(ALTIRRA_SDL3)
         GIT_SHALLOW    TRUE
     )
     FetchContent_MakeAvailable(imgui)
+
+    # librashader C headers — fetched from the librashader repo.
+    # Only the include/ directory is needed (two C headers); the rest
+    # of the repo (Rust source) is ignored.  The actual shared library
+    # (librashader.so/.dll/.dylib) is loaded at runtime via dlopen —
+    # no link-time dependency.
+    option(ENABLE_LIBRASHADER "Enable librashader shader preset support" ON)
+    if(ENABLE_LIBRASHADER)
+        FetchContent_Declare(
+            librashader_headers
+            GIT_REPOSITORY https://github.com/SnowflakePowered/librashader.git
+            GIT_TAG        librashader-v0.10.1
+            GIT_SHALLOW    TRUE
+            # SOURCE_SUBDIR points to a dir with no CMakeLists.txt, so
+            # FetchContent_MakeAvailable skips add_subdirectory (we only
+            # need the C headers from include/, not the Rust build).
+            SOURCE_SUBDIR  include
+        )
+        FetchContent_MakeAvailable(librashader_headers)
+        # Copy the two C headers into vendor/librashader/ so
+        # __has_include("../vendor/librashader/librashader_ld.h") finds them.
+        # file(COPY) is used instead of symlinks for Windows compatibility.
+        set(LIBRASHADER_VENDOR_DIR "${CMAKE_SOURCE_DIR}/src/AltirraSDL/vendor/librashader")
+        file(MAKE_DIRECTORY "${LIBRASHADER_VENDOR_DIR}")
+        file(COPY
+            "${librashader_headers_SOURCE_DIR}/include/librashader.h"
+            "${librashader_headers_SOURCE_DIR}/include/librashader_ld.h"
+            DESTINATION "${LIBRASHADER_VENDOR_DIR}"
+        )
+        message(STATUS "librashader headers: ${librashader_headers_SOURCE_DIR}/include")
+    endif()
 
     add_library(imgui STATIC
         ${imgui_SOURCE_DIR}/imgui.cpp

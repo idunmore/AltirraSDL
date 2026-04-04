@@ -99,7 +99,19 @@ GLuint GLCreateTexture2D(int w, int h, GLenum internalFormat, GLenum format,
 }
 
 GLuint GLCreateFBO(int w, int h, GLenum internalFormat, GLuint *outTex) {
-	GLuint tex = GLCreateTexture2D(w, h, internalFormat, GL_RGBA, GL_UNSIGNED_BYTE, nullptr, true);
+	// Choose appropriate format/type pair for the internal format.
+	// Data pointer is null so these only matter for format compatibility.
+	GLenum format = GL_RGBA;
+	GLenum type = GL_UNSIGNED_BYTE;
+	if (internalFormat == GL_RGBA16F
+#ifdef GL_RGBA32F
+		|| internalFormat == GL_RGBA32F
+#endif
+	) {
+		type = GL_FLOAT;
+	}
+
+	GLuint tex = GLCreateTexture2D(w, h, internalFormat, format, type, nullptr, true);
 
 	GLuint fbo;
 	glGenFramebuffers(1, &fbo);
@@ -108,7 +120,14 @@ GLuint GLCreateFBO(int w, int h, GLenum internalFormat, GLuint *outTex) {
 
 	GLenum fbStatus = glCheckFramebufferStatus(GL_FRAMEBUFFER);
 	if (fbStatus != GL_FRAMEBUFFER_COMPLETE) {
-		fprintf(stderr, "[GL] FBO incomplete: 0x%04X\n", fbStatus);
+		fprintf(stderr, "[GL] FBO incomplete: 0x%04X (internalFormat=0x%04X, %dx%d)\n",
+			fbStatus, internalFormat, w, h);
+		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+		glDeleteFramebuffers(1, &fbo);
+		glDeleteTextures(1, &tex);
+		if (outTex)
+			*outTex = 0;
+		return 0;
 	}
 
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);

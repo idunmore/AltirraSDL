@@ -115,21 +115,33 @@ static void RenderEvents(ImDrawList *drawList, ImVec2 origin, float width, float
 	double endTime = ctx.mStartTime + (double)width * ctx.mSecondsPerPixel;
 	double eventThreshold = ctx.mSecondsPerPixel * 2.0;
 
-	// VBlank shading from frame channel
+	// Frame channel: alternating shading + vertical boundary lines
 	if (ctx.mpFrameChannel) {
 		ctx.mpFrameChannel->StartIteration(startTime, endTime, 0);
 		ATTraceEvent fev;
+		bool alternate = false;
 		while (ctx.mpFrameChannel->GetNextEvent(fev)) {
 			float x1 = origin.x + TimeToPixel(fev.mEventStart, ctx);
 			float x2 = origin.x + TimeToPixel(fev.mEventStop, ctx);
+
+			// Vertical frame boundary line
+			if (x1 >= origin.x && x1 <= origin.x + width) {
+				drawList->AddLine(
+					ImVec2(x1, origin.y),
+					ImVec2(x1, origin.y + eventAreaHeight),
+					IM_COL32(80, 80, 120, 120));
+			}
+
+			// Alternating VBLANK shading
 			x1 = std::max(x1, origin.x);
 			x2 = std::min(x2, origin.x + width);
-			if (x2 > x1) {
+			if (x2 > x1 && alternate) {
 				drawList->AddRectFilled(
 					ImVec2(x1, origin.y),
 					ImVec2(x2, origin.y + eventAreaHeight),
-					IM_COL32(40, 40, 60, 80));
+					IM_COL32(40, 40, 60, 50));
 			}
+			alternate = !alternate;
 		}
 	}
 
@@ -145,37 +157,57 @@ static void RenderEvents(ImDrawList *drawList, ImVec2 origin, float width, float
 				continue;
 			}
 
-			channel->StartIteration(startTime, endTime, eventThreshold);
-			ATTraceEvent ev;
-			while (channel->GetNextEvent(ev)) {
-				float x1 = origin.x + TimeToPixel(ev.mEventStart, ctx);
-				float x2 = origin.x + TimeToPixel(ev.mEventStop, ctx);
+			if (ch.mType == ATImGuiTraceViewerContext::kChannelType_Log) {
+				// Log channels: draw colored dots (circles), matching Windows Ellipse rendering
+				float dotRadius = (channelHeight - 4.0f) * 0.5f;
+				float dotCenterY = y + channelHeight * 0.5f;
 
-				// Clamp to visible area
-				x1 = std::max(x1, origin.x);
-				x2 = std::min(x2, origin.x + width);
+				channel->StartIteration(startTime - ctx.mSecondsPerPixel * dotRadius, endTime + ctx.mSecondsPerPixel * dotRadius, 0);
+				ATTraceEvent ev;
+				sint32 lastDotX = -9999;
+				while (channel->GetNextEvent(ev)) {
+					float cx = origin.x + TimeToPixel(ev.mEventStart, ctx);
+					sint32 dotX = (sint32)cx;
+					if (dotX == lastDotX)
+						continue;  // deduplicate at same pixel
+					lastDotX = dotX;
 
-				if (x2 <= x1)
-					continue;
+					if (cx >= origin.x - dotRadius && cx <= origin.x + width + dotRadius) {
+						ImU32 bgCol = TraceColorToImCol32(ev.mBgColor);
+						drawList->AddCircleFilled(ImVec2(cx, dotCenterY), dotRadius, bgCol);
+						drawList->AddCircle(ImVec2(cx, dotCenterY), dotRadius, IM_COL32(0, 0, 0, 180));
+					}
+				}
+			} else {
+				// Default and other channels: colored rectangles with labels
+				channel->StartIteration(startTime, endTime, eventThreshold);
+				ATTraceEvent ev;
+				while (channel->GetNextEvent(ev)) {
+					float x1 = origin.x + TimeToPixel(ev.mEventStart, ctx);
+					float x2 = origin.x + TimeToPixel(ev.mEventStop, ctx);
 
-				// Ensure minimum 1-pixel width for visibility
-				if (x2 - x1 < 1.0f)
-					x2 = x1 + 1.0f;
+					x1 = std::max(x1, origin.x);
+					x2 = std::min(x2, origin.x + width);
 
-				ImU32 bgCol = TraceColorToImCol32(ev.mBgColor);
-				drawList->AddRectFilled(ImVec2(x1, y + 1), ImVec2(x2, y + channelHeight - 1), bgCol);
+					if (x2 <= x1)
+						continue;
 
-				// Draw label if rectangle is wide enough
-				if (x2 - x1 > 40.0f && ev.mpName) {
-					VDStringA name8 = VDTextWToU8(VDStringSpanW(ev.mpName));
-					ImVec2 textSize = ImGui::CalcTextSize(name8.c_str());
-					float textX = x1 + 2.0f;
-					float textY = y + (channelHeight - textSize.y) * 0.5f;
+					if (x2 - x1 < 1.0f)
+						x2 = x1 + 1.0f;
 
-					// Clip text to event rectangle
-					drawList->PushClipRect(ImVec2(x1, y), ImVec2(x2, y + channelHeight), true);
-					drawList->AddText(ImVec2(textX, textY), IM_COL32(0, 0, 0, 255), name8.c_str());
-					drawList->PopClipRect();
+					ImU32 bgCol = TraceColorToImCol32(ev.mBgColor);
+					drawList->AddRectFilled(ImVec2(x1, y + 1), ImVec2(x2, y + channelHeight - 1), bgCol);
+
+					if (x2 - x1 > 40.0f && ev.mpName) {
+						VDStringA name8 = VDTextWToU8(VDStringSpanW(ev.mpName));
+						ImVec2 textSize = ImGui::CalcTextSize(name8.c_str());
+						float textX = x1 + 2.0f;
+						float textY = y + (channelHeight - textSize.y) * 0.5f;
+
+						drawList->PushClipRect(ImVec2(x1, y), ImVec2(x2, y + channelHeight), true);
+						drawList->AddText(ImVec2(textX, textY), IM_COL32(0, 0, 0, 255), name8.c_str());
+						drawList->PopClipRect();
+					}
 				}
 			}
 
@@ -230,8 +262,10 @@ void ATImGuiTraceViewer_RenderTimeline(ATImGuiTraceViewerContext& ctx) {
 	const float channelHeight = 22.0f;
 	const float groupHeaderHeight = ImGui::GetTextLineHeightWithSpacing() + 2.0f;
 	const float timescaleHeight = 24.0f;
-	const float labelWidth = 150.0f;
-	const float splitterWidth = 4.0f;
+	const float splitterWidth = 5.0f;
+
+	// Use context label width (draggable splitter)
+	float& labelWidth = ctx.mLabelWidth;
 
 	ImVec2 avail = ImGui::GetContentRegionAvail();
 	float eventAreaWidth = avail.x - labelWidth - splitterWidth;
@@ -305,7 +339,24 @@ void ATImGuiTraceViewer_RenderTimeline(ATImGuiTraceViewerContext& ctx) {
 		ImGui::EndChild();
 		ImGui::PopStyleVar();
 
-		ImGui::SameLine(0, splitterWidth);
+		// --- Draggable splitter between labels and events ---
+		ImGui::SameLine(0, 0);
+		{
+			ImVec2 splitterPos = ImGui::GetCursorScreenPos();
+			ImGui::InvisibleButton("##TVSplitter", ImVec2(splitterWidth, viewHeight));
+			if (ImGui::IsItemHovered())
+				ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+			if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+				labelWidth += ImGui::GetIO().MouseDelta.x;
+				labelWidth = std::max(50.0f, std::min(labelWidth, avail.x * 0.5f));
+			}
+			// Draw splitter line
+			ImDrawList *dl = ImGui::GetWindowDrawList();
+			float splMidX = splitterPos.x + splitterWidth * 0.5f;
+			dl->AddLine(ImVec2(splMidX, splitterPos.y), ImVec2(splMidX, splitterPos.y + viewHeight), IM_COL32(80, 80, 80, 200));
+		}
+
+		ImGui::SameLine(0, 0);
 
 		// --- Events area (right column, custom drawing) ---
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
@@ -326,7 +377,9 @@ void ATImGuiTraceViewer_RenderTimeline(ATImGuiTraceViewerContext& ctx) {
 			ImVec2 clipMax = ImVec2(eventOrigin.x + eventAreaWidth, mainOrigin.y + viewHeight);
 			drawList->PushClipRect(clipMin, clipMax, true);
 
-			ImVec2 scrolledOrigin = ImVec2(eventOrigin.x, eventOrigin.y - scrollY);
+			// eventOrigin already incorporates the child window scroll
+			// (SetScrollY shifts GetCursorScreenPos), so use it directly.
+			ImVec2 scrolledOrigin = ImVec2(eventOrigin.x, eventOrigin.y);
 			RenderEvents(drawList, scrolledOrigin, eventAreaWidth, totalHeight, ctx, channelHeight, groupHeaderHeight);
 
 			drawList->PopClipRect();
@@ -360,6 +413,9 @@ void ATImGuiTraceViewer_RenderTimeline(ATImGuiTraceViewerContext& ctx) {
 				if (panButton) {
 					ImVec2 delta = ImGui::GetIO().MouseDelta;
 					ctx.mStartTime -= (double)delta.x * ctx.mSecondsPerPixel;
+					if (ctx.mStartTime < 0) ctx.mStartTime = 0;
+					if (ctx.mTraceDuration > 0 && ctx.mStartTime > ctx.mTraceDuration)
+						ctx.mStartTime = ctx.mTraceDuration;
 					// Vertical pan via middle drag
 					if (ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) {
 						scrollY -= delta.y;
@@ -371,6 +427,9 @@ void ATImGuiTraceViewer_RenderTimeline(ATImGuiTraceViewerContext& ctx) {
 				if (ImGui::IsMouseDragging(ImGuiMouseButton_Right)) {
 					ImVec2 delta = ImGui::GetIO().MouseDelta;
 					ctx.mStartTime -= (double)delta.x * ctx.mSecondsPerPixel;
+					if (ctx.mStartTime < 0) ctx.mStartTime = 0;
+					if (ctx.mTraceDuration > 0 && ctx.mStartTime > ctx.mTraceDuration)
+						ctx.mStartTime = ctx.mTraceDuration;
 				}
 
 				// Selection (left-drag in selection mode)
@@ -398,10 +457,16 @@ void ATImGuiTraceViewer_RenderTimeline(ATImGuiTraceViewerContext& ctx) {
 					checkY += groupHeaderHeight;
 					for (const auto& ch : group.mChannels) {
 						if (mouseRelY >= checkY && mouseRelY < checkY + channelHeight && ch.mpChannel) {
-							ch.mpChannel->StartIteration(mouseTime - ctx.mSecondsPerPixel * 2, mouseTime + ctx.mSecondsPerPixel * 2, 0);
+							ch.mpChannel->StartIteration(mouseTime - ctx.mSecondsPerPixel * 4, mouseTime + ctx.mSecondsPerPixel * 4, 0);
 							ATTraceEvent ev;
 							while (ch.mpChannel->GetNextEvent(ev)) {
-								if (mouseTime >= ev.mEventStart && mouseTime <= ev.mEventStop && ev.mpName) {
+								// For point events (log entries), use a pixel-based
+								// proximity check instead of strict time range.
+								double tolerance = ctx.mSecondsPerPixel * 4;
+								bool hit = (ev.mEventStart == ev.mEventStop || ev.mEventStop - ev.mEventStart < tolerance)
+									? (fabs(mouseTime - ev.mEventStart) < tolerance)
+									: (mouseTime >= ev.mEventStart && mouseTime <= ev.mEventStop);
+								if (hit && ev.mpName) {
 									VDStringA tip = VDTextWToU8(VDStringSpanW(ev.mpName));
 									ImGui::SetTooltip("%s\n%.6fs - %.6fs", tip.c_str(), ev.mEventStart, ev.mEventStop);
 									goto tooltip_done;
@@ -417,8 +482,42 @@ void ATImGuiTraceViewer_RenderTimeline(ATImGuiTraceViewerContext& ctx) {
 		ImGui::EndChild();
 		ImGui::PopStyleVar();
 
-		// Sync scroll from labels child back (if user scrolled via labels scrollbar)
-		// Read the labels child scroll after both children are done
 	}
 	ImGui::EndChild();
+
+	// --- Horizontal scrollbar for timeline panning ---
+	if (ctx.mTraceDuration > 0) {
+		double viewWidthTime = ctx.mSecondsPerPixel * (double)eventAreaWidth;
+		if (viewWidthTime < ctx.mTraceDuration) {
+			float scrollFrac = (float)(ctx.mStartTime / (ctx.mTraceDuration - viewWidthTime));
+			scrollFrac = std::max(0.0f, std::min(1.0f, scrollFrac));
+
+			float scrollBarWidth = avail.x;
+			float thumbWidth = std::max(20.0f, scrollBarWidth * (float)(viewWidthTime / ctx.mTraceDuration));
+			float scrollRange = scrollBarWidth - thumbWidth;
+
+			ImVec2 barPos = ImGui::GetCursorScreenPos();
+			float barHeight = 12.0f;
+			ImGui::InvisibleButton("##TVHScroll", ImVec2(scrollBarWidth, barHeight));
+
+			ImDrawList *dl = ImGui::GetWindowDrawList();
+			// Track background
+			dl->AddRectFilled(barPos, ImVec2(barPos.x + scrollBarWidth, barPos.y + barHeight), IM_COL32(30, 30, 30, 255));
+			// Thumb
+			float thumbX = barPos.x + scrollFrac * scrollRange;
+			dl->AddRectFilled(ImVec2(thumbX, barPos.y + 1), ImVec2(thumbX + thumbWidth, barPos.y + barHeight - 1), IM_COL32(100, 100, 120, 255));
+
+			if (scrollRange > 1.0f) {
+				if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+					float newFrac = (ImGui::GetMousePos().x - barPos.x - thumbWidth * 0.5f) / scrollRange;
+					newFrac = std::max(0.0f, std::min(1.0f, newFrac));
+					ctx.mStartTime = newFrac * (ctx.mTraceDuration - viewWidthTime);
+				} else if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+					float newFrac = (ImGui::GetMousePos().x - barPos.x - thumbWidth * 0.5f) / scrollRange;
+					newFrac = std::max(0.0f, std::min(1.0f, newFrac));
+					ctx.mStartTime = newFrac * (ctx.mTraceDuration - viewWidthTime);
+				}
+			}
+		}
+	}
 }

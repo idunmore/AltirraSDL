@@ -214,15 +214,20 @@ void ATUIShowOpenImageDialog(SDL_Window *window) {
 	SDL_ShowOpenFileDialog(OpenImageCallback, nullptr, window, kImageFilters, 2, nullptr, false);
 }
 
+static std::mutex g_pendingSourceMutex;
+static std::string g_pendingSourcePath;
+
 void ATUIShowOpenSourceFileDialog(SDL_Window *window) {
 	static const SDL_DialogFileFilter srcFilters[] = {
 		{ "Source Files", "s;asm;src;lst;inc;txt" },
 		{ "All Files", "*" },
 	};
+	// SDL3 file dialog callbacks may fire on a background thread.
+	// Store the path and process on the main thread.
 	SDL_ShowOpenFileDialog([](void *, const char * const *fl, int) {
 		if (fl && fl[0]) {
-			VDStringW wpath = VDTextU8ToW(VDStringA(fl[0]));
-			ATOpenSourceWindow(wpath.c_str());
+			std::lock_guard<std::mutex> lock(g_pendingSourceMutex);
+			g_pendingSourcePath = fl[0];
 		}
 	}, nullptr, window, srcFilters, 2, nullptr, false);
 }
@@ -925,20 +930,31 @@ static void RenderViewMenu(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 	if (ImGui::MenuItem("Adjust Colors..."))
 		state.showAdjustColors = true;
 
-	if (ImGui::MenuItem("Adjust Screen Effects..."))
-		state.showScreenEffects = true;
+	// SDL3 UI extension: Screen Effects and Shader items are grouped under a
+	// single submenu.  Windows Altirra has these as separate top-level View
+	// menu items, but because the SDL3 build adds librashader integration
+	// (Shader Preset, Shader Parameters, Shader Setup) which doesn't exist
+	// in the Windows UI, we consolidate them here to keep the menu tidy.
+	if (ImGui::BeginMenu("Adjust Screen Effects")) {
+		if (ImGui::MenuItem("Basic..."))
+			state.showScreenEffects = true;
 
-	ATUIRenderShaderPresetMenu(backend);
+		ImGui::Separator();
 
-	{
-		IDisplayBackend *be = ATUIGetDisplayBackend();
-		bool hasPreset = be && be->HasShaderPreset();
-		if (ImGui::MenuItem("Shader Parameters...", nullptr, false, hasPreset))
-			state.showShaderParams = true;
+		if (ImGui::MenuItem("Shader Setup..."))
+			state.showShaderSetup = true;
+
+		ATUIRenderShaderPresetMenu(backend);
+
+		{
+			IDisplayBackend *be = ATUIGetDisplayBackend();
+			bool hasPreset = be && be->HasShaderPreset();
+			if (ImGui::MenuItem("Shader Parameters...", nullptr, false, hasPreset))
+				state.showShaderParams = true;
+		}
+
+		ImGui::EndMenu();
 	}
-
-	if (ImGui::MenuItem("Shader Setup..."))
-		state.showShaderSetup = true;
 
 	ImGui::MenuItem("Customize HUD...", nullptr, false, false);          // placeholder
 	ImGui::MenuItem("Calibrate...", nullptr, false, false);              // placeholder
@@ -1509,6 +1525,7 @@ static std::string g_sapSourcePath;
 static bool g_sapNeedsSaveDialog = false;
 
 static void SAPSaveCallback(void *, const char * const *filelist, int) {
+	std::lock_guard<std::mutex> lock(g_toolsDialogMutex);
 	if (!filelist || !filelist[0] || g_sapSourcePath.empty())
 		return;
 	ATUIPushDeferred2(kATDeferred_ConvertSAPToEXE, g_sapSourcePath.c_str(), filelist[0]);
@@ -1535,6 +1552,7 @@ static std::string g_tapeSourcePath;
 static bool g_tapeNeedsSaveDialog = false;
 
 static void TapeAnalysisSaveCallback(void *, const char * const *filelist, int) {
+	std::lock_guard<std::mutex> lock(g_toolsDialogMutex);
 	if (!filelist || !filelist[0] || g_tapeSourcePath.empty())
 		return;
 	ATUIPushDeferred2(kATDeferred_AnalyzeTapeDecode, g_tapeSourcePath.c_str(), filelist[0]);
@@ -1663,6 +1681,16 @@ void ATUIRenderMainMenu(ATSimulator &sim, SDL_Window *window, IDisplayBackend *b
 	if (ImGui::BeginMenu("Help")) { RenderHelpMenu(state); ImGui::EndMenu(); }
 
 	ImGui::EndMainMenuBar();
+
+	// Process deferred source file open (must run on main thread).
+	{
+		std::lock_guard<std::mutex> lock(g_pendingSourceMutex);
+		if (!g_pendingSourcePath.empty()) {
+			VDStringW wpath = VDTextU8ToW(VDStringA(g_pendingSourcePath.c_str()));
+			g_pendingSourcePath.clear();
+			ATOpenSourceWindow(wpath.c_str());
+		}
+	}
 
 	// Process deferred save dialogs from file dialog callbacks (must run on main thread).
 	// This runs every frame regardless of whether the Tools menu is open.

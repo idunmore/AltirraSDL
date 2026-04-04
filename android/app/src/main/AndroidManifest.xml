@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Storage access for ROM files and disk images -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <!-- Android 13+ granular media permissions (images covers ROM files) -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+
+    <!-- Haptic feedback -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+    <!-- OpenGL ES 3.0 required (maps to our GL 3.3 core backend) -->
+    <uses-feature android:glEsVersion="0x00030000" android:required="true" />
+
+    <!-- Touch screen (obviously required for mobile UI) -->
+    <uses-feature android:name="android.hardware.touchscreen" android:required="true" />
+
+    <!-- Gamepad support (optional — works via SDL3 gamepad API) -->
+    <uses-feature android:name="android.hardware.gamepad" android:required="false" />
+
+    <application
+        android:label="Altirra"
+        android:icon="@mipmap/ic_launcher"
+        android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
+        android:hasCode="true"
+        android:hardwareAccelerated="true"
+        android:allowBackup="true">
+
+        <!-- Main activity — SDL3 provides SDLActivity which handles
+             the GL surface, lifecycle, and native library loading.
+             Our AltirraActivity extends it for any Android-specific
+             customization (permissions, file picker intents). -->
+        <activity
+            android:name="org.altirra.app.AltirraActivity"
+            android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|uiMode|locale|layoutDirection"
+            android:screenOrientation="fullSensor"
+            android:exported="true"
+            android:launchMode="singleTask">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- Handle Atari file types -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+                <data android:pathPattern=".*\\.xex" />
+                <data android:pathPattern=".*\\.atr" />
+                <data android:pathPattern=".*\\.car" />
+                <data android:pathPattern=".*\\.cas" />
+                <data android:pathPattern=".*\\.rom" />
+            </intent-filter>
+
+            <!-- SDL3 metadata: tell SDL which native library to load -->
+            <meta-data android:name="SDL_MAIN_ENTRY_POINT"
+                android:value="main" />
+        </activity>
+    </application>
+</manifest>

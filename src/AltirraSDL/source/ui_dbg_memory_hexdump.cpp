@@ -114,6 +114,29 @@ void ATImGuiMemoryPaneImpl::RenderHexDump() {
 	uint32 spaceMask = ATAddressGetSpaceSize(mViewStart) - 1;
 	uint32 totalBytes = (uint32)mViewData.size();
 
+	// Overlay in-progress edit value into mViewData so that bitmap and
+	// text interpretation columns show the edit in real time (matching
+	// the Windows mRenderLineData overlay, uidbgmemory.cpp:1005-1017).
+	uint8 editSavedByte0 = 0, editSavedByte1 = 0;
+	sint32 editOverlayIdx = -1;
+	bool editOverlayWord = false;
+	if (mHighlightedAddress.has_value() && mbSelectionEnabled
+		&& mEditValue >= 0) {
+		sint32 idx = AddrToIndex(mHighlightedAddress.value());
+		if (idx >= 0 && (uint32)idx < totalBytes) {
+			editOverlayIdx = idx;
+			editSavedByte0 = mViewData[idx];
+			mViewData[idx] = (uint8)(mEditValue & 0xFF);
+
+			if (!mbHighlightedData && IsWordMode()
+				&& (uint32)(idx + 1) < totalBytes) {
+				editOverlayWord = true;
+				editSavedByte1 = mViewData[idx + 1];
+				mViewData[idx + 1] = (uint8)((mEditValue >> 8) & 0xFF);
+			}
+		}
+	}
+
 	// Bitmap texture for font/graphics modes
 	uint32 rows = totalBytes / mColumns;
 	if (rows == 0) rows = 1;
@@ -186,7 +209,7 @@ void ATImGuiMemoryPaneImpl::RenderHexDump() {
 
 					if (changed)
 						ImGui::PushStyleColor(ImGuiCol_Text,
-							ImVec4(0.3f, 0.5f, 1.0f, 1.0f));
+							ImVec4(1.0f, 0.5f, 0.5f, 1.0f));
 
 					ImGui::SameLine(0, charW * 0.5f);
 
@@ -374,6 +397,36 @@ void ATImGuiMemoryPaneImpl::RenderHexDump() {
 
 						ImGui::Image((ImTextureID)GetBitmapImTextureID(),
 							ImVec2(displayW, displayH), uv0, uv1);
+
+						// Click / hover detection on bitmap area
+						// (matches Windows GetAddressFromPoint for
+						// interpret column in bitmap modes).
+						if (ImGui::IsItemHovered()) {
+							ImVec2 mouse = ImGui::GetMousePos();
+							ImVec2 rMin = ImGui::GetItemRectMin();
+							float relX = mouse.x - rMin.x;
+							int byteIdx = (int)(relX / displayW
+								* (float)bytesInRow);
+							byteIdx = std::clamp(byteIdx, 0,
+								(int)bytesInRow - 1);
+							uint32 clickAddr = IndexToAddr(
+								rowOffset + byteIdx);
+
+							if (ImGui::IsMouseClicked(0)) {
+								mHighlightedAddress = clickAddr;
+								mbHighlightedData = true;
+								mbSelectionEnabled = true;
+								mEditValue = -1;
+								mEditPhase = 0;
+							} else if (!mbSelectionEnabled) {
+								mHighlightedAddress = clickAddr;
+								mbHighlightedData = true;
+							}
+							if (ImGui::IsMouseClicked(1)) {
+								contextAddr = clickAddr;
+								contextAddrValid = true;
+							}
+						}
 					}
 				}
 
@@ -384,11 +437,17 @@ void ATImGuiMemoryPaneImpl::RenderHexDump() {
 		// ================================================================
 		// Keyboard input
 		// ================================================================
+		// Focus check: the MemoryHex child window must be focused.
+		// We do NOT gate on io.WantTextInput because that global flag
+		// is updated with a 1-2 frame delay after the console's InputText
+		// is deactivated by clicking a hex cell.  IsWindowFocused() is
+		// sufficient: the child can only be focused when no InputText in
+		// another window is active (clicking the Selectable deactivates
+		// any previously active InputText).
 		bool focused = ImGui::IsWindowFocused();
-		bool noTextInput = !ImGui::GetIO().WantTextInput;
 
 		if (mbSelectionEnabled && mHighlightedAddress.has_value()
-			&& focused && noTextInput) {
+			&& focused) {
 
 			uint32 hiAddr = mHighlightedAddress.value();
 			bool isHexMode = IsHexMode();
@@ -473,7 +532,8 @@ void ATImGuiMemoryPaneImpl::RenderHexDump() {
 			if (ImGui::IsKeyPressed(ImGuiKey_Enter)
 				|| ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) {
 				CommitEdit();
-				mHighlightedAddress = hiAddr + StepSize();
+				uint32 step = (IsWordMode() && !mbHighlightedData) ? 2 : 1;
+				mHighlightedAddress = hiAddr + step;
 				EnsureHighlightVisible();
 				if (mbNeedsRebuild) RebuildView();
 			}
@@ -501,20 +561,22 @@ void ATImGuiMemoryPaneImpl::RenderHexDump() {
 
 			if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) {
 				CommitEdit();
+				uint32 step = (IsWordMode() && !mbHighlightedData) ? 2 : 1;
 				sint32 off = (sint32)(hiAddr & kATAddressOffsetMask);
-				if (off >= StepSize()) {
+				if (off >= (sint32)step) {
 					mHighlightedAddress = (hiAddr & kATAddressSpaceMask)
-						| (off - StepSize());
+						| (off - step);
 					EnsureHighlightVisible();
 				}
 			}
 			if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)) {
 				CommitEdit();
+				uint32 step = (IsWordMode() && !mbHighlightedData) ? 2 : 1;
 				uint32 off = hiAddr & kATAddressOffsetMask;
 				uint32 maxOff = ATAddressGetSpaceSize(hiAddr) - 1;
-				if (off + StepSize() <= maxOff) {
+				if (off + step <= maxOff) {
 					mHighlightedAddress = (hiAddr & kATAddressSpaceMask)
-						| (off + StepSize());
+						| (off + step);
 					EnsureHighlightVisible();
 				}
 			}
@@ -561,7 +623,6 @@ void ATImGuiMemoryPaneImpl::RenderHexDump() {
 		// ---- Escape → focus Console (when no selection) ----
 		if (!mbSelectionEnabled && !mbEditCancelledThisFrame
 			&& ImGui::IsWindowFocused()
-			&& !ImGui::GetIO().WantTextInput
 			&& ImGui::IsKeyPressed(ImGuiKey_Escape))
 			ATUIDebuggerFocusConsole();
 
@@ -704,4 +765,12 @@ void ATImGuiMemoryPaneImpl::RenderHexDump() {
 	}
 	ImGui::EndChild();
 	ImGui::PopStyleVar();	// ItemSpacing
+
+	// Restore mViewData bytes that were temporarily overlaid with
+	// the in-progress edit value.
+	if (editOverlayIdx >= 0) {
+		mViewData[editOverlayIdx] = editSavedByte0;
+		if (editOverlayWord)
+			mViewData[editOverlayIdx + 1] = editSavedByte1;
+	}
 }

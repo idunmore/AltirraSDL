@@ -5181,6 +5181,78 @@ source/main_sdl3.cpp.s:
 	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/main_sdl3.cpp.s
 .PHONY : source/main_sdl3.cpp.s
 
+source/testmode_ipc.o: source/testmode_ipc.cpp.o
+.PHONY : source/testmode_ipc.o
+
+# target to build an object file
+source/testmode_ipc.cpp.o:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/testmode_ipc.cpp.o
+.PHONY : source/testmode_ipc.cpp.o
+
+source/testmode_ipc.i: source/testmode_ipc.cpp.i
+.PHONY : source/testmode_ipc.i
+
+# target to preprocess a source file
+source/testmode_ipc.cpp.i:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/testmode_ipc.cpp.i
+.PHONY : source/testmode_ipc.cpp.i
+
+source/testmode_ipc.s: source/testmode_ipc.cpp.s
+.PHONY : source/testmode_ipc.s
+
+# target to generate assembly for a file
+source/testmode_ipc.cpp.s:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/testmode_ipc.cpp.s
+.PHONY : source/testmode_ipc.cpp.s
+
+source/touch_controls.o: source/touch_controls.cpp.o
+.PHONY : source/touch_controls.o
+
+# target to build an object file
+source/touch_controls.cpp.o:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/touch_controls.cpp.o
+.PHONY : source/touch_controls.cpp.o
+
+source/touch_controls.i: source/touch_controls.cpp.i
+.PHONY : source/touch_controls.i
+
+# target to preprocess a source file
+source/touch_controls.cpp.i:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/touch_controls.cpp.i
+.PHONY : source/touch_controls.cpp.i
+
+source/touch_controls.s: source/touch_controls.cpp.s
+.PHONY : source/touch_controls.s
+
+# target to generate assembly for a file
+source/touch_controls.cpp.s:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/touch_controls.cpp.s
+.PHONY : source/touch_controls.cpp.s
+
+source/touch_layout.o: source/touch_layout.cpp.o
+.PHONY : source/touch_layout.o
+
+# target to build an object file
+source/touch_layout.cpp.o:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/touch_layout.cpp.o
+.PHONY : source/touch_layout.cpp.o
+
+source/touch_layout.i: source/touch_layout.cpp.i
+.PHONY : source/touch_layout.i
+
+# target to preprocess a source file
+source/touch_layout.cpp.i:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/touch_layout.cpp.i
+.PHONY : source/touch_layout.cpp.i
+
+source/touch_layout.s: source/touch_layout.cpp.s
+.PHONY : source/touch_layout.s
+
+# target to generate assembly for a file
+source/touch_layout.cpp.s:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/touch_layout.cpp.s
+.PHONY : source/touch_layout.cpp.s
+
 source/ui_cartmapper.o: source/ui_cartmapper.cpp.o
 .PHONY : source/ui_cartmapper.o
 
@@ -5972,6 +6044,30 @@ source/ui_menus.s: source/ui_menus.cpp.s
 source/ui_menus.cpp.s:
 	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/ui_menus.cpp.s
 .PHONY : source/ui_menus.cpp.s
+
+source/ui_mobile.o: source/ui_mobile.cpp.o
+.PHONY : source/ui_mobile.o
+
+# target to build an object file
+source/ui_mobile.cpp.o:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/ui_mobile.cpp.o
+.PHONY : source/ui_mobile.cpp.o
+
+source/ui_mobile.i: source/ui_mobile.cpp.i
+.PHONY : source/ui_mobile.i
+
+# target to preprocess a source file
+source/ui_mobile.cpp.i:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/ui_mobile.cpp.i
+.PHONY : source/ui_mobile.cpp.i
+
+source/ui_mobile.s: source/ui_mobile.cpp.s
+.PHONY : source/ui_mobile.s
+
+# target to generate assembly for a file
+source/ui_mobile.cpp.s:
+	cd /home/ilm/Documents/GitHub/AltirraSDL/build && $(MAKE) $(MAKESILENT) -f src/AltirraSDL/CMakeFiles/AltirraSDL.dir/build.make src/AltirraSDL/CMakeFiles/AltirraSDL.dir/source/ui_mobile.cpp.s
+.PHONY : source/ui_mobile.cpp.s
 
 source/ui_palette_solver.o: source/ui_palette_solver.cpp.o
 .PHONY : source/ui_palette_solver.o
@@ -7043,6 +7139,15 @@ help:
 	@echo "... source/main_sdl3.o"
 	@echo "... source/main_sdl3.i"
 	@echo "... source/main_sdl3.s"
+	@echo "... source/testmode_ipc.o"
+	@echo "... source/testmode_ipc.i"
+	@echo "... source/testmode_ipc.s"
+	@echo "... source/touch_controls.o"
+	@echo "... source/touch_controls.i"
+	@echo "... source/touch_controls.s"
+	@echo "... source/touch_layout.o"
+	@echo "... source/touch_layout.i"
+	@echo "... source/touch_layout.s"
 	@echo "... source/ui_cartmapper.o"
 	@echo "... source/ui_cartmapper.i"
 	@echo "... source/ui_cartmapper.s"
@@ -7142,6 +7247,9 @@ help:
 	@echo "... source/ui_menus.o"
 	@echo "... source/ui_menus.i"
 	@echo "... source/ui_menus.s"
+	@echo "... source/ui_mobile.o"
+	@echo "... source/ui_mobile.i"
+	@echo "... source/ui_mobile.s"
 	@echo "... source/ui_palette_solver.o"
 	@echo "... source/ui_palette_solver.i"
 	@echo "... source/ui_palette_solver.s"

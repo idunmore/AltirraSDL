@@ -7,9 +7,9 @@
 //	  vendor/librashader/librashader.h
 //	  vendor/librashader/librashader_ld.h
 //
-//	To enable: install librashader.so (Linux) or librashader.dylib (macOS)
-//	from https://github.com/SnowflakePowered/librashader/releases
-//	then drop the headers into src/AltirraSDL/vendor/librashader/.
+//	Headers are fetched automatically by CMake (ENABLE_LIBRASHADER=ON).
+//	To enable at runtime: install librashader.so (Linux), librashader.dylib
+//	(macOS), or librashader.dll (Windows).
 
 #pragma once
 
@@ -54,14 +54,13 @@ public:
 	// Returns the path of the currently loaded preset, or empty string.
 	const std::string &GetPresetPath() const { return mPresetPath; }
 
-	// Apply the shader chain to the input texture, rendering to the output FBO.
+	// Apply the shader chain to the input texture, rendering to the output texture.
 	// inputTex: GL texture containing the emulator frame
-	// outputFBO: target FBO handle
-	// outputTex: texture attached to the target FBO (needed by librashader internals)
+	// outputTex: GL texture to receive the filtered output
 	// srcW, srcH: input texture dimensions
 	// dstW, dstH: output dimensions
 	// frameCount: monotonically increasing frame counter
-	void Apply(unsigned int inputTex, unsigned int outputFBO, unsigned int outputTex,
+	void Apply(unsigned int inputTex, unsigned int outputTex,
 		int srcW, int srcH, int dstW, int dstH, unsigned int frameCount);
 
 	// Return the cached parameter metadata.

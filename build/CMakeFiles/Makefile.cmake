@@ -72,6 +72,7 @@ set(CMAKE_MAKEFILE_OUTPUTS
 # Byproducts of CMake generate step:
 set(CMAKE_MAKEFILE_PRODUCTS
   "_deps/imgui-subbuild/CMakeLists.txt"
+  "_deps/librashader_headers-subbuild/CMakeLists.txt"
   "CMakeFiles/CMakeDirectoryInformation.cmake"
   "src/CMakeFiles/CMakeDirectoryInformation.cmake"
   "src/system/CMakeFiles/CMakeDirectoryInformation.cmake"

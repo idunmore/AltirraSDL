@@ -287,16 +287,19 @@ void DisplayBackendGL33::RenderFrame(float dstX, float dstY, float dstW, float d
 			mLibrashaderOutFBO.Create(vpW, vpH, GL_RGBA8);
 		}
 
-		mLibrashader.Apply(mLibrashaderFBO.tex, mLibrashaderOutFBO.fbo, mLibrashaderOutFBO.tex,
+		mLibrashader.Apply(mLibrashaderFBO.tex, mLibrashaderOutFBO.tex,
 			vpW, vpH, vpW, vpH, mFrameCounter);
 
-		// Restore GL state after librashader
+		// Restore GL state after librashader — some presets may enable
+		// sRGB framebuffer writes which would corrupt ImGui rendering.
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
 		glDisable(GL_BLEND);
 		glDisable(GL_DEPTH_TEST);
 		glDisable(GL_STENCIL_TEST);
 		glDisable(GL_CULL_FACE);
 		glDisable(GL_SCISSOR_TEST);
+		glDisable(GL_FRAMEBUFFER_SRGB);
+		glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
 
 		// Blit librashader output to the screen
 		int scrVpX = (int)dstX;
@@ -405,11 +408,10 @@ bool DisplayBackendGL33::ReadPixels(void *dst, int dstPitch, int x, int y, int w
 
 	glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
 
-	// GL reads bottom-up; we need top-down. Read row by row in reverse.
-	glPixelStorei(GL_PACK_ROW_LENGTH, dstPitch / 4);
+	// GL reads bottom-up; we need top-down. Read into tight temp buffer then flip.
+	glPixelStorei(GL_PACK_ROW_LENGTH, 0);
 	glPixelStorei(GL_PACK_ALIGNMENT, 1);
 
-	// Read the whole region bottom-up and flip
 	std::vector<uint8_t> temp(w * 4 * h);
 	glReadPixels(x, mWinH - y - h, w, h, GL_RGBA, GL_UNSIGNED_BYTE, temp.data());
 
@@ -420,8 +422,6 @@ bool DisplayBackendGL33::ReadPixels(void *dst, int dstPitch, int x, int y, int w
 			temp.data() + (h - 1 - row) * w * 4,
 			w * 4);
 	}
-
-	glPixelStorei(GL_PACK_ROW_LENGTH, 0);
 	return true;
 }
 
@@ -447,9 +447,11 @@ void DisplayBackendGL33::SetFilterMode(int mode) {
 	GLenum filter = GL_LINEAR;
 	if (mode == kATDisplayFilterMode_Point)
 		filter = GL_NEAREST;
-	// Sharp bilinear and bicubic use their own shader-based filtering,
-	// but the base texture should be nearest to avoid double-filtering.
-	if (mode == kATDisplayFilterMode_SharpBilinear || mode == kATDisplayFilterMode_Bicubic)
+	// Bicubic uses its own shader-based filtering with explicit samples,
+	// so the base texture should be nearest to avoid double-filtering.
+	// Sharp bilinear deliberately uses hardware bilinear as part of its
+	// algorithm — the shader adjusts UVs to control the blend.
+	if (mode == kATDisplayFilterMode_Bicubic)
 		filter = GL_NEAREST;
 
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
@@ -694,7 +696,9 @@ void DisplayBackendGL33::RenderScreenFX(float dstX, float dstY, float dstW, floa
 			glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
 			// Restore the filter mode on the emulator texture
-			GLenum filter = (mFilterMode == kATDisplayFilterMode_Point)
+			// Only Point and Bicubic use NEAREST; SharpBilinear uses LINEAR.
+			GLenum filter = (mFilterMode == kATDisplayFilterMode_Point
+				|| mFilterMode == kATDisplayFilterMode_Bicubic)
 				? GL_NEAREST : GL_LINEAR;
 			glBindTexture(GL_TEXTURE_2D, sourceTex);
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
@@ -777,12 +781,16 @@ void DisplayBackendGL33::RenderScreenFX(float dstX, float dstY, float dstW, floa
 	const auto &u = prog.uniforms;
 
 	if ((features & kSFX_Sharp) && u.uSharpnessInfo >= 0) {
-		// Sharp bilinear parameters
-		float snapScaleX = (float)srcW / dstW * (2.0f + mFilterSharpness);
-		float snapScaleY = (float)srcH / dstH * (2.0f + mFilterSharpness);
+		// Sharp bilinear parameters — match the Windows lookup table.
+		// mFilterSharpness is an integer -2..+2 from the UI setting.
+		static const float kFactors[5] = { 1.259f, 1.587f, 2.0f, 2.520f, 3.175f };
+		int idx = std::max(0, std::min(4, (int)mFilterSharpness + 2));
+		float factor = kFactors[idx];
+		float sharpnessX = std::max(1.0f, factor * 0.5f);
+		float sharpnessY = std::max(1.0f, factor);
 		float uvScaleX = 1.0f / (float)srcW;
 		float uvScaleY = 1.0f / (float)srcH;
-		glUniform4f(u.uSharpnessInfo, snapScaleX, snapScaleY, uvScaleX, uvScaleY);
+		glUniform4f(u.uSharpnessInfo, sharpnessX, sharpnessY, uvScaleX, uvScaleY);
 	}
 
 	if ((features & (kSFX_Scanlines | kSFX_DotMask)) && u.uScanlineInfo >= 0) {
@@ -838,6 +846,21 @@ void DisplayBackendGL33::RenderScreenFX(float dstX, float dstY, float dstW, floa
 	}
 
 	GLDrawFullscreenTriangle();
+
+	// Clean up bound textures on auxiliary units
+	if ((features & kSFX_DotMask) && mMaskTexture) {
+		glActiveTexture(GL_TEXTURE0 + 3);
+		glBindTexture(GL_TEXTURE_2D, 0);
+	}
+	if ((features & kSFX_Scanlines) && mScanlineTexture) {
+		glActiveTexture(GL_TEXTURE0 + 2);
+		glBindTexture(GL_TEXTURE_2D, 0);
+	}
+	if ((features & kSFX_Gamma) && mGammaTexture) {
+		glActiveTexture(GL_TEXTURE0 + 1);
+		glBindTexture(GL_TEXTURE_2D, 0);
+	}
+	glActiveTexture(GL_TEXTURE0);
 
 	glUseProgram(0);
 	glBindVertexArray(0);
@@ -940,6 +963,7 @@ void DisplayBackendGL33::RenderBloomV2(int srcW, int srcH, GLuint sourceTex) {
 	VDDBloomV2RenderParams rp = VDDComputeBloomV2Parameters(cp);
 
 	glBindVertexArray(mEmptyVAO);
+	glDisable(GL_BLEND);
 
 	// Pass 1: sRGB to linear (reads from sourceTex, which may be the
 	// emulator texture or the PAL FBO output)
@@ -961,12 +985,11 @@ void DisplayBackendGL33::RenderBloomV2(int srcW, int srcH, GLuint sourceTex) {
 	for (int i = 0; i < kBloomLevels; i++) {
 		mBloomPyramid[i].Bind();
 		glBindTexture(GL_TEXTURE_2D, prevTex);
-		// D3D9 uses 1/targetTexSize as UV step, NOT 0.5/sourceTexSize.
-		// The HLSL shader multiplies the step by 1.75 to get the sample offset,
-		// so using the target (half-res) texture size gives the correct coverage.
+		// UV step is 1/sourceTexSize — the downsample kernel samples from
+		// the source (previous level), not the target (current level).
 		glUniform2f(mBloomDownLoc_UVStep,
-			1.0f / mBloomPyramid[i].width,
-			1.0f / mBloomPyramid[i].height);
+			1.0f / prevW,
+			1.0f / prevH);
 		GLDrawFullscreenTriangle();
 
 		prevTex = mBloomPyramid[i].tex;
@@ -1042,8 +1065,14 @@ void DisplayBackendGL33::RenderBloomV2(int srcW, int srcH, GLuint sourceTex) {
 
 	GLDrawFullscreenTriangle();
 
+	// Clean up state
+	glActiveTexture(GL_TEXTURE0 + 1);
+	glBindTexture(GL_TEXTURE_2D, 0);
+	glActiveTexture(GL_TEXTURE0);
+
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 	glViewport(0, 0, mWinW, mWinH);
+	glUseProgram(0);
 	glBindVertexArray(0);
 }
 
@@ -1074,18 +1103,24 @@ void DisplayBackendGL33::RenderBicubic(int srcW, int srcH, int dstW, int dstH, G
 	if (!mBicubicProgram)
 		return;
 
-	// Generate bicubic filter textures
-	if (!mBicubicFilterTexH) {
+	// Generate bicubic filter textures (regenerate when dimensions change)
+	if (!mBicubicFilterTexH || mBicubicFilterSrcW != srcW || mBicubicFilterDstW != dstW) {
+		if (mBicubicFilterTexH) glDeleteTextures(1, &mBicubicFilterTexH);
 		mLookupBuffer.resize(dstW);
 		VDDisplayCreateBicubicTexture(mLookupBuffer.data(), dstW, srcW);
 		mBicubicFilterTexH = GLCreateTexture2D(dstW, 1, GL_RGBA8, GL_RGBA,
 			GL_UNSIGNED_BYTE, mLookupBuffer.data(), true);
+		mBicubicFilterSrcW = srcW;
+		mBicubicFilterDstW = dstW;
 	}
-	if (!mBicubicFilterTexV) {
+	if (!mBicubicFilterTexV || mBicubicFilterSrcH != srcH || mBicubicFilterDstH != dstH) {
+		if (mBicubicFilterTexV) glDeleteTextures(1, &mBicubicFilterTexV);
 		mLookupBuffer.resize(dstH);
 		VDDisplayCreateBicubicTexture(mLookupBuffer.data(), dstH, srcH);
 		mBicubicFilterTexV = GLCreateTexture2D(dstH, 1, GL_RGBA8, GL_RGBA,
 			GL_UNSIGNED_BYTE, mLookupBuffer.data(), true);
+		mBicubicFilterSrcH = srcH;
+		mBicubicFilterDstH = dstH;
 	}
 
 	// Ensure intermediate FBOs exist.
