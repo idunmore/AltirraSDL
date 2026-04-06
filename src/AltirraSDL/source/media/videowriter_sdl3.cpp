@@ -1,5 +1,12 @@
 //	Altirra - Atari 800/800XL/5200 emulator
 //	SDL3 video recording - portable AVI encoders (Raw, RLE, ZMBV)
+//
+//	Phase 3e note: this file was a candidate for splitting under the
+//	Phase 3 size-reduction pass, but re-inspection showed a single
+//	anonymous namespace wrapping a tightly coupled AVI muxer plus
+//	RLE/ZMBV codec state with no natural banner-aligned seams.  Splitting
+//	would scatter related codec state across files for negligible
+//	maintainability win.  Intentionally left intact.
 //	Copyright (C) 2008-2026 Avery Lee
 //
 //	This program is free software; you can redistribute it and/or modify
