@@ -29,6 +29,7 @@
 #include <vd2/system/vdtypes.h>
 #include <functional>
 #include <cstddef>
+#include <type_traits>  // std::alignment_of — not transitively included by NDK libc++
 
 #ifdef _MSC_VER
 	#pragma warning(push)
