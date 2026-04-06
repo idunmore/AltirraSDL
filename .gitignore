@@ -49,3 +49,4 @@ android/app/src/main/java/org/libsdl
 *.out
 *.app
 /android/build
+/android/build/reports
