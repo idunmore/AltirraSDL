@@ -61,111 +61,139 @@ else()
 endif()
 
 target_sources(AltirraSDL PRIVATE
-    # SDL3 frontend
-    source/main_sdl3.cpp
-    source/display_sdl3.cpp
-    source/input_sdl3.cpp
-    source/joystick_sdl3.cpp
+    # --- app/ : process lifecycle, main loop, CLI, crash ---
+    source/app/main_sdl3.cpp
+    source/app/main_pacer.cpp
+    source/app/main_window.cpp
+    source/app/main_android_bridge.cpp
+    source/app/commandline_sdl3.cpp
+    source/app/crash_report.cpp
+    source/app/android_platform.cpp
 
-    # Display backends (OpenGL 3.3 + SDL_Renderer fallback)
-    source/display_backend_sdl.cpp
-    source/display_backend_gl33.cpp
-    source/gl_funcs.cpp
-    source/gl_helpers.cpp
-    source/display_librashader.cpp
+    # --- display/ : SDL display + GL backends + shaders ---
+    source/display/display_sdl3.cpp
+    source/display/display_backend_sdl.cpp
+    source/display/display_backend_gl33.cpp
+    source/display/gl_funcs.cpp
+    source/display/gl_helpers.cpp
+    source/display/display_librashader.cpp
 
-    # Video recording (AVI: Raw/RLE/ZMBV)
-    source/videowriter_sdl3.cpp
+    # --- input/ : SDL input, joystick, touch ---
+    source/input/input_sdl3.cpp
+    source/input/joystick_sdl3.cpp
+    source/input/touch_layout.cpp
+    source/input/touch_controls.cpp
+    source/input/touch_widgets.cpp
+
+    # --- media/ : video recording, accelerator table ---
+    source/media/videowriter_sdl3.cpp
+    source/media/accel_sdl3.cpp
     ${CMAKE_SOURCE_DIR}/src/Altirra/source/aviwriter.cpp
 
-    # Dear ImGui UI
-    source/ui_main.cpp
-    source/ui_menus.cpp
-    source/ui_recording.cpp
-    source/ui_cartmapper.cpp
-    source/ui_system.cpp
-    source/ui_firmware.cpp
-    source/ui_disk.cpp
-    source/ui_cassette.cpp
-    source/ui_display.cpp
-    source/ui_palette_solver.cpp
-    source/ui_input.cpp
-    source/ui_profiles.cpp
-    source/ui_devconfig.cpp
-    source/ui_devconfig_devices.cpp
-    source/ui_tools.cpp
-    source/ui_keyboard_customize.cpp
-    source/ui_textselection.cpp
+    # --- ui/core/ : ImGui hub, main render, indicators ---
+    source/ui/core/ui_main.cpp
+    source/ui/core/ui_main_aboutdialogs.cpp
+    source/ui/core/ui_main_compat.cpp
+    source/ui/core/ui_main_overlays.cpp
+    source/ui/core/ui_indicators.cpp
 
-    # Debugger pane manager and panes
-    source/ui_debugger.cpp
-    source/ui_dbg_console.cpp
-    source/ui_dbg_registers.cpp
-    source/ui_dbg_disassembly.cpp
-    source/ui_dbg_history.cpp
-    source/ui_dbg_history_format.cpp
-    source/ui_dbg_memory.cpp
-    source/ui_dbg_memory_hexdump.cpp
-    source/ui_dbg_memory_bitmap.cpp
-    source/ui_dbg_breakpoints.cpp
-    source/ui_dbg_callstack.cpp
-    source/ui_dbg_watch.cpp
-    source/ui_dbg_targets.cpp
-    source/ui_dbg_printer.cpp
-    source/ui_dbg_debugdisplay.cpp
-    source/ui_dbg_source.cpp
-    source/ui_dbg_verifier.cpp
-    source/ui_dbg_traceviewer.cpp
-    source/ui_dbg_traceviewer_timeline.cpp
-    source/ui_dbg_traceviewer_panels.cpp
+    # --- ui/menus/ : menu bar ---
+    source/ui/menus/ui_menus.cpp
+    source/ui/menus/ui_menus_view.cpp
+    source/ui/menus/ui_menus_system.cpp
+    source/ui/menus/ui_menus_debug.cpp
 
-    # Cheater dialog
-    source/ui_cheater.cpp
+    # --- ui/sysconfig/ : Configure System paged dialog ---
+    source/ui/sysconfig/ui_system.cpp
+    source/ui/sysconfig/ui_system_pages_computer.cpp
+    source/ui/sysconfig/ui_system_pages_outputs.cpp
+    source/ui/sysconfig/ui_system_pages_b.cpp
 
-    # Rewind dialog
-    source/ui_rewind.cpp
+    # --- ui/firmware/ : Firmware Manager + category ---
+    source/ui/firmware/ui_firmware.cpp
+    source/ui/firmware/ui_firmware_category.cpp
 
-    # Screen effects dialog
-    source/ui_screenfx.cpp
+    # --- ui/devconfig/ : Device configuration dialogs ---
+    source/ui/devconfig/ui_devconfig.cpp
+    source/ui/devconfig/ui_devconfig_devices.cpp
+    source/ui/devconfig/ui_devconfig_devices_b.cpp
+    source/ui/devconfig/ui_devconfig_devices_browse.cpp
 
-    # Shader preset browser & parameter UI
-    source/ui_shader_presets.cpp
+    # --- ui/input_config/ : Input mapping UI ---
+    source/ui/input_config/ui_input.cpp
+    source/ui/input_config/ui_input_setup.cpp
 
-    # Progress dialog (replaces Windows IDD_PROGRESS / uiprogress.cpp)
-    source/ui_progress.cpp
+    # --- ui/tools/ : Advanced Config, Disk Explorer, Setup Wizard, etc. ---
+    source/ui/tools/ui_tools.cpp
+    source/ui/tools/ui_tools_diskexplorer.cpp
+    source/ui/tools/ui_tools_setup_wizard.cpp
+    source/ui/tools/ui_tools_shortcuts.cpp
+    source/ui/tools/ui_tools_compatdb.cpp
 
-    # Emulation error dialog (replaces Windows IDD_PROGRAM_ERROR / uiemuerror.cpp)
-    source/ui_emuerror.cpp
+    # --- ui/dialogs/ : standalone single-purpose dialogs ---
+    source/ui/dialogs/ui_disk.cpp
+    source/ui/dialogs/ui_cassette.cpp
+    source/ui/dialogs/ui_cartmapper.cpp
+    source/ui/dialogs/ui_cheater.cpp
+    source/ui/dialogs/ui_calibrate.cpp
+    source/ui/dialogs/ui_profiles.cpp
+    source/ui/dialogs/ui_recording.cpp
+    source/ui/dialogs/ui_rewind.cpp
+    source/ui/dialogs/ui_emuerror.cpp
+    source/ui/dialogs/ui_progress.cpp
+    source/ui/dialogs/ui_lightpen.cpp
+    source/ui/dialogs/ui_palette_solver.cpp
+    source/ui/dialogs/ui_screenfx.cpp
+    source/ui/dialogs/ui_shader_presets.cpp
+    source/ui/dialogs/ui_display.cpp
+    source/ui/dialogs/ui_hud_customize.cpp
+    source/ui/dialogs/ui_keyboard_customize.cpp
+    source/ui/dialogs/ui_keyboard_customize_tables.cpp
+    source/ui/dialogs/ui_textselection.cpp
 
-    # Light pen/gun configuration dialog
-    source/ui_lightpen.cpp
+    # --- ui/debugger/ : Debugger pane manager and panes ---
+    source/ui/debugger/ui_debugger.cpp
+    source/ui/debugger/ui_dbg_console.cpp
+    source/ui/debugger/ui_dbg_registers.cpp
+    source/ui/debugger/ui_dbg_disassembly.cpp
+    source/ui/debugger/ui_dbg_history.cpp
+    source/ui/debugger/ui_dbg_history_format.cpp
+    source/ui/debugger/ui_dbg_memory.cpp
+    source/ui/debugger/ui_dbg_memory_hexdump.cpp
+    source/ui/debugger/ui_dbg_memory_bitmap.cpp
+    source/ui/debugger/ui_dbg_breakpoints.cpp
+    source/ui/debugger/ui_dbg_callstack.cpp
+    source/ui/debugger/ui_dbg_watch.cpp
+    source/ui/debugger/ui_dbg_targets.cpp
+    source/ui/debugger/ui_dbg_printer.cpp
+    source/ui/debugger/ui_dbg_printer_png.cpp
+    source/ui/debugger/ui_dbg_printer_pdf_svg.cpp
+    source/ui/debugger/ui_dbg_debugdisplay.cpp
+    source/ui/debugger/ui_dbg_source.cpp
+    source/ui/debugger/ui_dbg_verifier.cpp
+    source/ui/debugger/ui_dbg_traceviewer.cpp
+    source/ui/debugger/ui_dbg_traceviewer_timeline.cpp
+    source/ui/debugger/ui_dbg_traceviewer_panels.cpp
+    source/ui/debugger/ui_dbg_traceviewer_history_panel.cpp
+    source/ui/debugger/ui_dbg_traceviewer_profile_panel.cpp
+    source/ui/debugger/ui_dbg_traceviewer_log_panel.cpp
 
-    # Calibration screen dialog (View > Calibrate)
-    source/ui_calibrate.cpp
+    # --- ui/tapeeditor/ : Tape Editor (waveform, editing, analysis) ---
+    source/ui/tapeeditor/ui_tool_tapeeditor.cpp
+    source/ui/tapeeditor/ui_tool_tapeeditor_view.cpp
+    source/ui/tapeeditor/ui_tool_tapeeditor_ops.cpp
 
-    # HUD customization dialog (View > Customize HUD)
-    source/ui_hud_customize.cpp
+    # --- ui/testmode/ : Automated testing via IPC (Unix sockets / named pipes) ---
+    source/ui/testmode/testmode_ipc.cpp
+    source/ui/testmode/ui_testmode.cpp
 
-    # Tape Editor dialog (waveform visualization, editing, analysis)
-    source/ui_tool_tapeeditor.cpp
-    source/ui_tool_tapeeditor_view.cpp
-    source/ui_tool_tapeeditor_ops.cpp
-
-    # Test mode (automated testing via IPC — Unix sockets / Windows named pipes)
-    source/testmode_ipc.cpp
-    source/ui_testmode.cpp
-
-    # Command-line processing (mirrors Windows uicommandline.cpp)
-    source/commandline_sdl3.cpp
-
-    # Mobile touch UI (Android — compiled on all platforms for testability,
-    # active only when ALTIRRA_MOBILE is defined at runtime)
-    source/touch_layout.cpp
-    source/touch_controls.cpp
-    source/touch_widgets.cpp
-    source/ui_mobile.cpp
-    source/android_platform.cpp
-    source/crash_report.cpp
+    # --- ui/mobile/ : Mobile touch UI (Android) ---
+    source/ui/mobile/ui_mobile.cpp
+    source/ui/mobile/mobile_hamburger.cpp
+    source/ui/mobile/mobile_file_browser.cpp
+    source/ui/mobile/mobile_settings.cpp
+    source/ui/mobile/mobile_disk.cpp
+    source/ui/mobile/mobile_about_wizard.cpp
 
     # Registry persistence (filtered out by ui* regex, so add explicitly)
     ${CMAKE_SOURCE_DIR}/src/Altirra/source/uiregistry.cpp
@@ -176,15 +204,13 @@ target_sources(AltirraSDL PRIVATE
     # VDAccelTableDefinition (from Dita library, no Win32 deps — accelerator tables)
     ${CMAKE_SOURCE_DIR}/src/Dita/source/accel.cpp
 
-    # SDL3 accelerator table management and command handlers
-    source/accel_sdl3.cpp
+    # SDL3 command handlers (accel_sdl3.cpp already listed in media/ group)
     source/commands_sdl3.cpp
 
     # Stub implementations replacing Win32-only files
     stubs/console_stubs.cpp
     stubs/oshelper_stubs.cpp
-    # joystick_stubs.cpp replaced by source/joystick_sdl3.cpp
-    source/ui_indicators.cpp
+    # joystick_stubs.cpp replaced by source/input/joystick_sdl3.cpp
     stubs/uiaccessors_stubs.cpp
     stubs/win32_stubs.cpp
     stubs/device_stubs.cpp
@@ -220,8 +246,26 @@ target_include_directories(AltirraSDL PRIVATE
     ${CMAKE_SOURCE_DIR}/src/Altirra/h
     # Altirra source dir (for #include "foo.h" without path)
     ${CMAKE_SOURCE_DIR}/src/Altirra/source
-    # SDL3 frontend headers
+    # SDL3 frontend headers (flat include path + per-feature subfolders so
+    # existing `#include "ui_main.h"` style references keep resolving after
+    # the Phase 1 reorganisation)
     ${CMAKE_SOURCE_DIR}/src/AltirraSDL/source
+    ${CMAKE_SOURCE_DIR}/src/AltirraSDL/source/app
+    ${CMAKE_SOURCE_DIR}/src/AltirraSDL/source/display
+    ${CMAKE_SOURCE_DIR}/src/AltirraSDL/source/input
+    ${CMAKE_SOURCE_DIR}/src/AltirraSDL/source/media
+    ${CMAKE_SOURCE_DIR}/src/AltirraSDL/source/ui/core
+    ${CMAKE_SOURCE_DIR}/src/AltirraSDL/source/ui/menus
+    ${CMAKE_SOURCE_DIR}/src/AltirraSDL/source/ui/sysconfig
+    ${CMAKE_SOURCE_DIR}/src/AltirraSDL/source/ui/firmware
+    ${CMAKE_SOURCE_DIR}/src/AltirraSDL/source/ui/devconfig
+    ${CMAKE_SOURCE_DIR}/src/AltirraSDL/source/ui/input_config
+    ${CMAKE_SOURCE_DIR}/src/AltirraSDL/source/ui/tools
+    ${CMAKE_SOURCE_DIR}/src/AltirraSDL/source/ui/dialogs
+    ${CMAKE_SOURCE_DIR}/src/AltirraSDL/source/ui/debugger
+    ${CMAKE_SOURCE_DIR}/src/AltirraSDL/source/ui/tapeeditor
+    ${CMAKE_SOURCE_DIR}/src/AltirraSDL/source/ui/testmode
+    ${CMAKE_SOURCE_DIR}/src/AltirraSDL/source/ui/mobile
     # ATAudio headers
     ${CMAKE_SOURCE_DIR}/src/ATAudio/h
     # VDDisplay internal headers (screenfx.h, bloom.h, bicubic.h)
