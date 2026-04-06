@@ -25,7 +25,11 @@
 
 #include <stdafx.h>
 #include <windows.h>
+#if defined(__APPLE__) || defined(__FreeBSD__)
+#include <stdlib.h>
+#else
 #include <malloc.h>
+#endif
 #include <vd2/system/error.h>
 #include <vd2/system/file.h>
 #include <vd2/system/fileasync.h>

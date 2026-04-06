@@ -28,8 +28,12 @@
 #include <wtypes.h>
 #include <winnt.h>
 #elif VD_CPU_ARM64
+#if defined(__APPLE__)
+#include <sys/sysctl.h>
+#else
 #include <sys/auxv.h>
 #include <asm/hwcap.h>
+#endif
 #endif
 #include <vd2/system/win32/intrin.h>
 #include <vd2/system/cpuaccel.h>
@@ -169,7 +173,19 @@ long CPUCheckForExtensions() {
 
 	if (IsProcessorFeaturePresent(PF_ARM_V8_CRC32_INSTRUCTIONS_AVAILABLE))
 		flags |= VDCPUF_SUPPORTS_CRC32;
+#elif defined(__APPLE__)
+	// macOS ARM64: use sysctlbyname to query CPU capabilities
+	{
+		int val = 0;
+		size_t len = sizeof(val);
+		if (sysctlbyname("hw.optional.arm.FEAT_AES", &val, &len, nullptr, 0) == 0 && val)
+			flags |= VDCPUF_SUPPORTS_CRYPTO;
+		val = 0; len = sizeof(val);
+		if (sysctlbyname("hw.optional.armv8_crc32", &val, &len, nullptr, 0) == 0 && val)
+			flags |= VDCPUF_SUPPORTS_CRC32;
+	}
 #else
+	// Linux ARM64: use getauxval
 	unsigned long hwcap = getauxval(AT_HWCAP);
 
 	if (hwcap & HWCAP_AES)

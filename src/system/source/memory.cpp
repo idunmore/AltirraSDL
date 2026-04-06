@@ -24,7 +24,11 @@
 //		distribution.
 
 #include <stdafx.h>
+#if defined(__APPLE__) || defined(__FreeBSD__)
+#include <stdlib.h>
+#else
 #include <malloc.h>
+#endif
 #ifdef _WIN32
 #include <windows.h>
 #else

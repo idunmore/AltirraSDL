@@ -18,7 +18,11 @@
 #include <stdafx.h>
 #include <windows.h>
 #include <windowsx.h>
+#if defined(__APPLE__) || defined(__FreeBSD__)
+#include <stdlib.h>
+#else
 #include <malloc.h>
+#endif
 #include <stdio.h>
 #include <vd2/Dita/services.h>
 #include <vd2/system/binary.h>
