@@ -30,8 +30,8 @@ EnableCPUHistoryFn GetEnableCPUHistoryCallback() {
 // =========================================================================
 
 void ATImGuiTraceViewer_SetEnableCPUHistoryCallback(ATImGuiTraceViewerEnableCPUHistoryFn fn) {
-	at_traceviewer_panels::SetEnableCPUHistoryCallback(
-		reinterpret_cast<at_traceviewer_panels::EnableCPUHistoryFn>(fn));
+	// Both typedefs resolve to void(*)() so this is a direct call — no cast.
+	at_traceviewer_panels::SetEnableCPUHistoryCallback(fn);
 }
 
 void ATImGuiTraceViewer_ResetPanelState() {

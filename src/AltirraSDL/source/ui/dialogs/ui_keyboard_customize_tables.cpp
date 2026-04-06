@@ -285,7 +285,7 @@ const char *GetNameForKeyCode(uint32 c) {
 // Scan code table (from uikeyboardcustomize.cpp)
 // =========================================================================
 
-extern const uint32 kScanCodeTable[]; const uint32 kScanCodeTable[] = {
+const uint32 kScanCodeTable[] = {
 	kATUIKeyScanCode_Start,
 	kATUIKeyScanCode_Select,
 	kATUIKeyScanCode_Option,
@@ -339,7 +339,7 @@ extern const uint32 kScanCodeTable[]; const uint32 kScanCodeTable[] = {
 	0xE1, 0xCC, 0xF4, 0xDC, 0xEC, 0xE7, 0xD1, 0xFC,  // Ctrl+Shift+Space..Caps
 };
 
-extern const int kScanCodeTableSize; const int kScanCodeTableSize = (int)(sizeof(kScanCodeTable) / sizeof(kScanCodeTable[0]));
+const int kScanCodeTableSize = (int)(sizeof(kScanCodeTable) / sizeof(kScanCodeTable[0]));
 
 // =========================================================================
 // Default key map generation (ported from uikeyboard.cpp)

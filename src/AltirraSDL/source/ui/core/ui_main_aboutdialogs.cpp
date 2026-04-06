@@ -7,9 +7,6 @@
 #include "ui_main.h"
 #include "ui_main_internal.h"
 
-// ATUICheckEscClose lives in ui_main.cpp. Forward-declared locally.
-bool ATUICheckEscClose();
-
 void ATUIRenderCommandLineHelpDialog(ATUIState &state) {
 	ImGui::SetNextWindowSize(ImVec2(580, 520), ImGuiCond_Appearing);
 	ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
