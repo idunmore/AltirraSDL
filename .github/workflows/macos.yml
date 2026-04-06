@@ -1,0 +1,199 @@
+name: macOS build
+
+# Builds AltirraSDL for macOS using the macos-release CMake preset and the
+# existing build.sh / package.sh pipeline. SDL3 is fetched and bundled by
+# the package_altirra CMake target (libSDL3.dylib next to the binary).
+#
+# Two parallel builds are produced:
+#   - macos-14 → arm64  (Apple Silicon)
+#   - macos-13 → x86_64 (Intel)
+#
+# The output is a .zip containing AltirraSDL.app (a real macOS bundle
+# with Info.plist + NSGameControllerUsageDescription, ad-hoc codesigned
+# so GameController.framework will enumerate USB / Bluetooth / MFi /
+# Xbox / DualShock / DualSense pads).  Users still see the standard
+# Gatekeeper "unidentified developer" prompt on first launch
+# (right-click → Open to bypass).
+#
+# Triggers:
+#   - push to main       → updates the rolling "nightly" prerelease
+#   - push of vX.Y.Z tag → adds both zips to the versioned release
+#   - pull_request       → just builds + uploads artifacts
+#   - workflow_dispatch  → manual
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Cancel an in-progress run when a new commit lands on the same ref.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    name: Build macOS zip (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            arch: arm64
+          - runner: macos-13
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Show toolchain versions
+        run: |
+          cmake --version
+          clang --version
+          uname -m
+          # macOS runners ship CMake well above the 3.24 floor and the
+          # macos-release preset uses the default generator (Unix Makefiles)
+          # so no extra build tools are needed.
+
+      # Cache the FetchContent _deps tree (SDL3 source + intermediate
+      # objects).  Keyed by arch so the two matrix jobs don't collide,
+      # and by top-level CMake files so a CMake change invalidates.
+      - name: Cache FetchContent _deps
+        uses: actions/cache@v4
+        with:
+          path: build/macos-release/_deps
+          key: macos-${{ matrix.arch }}-deps-${{ hashFiles('CMakeLists.txt', 'CMakePresets.json', 'src/AltirraSDL/CMakeLists.txt') }}
+          restore-keys: |
+            macos-${{ matrix.arch }}-deps-
+
+      # Cache cargo's crate registry (shared across both matrix arches —
+      # the index/cache is just downloaded crate metadata, not arch-
+      # specific objects).  The compiled artifacts live in the
+      # librashader-src cache below, which IS keyed per-arch.
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/index
+            ~/.cargo/git/db
+          key: macos-cargo-${{ hashFiles('scripts/build/librashader.sh') }}
+          restore-keys: |
+            macos-cargo-
+
+      # Per-arch cache for the librashader source clone and its cargo
+      # target/optimized/ directory (the .dylib plus all intermediate
+      # object files).  Lives at the project-root build/_deps/, outside
+      # the per-preset BUILD_DIR.
+      - name: Cache librashader source + build
+        uses: actions/cache@v4
+        with:
+          path: build/_deps/librashader-src
+          key: macos-${{ matrix.arch }}-librashader-${{ hashFiles('scripts/build/librashader.sh') }}
+          restore-keys: |
+            macos-${{ matrix.arch }}-librashader-
+
+      - name: Show Rust toolchain
+        run: |
+          # macOS runners ship with rustup + stable cargo preinstalled.
+          rustup --version || true
+          cargo --version || true
+          rustc --version || true
+
+      - name: Build, librashader, and package
+        run: |
+          set -e
+          chmod +x ./build.sh ./scripts/build/*.sh
+          # Strict on macOS — if librashader fails to build we want to
+          # know loudly, since the .app bundle is the user-facing
+          # artifact and "shaders silently missing" is a bad surprise.
+          ./build.sh --release --librashader --package
+
+      - name: Rename zip with arch suffix
+        run: |
+          set -e
+          ORIG=$(ls build/macos-release/AltirraSDL-*-macos.zip | head -1)
+          echo "Produced: $ORIG"
+          BASENAME=$(basename "$ORIG" .zip)
+          NEW="build/macos-release/${BASENAME}-${{ matrix.arch }}.zip"
+          mv "$ORIG" "$NEW"
+          echo "Renamed to: $NEW"
+          ls -lh "$NEW"
+          # macOS runners do have `unzip`, but cmake -E tar is more portable.
+          LISTING=$(cmake -E tar tf "$NEW")
+          echo "$LISTING"
+          echo "$LISTING" | grep -qE 'AltirraSDL\.app/Contents/MacOS/AltirraSDL$' \
+            || { echo "ERROR: AltirraSDL.app bundle missing from zip"; exit 1; }
+          echo "$LISTING" | grep -qE 'AltirraSDL\.app/Contents/Info\.plist$' \
+            || { echo "ERROR: Info.plist missing from .app bundle"; exit 1; }
+          echo "$LISTING" | grep -qE 'libSDL3.*\.dylib' \
+            || { echo "ERROR: libSDL3.dylib missing from zip"; exit 1; }
+          # librashader.dylib must live INSIDE the .app bundle so that
+          # @executable_path resolves it at runtime and the ad-hoc
+          # codesign step covers it.  Strict check — fail loudly if it's
+          # missing or in the wrong place.
+          echo "$LISTING" | grep -qE 'AltirraSDL\.app/Contents/MacOS/librashader.*\.dylib$' \
+            || { echo "ERROR: librashader.dylib missing from .app bundle"; exit 1; }
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AltirraSDL-macos-${{ matrix.arch }}
+          path: build/macos-release/AltirraSDL-*-macos-${{ matrix.arch }}.zip
+          if-no-files-found: error
+          retention-days: 30
+
+  publish-nightly:
+    name: Attach to nightly release
+    needs: macos
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: AltirraSDL-macos-*
+          path: dist
+          merge-multiple: true
+
+      - name: Attach macOS zips to rolling nightly release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nightly
+          name: "Nightly build"
+          prerelease: true
+          draft: false
+          files: dist/*.zip
+          fail_on_unmatched_files: true
+
+  publish-release:
+    name: Attach to tagged release
+    needs: macos
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: AltirraSDL-macos-*
+          path: dist
+          merge-multiple: true
+
+      - name: Attach macOS zips to tagged release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          prerelease: false
+          files: dist/*.zip
+          fail_on_unmatched_files: true

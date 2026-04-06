@@ -1,0 +1,146 @@
+name: Android build
+
+# Builds AltirraSDL as a release Android APK (arm64-v8a) using the
+# self-contained Gradle project under android/ and the existing
+# scripts/build/android.sh pipeline. The APK is signed with the bundled
+# debug keystore so it is installable on any device with "Unknown sources"
+# enabled (no Google Play upload key, no Play Store distribution).
+#
+# The mobile touch UI lives in src/AltirraSDL/source/ui/mobile/ and the
+# Java SDLActivity shim is wired up by android/setup_sdl3.sh, which
+# scripts/build/android.sh runs as needed.
+#
+# Triggers:
+#   - push to main       → updates the rolling "nightly" prerelease
+#   - push of vX.Y.Z tag → adds the APK to the versioned release
+#   - pull_request       → just builds + uploads an artifact
+#   - workflow_dispatch  → manual
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Cancel an in-progress run when a new commit lands on the same ref.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    name: Build Android APK (arm64-v8a)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # Cache Gradle's user dir, the SDL3 source clone (~tens of MB) that
+      # scripts/build/android.sh fetches via android/setup_sdl3.sh, and the
+      # Gradle native build tree (.cxx contains CMake configure output and
+      # ninja build state for the SDL3 + AltirraSDL .so compilation).
+      # The Android SDK itself lives outside $HOME on GH-hosted runners
+      # (/usr/local/lib/android/sdk) and is preinstalled, so no SDK cache.
+      - name: Cache Gradle + SDL3 source + native build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            android/SDL3
+            android/app/.cxx
+          key: android-${{ runner.os }}-${{ hashFiles('android/app/build.gradle', 'android/build.gradle', 'android/gradle/wrapper/gradle-wrapper.properties', 'android/setup_sdl3.sh', 'CMakeLists.txt', 'src/AltirraSDL/CMakeLists.txt') }}
+          restore-keys: |
+            android-${{ runner.os }}-
+
+      - name: Build, sign, and locate APK
+        shell: bash
+        run: |
+          set -e
+          chmod +x ./build.sh ./scripts/build/*.sh
+          ./build.sh --setup-android --android --release --sign
+
+      - name: Rename APK with version + arch
+        shell: bash
+        run: |
+          set -e
+          APK="android/app/build/outputs/apk/release/app-release-unsigned.apk"
+          if [ ! -f "$APK" ]; then
+              echo "ERROR: expected APK not found at $APK"
+              find android/app/build/outputs/apk -type f -name '*.apk' || true
+              exit 1
+          fi
+          # No host CMake build runs in this job, so the AltirraSDL-<ver>
+          # package directory used by package.sh on the other platforms
+          # doesn't exist here.  Use git describe as the version source.
+          VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
+          OUT_DIR="build/android-release"
+          mkdir -p "$OUT_DIR"
+          NEW="$OUT_DIR/AltirraSDL-${VERSION}-android-arm64-v8a.apk"
+          cp "$APK" "$NEW"
+          ls -lh "$NEW"
+
+      - name: Upload Android artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AltirraSDL-android-arm64-v8a
+          path: build/android-release/AltirraSDL-*-android-arm64-v8a.apk
+          if-no-files-found: error
+          retention-days: 30
+
+  publish-nightly:
+    name: Attach to nightly release
+    needs: android
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: AltirraSDL-android-arm64-v8a
+          path: dist
+
+      - name: Attach APK to rolling nightly release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nightly
+          name: "Nightly build"
+          prerelease: true
+          draft: false
+          files: dist/*.apk
+          fail_on_unmatched_files: true
+
+  publish-release:
+    name: Attach to tagged release
+    needs: android
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: AltirraSDL-android-arm64-v8a
+          path: dist
+
+      - name: Attach APK to tagged release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          prerelease: false
+          files: dist/*.apk
+          fail_on_unmatched_files: true

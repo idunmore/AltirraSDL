@@ -19,6 +19,11 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Cancel an in-progress run when a new commit lands on the same ref.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -39,8 +44,9 @@ jobs:
           export DEBIAN_FRONTEND=noninteractive
           apt-get update
           apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build git ca-certificates \
+            build-essential ninja-build git ca-certificates \
             curl wget file zip unzip xz-utils patch pkg-config \
+            gnupg lsb-release software-properties-common \
             python3 \
             libgl1-mesa-dev libegl1-mesa-dev libgles2-mesa-dev \
             libx11-dev libxext-dev libxrandr-dev libxcursor-dev \
@@ -50,6 +56,17 @@ jobs:
             libdbus-1-dev libudev-dev libibus-1.0-dev \
             libusb-1.0-0-dev \
             desktop-file-utils
+
+          # CMakePresets.json declares "version": 5 which requires CMake
+          # >= 3.24.  Ubuntu 22.04 ships 3.22, so pull a current CMake from
+          # Kitware's APT repo to match the project's documented floor.
+          wget -qO- https://apt.kitware.com/keys/kitware-archive-latest.asc \
+            | gpg --dearmor -o /usr/share/keyrings/kitware-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ jammy main" \
+            > /etc/apt/sources.list.d/kitware.list
+          apt-get update
+          apt-get install -y --no-install-recommends cmake
+          cmake --version
 
       - name: Install Rust (for librashader)
         shell: bash

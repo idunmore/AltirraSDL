@@ -56,6 +56,21 @@ if(ANDROID)
     add_library(AltirraSDL SHARED)
     # Android APK expects the library to be named "libmain.so"
     set_target_properties(AltirraSDL PROPERTIES OUTPUT_NAME "main")
+elseif(APPLE)
+    # macOS: build as a real .app bundle.  This is REQUIRED for SDL3
+    # gamepad/joystick support — Apple's GameController.framework refuses
+    # to enumerate controllers (USB, Bluetooth, Xbox, DualShock, MFi)
+    # for plain Mach-O CLI binaries on macOS 14+, so a bare executable
+    # would silently see zero gamepads.  See macos/Info.plist.in for the
+    # NSGameControllerUsageDescription declaration.
+    add_executable(AltirraSDL MACOSX_BUNDLE)
+    set_target_properties(AltirraSDL PROPERTIES
+        MACOSX_BUNDLE_BUNDLE_NAME            "Altirra"
+        MACOSX_BUNDLE_GUI_IDENTIFIER         "org.virtualdub.altirra"
+        MACOSX_BUNDLE_BUNDLE_VERSION         "${PROJECT_VERSION}"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING   "${PROJECT_VERSION}"
+        MACOSX_BUNDLE_INFO_PLIST             "${CMAKE_CURRENT_SOURCE_DIR}/macos/Info.plist.in"
+    )
 else()
     add_executable(AltirraSDL)
 endif()
@@ -396,6 +411,7 @@ endif()
 
 install(TARGETS AltirraSDL
     RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
+    BUNDLE  DESTINATION "${CMAKE_INSTALL_BINDIR}"
 )
 
 # Copy the SDL3 shared library next to AltirraSDL after the build, so
@@ -439,19 +455,38 @@ endif()
 
 set(ALTIRRA_PKG_DIR "${CMAKE_BINARY_DIR}/AltirraSDL-${PROJECT_VERSION}")
 
-add_custom_target(package_altirra
-    DEPENDS AltirraSDL
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${ALTIRRA_PKG_DIR}"
-    COMMAND ${CMAKE_COMMAND} -E copy "$<TARGET_FILE:AltirraSDL>" "${ALTIRRA_PKG_DIR}/"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/dist/extras"
-        "${ALTIRRA_PKG_DIR}/extras"
-    # Include license file (matches Windows Altirra distribution)
-    COMMAND ${CMAKE_COMMAND} -E copy
-        "${CMAKE_SOURCE_DIR}/Copying"
-        "${ALTIRRA_PKG_DIR}/Copying"
-    COMMENT "Packaging AltirraSDL ${PROJECT_VERSION} -> ${ALTIRRA_PKG_DIR}"
-)
+if(APPLE)
+    # On macOS the build product is an .app bundle directory; copy the
+    # whole bundle into the package, not just the inner Mach-O binary.
+    add_custom_target(package_altirra
+        DEPENDS AltirraSDL
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${ALTIRRA_PKG_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "$<TARGET_BUNDLE_DIR:AltirraSDL>"
+            "${ALTIRRA_PKG_DIR}/AltirraSDL.app"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_SOURCE_DIR}/dist/extras"
+            "${ALTIRRA_PKG_DIR}/extras"
+        COMMAND ${CMAKE_COMMAND} -E copy
+            "${CMAKE_SOURCE_DIR}/Copying"
+            "${ALTIRRA_PKG_DIR}/Copying"
+        COMMENT "Packaging AltirraSDL.app ${PROJECT_VERSION} -> ${ALTIRRA_PKG_DIR}"
+    )
+else()
+    add_custom_target(package_altirra
+        DEPENDS AltirraSDL
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${ALTIRRA_PKG_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E copy "$<TARGET_FILE:AltirraSDL>" "${ALTIRRA_PKG_DIR}/"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_SOURCE_DIR}/dist/extras"
+            "${ALTIRRA_PKG_DIR}/extras"
+        # Include license file (matches Windows Altirra distribution)
+        COMMAND ${CMAKE_COMMAND} -E copy
+            "${CMAKE_SOURCE_DIR}/Copying"
+            "${ALTIRRA_PKG_DIR}/Copying"
+        COMMENT "Packaging AltirraSDL ${PROJECT_VERSION} -> ${ALTIRRA_PKG_DIR}"
+    )
+endif()
 
 # Bundle SDL3 shared library into the package.
 # On Windows this is always needed.  On Linux/macOS it's needed when SDL3
@@ -469,10 +504,16 @@ if(TARGET SDL3::SDL3-shared)
     endif()
 
     if(_BUNDLE_SDL3)
+        if(APPLE)
+            # Inside the .app bundle so @executable_path resolves at runtime.
+            set(_SDL3_DEST "${ALTIRRA_PKG_DIR}/AltirraSDL.app/Contents/MacOS/")
+        else()
+            set(_SDL3_DEST "${ALTIRRA_PKG_DIR}/")
+        endif()
         add_custom_command(TARGET package_altirra POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy
                 "$<TARGET_FILE:SDL3::SDL3-shared>"
-                "${ALTIRRA_PKG_DIR}/"
+                "${_SDL3_DEST}"
             COMMENT "Bundling $<TARGET_FILE_NAME:SDL3::SDL3-shared> into package"
         )
         # On Linux the binary's NEEDED entry is the soname (libSDL3.so.0),
@@ -494,17 +535,24 @@ endif()
 if(ENABLE_LIBRASHADER)
     if(WIN32)
         set(_LIBRA_GLOB "librashader.dll")
+        set(_LIBRA_DST "${ALTIRRA_PKG_DIR}/")
     elseif(APPLE)
         set(_LIBRA_GLOB "librashader*.dylib")
+        # Inside the .app bundle so @executable_path resolves at runtime
+        # and the dylib is covered by the ad-hoc codesign step below.
+        set(_LIBRA_DST "${ALTIRRA_PKG_DIR}/AltirraSDL.app/Contents/MacOS/")
     else()
         # Match librashader.so, librashader.so.1, librashader.so.2, etc.
         # The loader in vendor/librashader/librashader_ld.h tries all of
         # these in order; we need to ship whichever one is present.
         set(_LIBRA_GLOB "librashader.so*")
+        set(_LIBRA_DST "${ALTIRRA_PKG_DIR}/")
     endif()
 
     # Look next to the executable (works for both single-config and
-    # multi-config generators like MSVC which add Release/ etc.)
+    # multi-config generators like MSVC which add Release/ etc.).  On
+    # macOS this resolves to AltirraSDL.app/Contents/MacOS/, which is
+    # also where librashader.sh now writes the dylib.
     set(_LIBRA_GLOB_PATH "$<TARGET_FILE_DIR:AltirraSDL>/${_LIBRA_GLOB}")
 
     # Use a script-mode cmake snippet (copy_if_exists.cmake) so
@@ -512,9 +560,23 @@ if(ENABLE_LIBRASHADER)
     add_custom_command(TARGET package_altirra POST_BUILD
         COMMAND ${CMAKE_COMMAND}
             -DSRC_GLOB=${_LIBRA_GLOB_PATH}
-            -DDST=${ALTIRRA_PKG_DIR}/
+            -DDST=${_LIBRA_DST}
             -P "${CMAKE_SOURCE_DIR}/cmake/copy_if_exists.cmake"
         COMMENT "Bundling ${_LIBRA_GLOB} into package (if present)"
+    )
+endif()
+
+# macOS: ad-hoc codesign the packaged .app bundle as the FINAL POST_BUILD
+# step, so any dylibs (SDL3, librashader) added by earlier POST_BUILD
+# commands are included in the signature.  macOS 14+ refuses to grant
+# GameController access to an unsigned bundle even with the
+# NSGameControllerUsageDescription key present; ad-hoc signing ("-")
+# satisfies that check and requires no Developer ID.
+if(APPLE)
+    add_custom_command(TARGET package_altirra POST_BUILD
+        COMMAND codesign --force --deep --sign -
+            "${ALTIRRA_PKG_DIR}/AltirraSDL.app"
+        COMMENT "Ad-hoc codesigning AltirraSDL.app"
     )
 endif()
 

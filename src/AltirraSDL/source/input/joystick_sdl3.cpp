@@ -149,6 +149,20 @@ bool ATJoystickManagerSDL3Impl::Init(void *, ATInputManager *inputMan) {
 	mTransforms.mTriggerAnalogPower = 1.0f;
 
 	RescanForDevices();
+
+	// Diagnostic: log how many gamepads SDL3 actually saw at startup.
+	// On macOS, a missing .app bundle / NSGameControllerUsageDescription
+	// causes GameController.framework to silently report zero devices,
+	// and this line is the first place a user can confirm that.
+	LOG_INFO("Joystick", "SDL3 gamepad enumeration: %u device(s) detected at startup",
+		(unsigned)mControllers.size());
+	if (mControllers.empty()) {
+		LOG_INFO("Joystick",
+			"  (No gamepads found.  On macOS this usually means the binary is "
+			"not running from a signed .app bundle with "
+			"NSGameControllerUsageDescription in Info.plist.)");
+	}
+
 	return true;
 }
 

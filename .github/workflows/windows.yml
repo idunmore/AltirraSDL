@@ -1,0 +1,181 @@
+name: Windows build
+
+# Builds AltirraSDL for Windows x64 using the windows-sdl-release CMake
+# preset and the existing build.sh / package.sh pipeline. SDL3 is fetched
+# and bundled by the package_altirra CMake target, so the resulting zip is
+# self-contained (AltirraSDL.exe + SDL3.dll + extras/).
+#
+# librashader.dll strategy: VENDORED, NOT BUILT IN CI.
+#   Upstream librashader stopped publishing prebuilt binaries after
+#   v0.5.1 and the pinned version (v0.10.1, in scripts/build/librashader.sh)
+#   is ABI-incompatible with v0.5.1, so there is no upstream prebuilt we
+#   can use.  Building it from source in CI requires the Rust toolchain
+#   and adds 5–8 minutes on the first run plus an ongoing risk of cargo
+#   breakage.  Instead, the workflow looks for a developer-provided
+#   prebuilt at vendor/librashader-prebuilt/librashader.dll committed to
+#   the repo: if present it is copied next to AltirraSDL.exe before the
+#   package step (so package_altirra bundles it into the zip); if
+#   absent, the workflow logs a ::warning:: and ships the zip without
+#   slang shader support.  To refresh: build librashader v0.10.1 locally
+#   on a Windows machine and commit the resulting .dll.
+#
+# Triggers:
+#   - push to main       → updates the rolling "nightly" prerelease
+#   - push of vX.Y.Z tag → adds the Windows zip to the versioned release
+#   - pull_request       → just builds + uploads an artifact
+#   - workflow_dispatch  → manual
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Cancel an in-progress run when a new commit lands on the same ref.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Build Windows zip (x86_64)
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Show toolchain versions
+        shell: bash
+        run: |
+          cmake --version
+          where cl.exe || true
+
+      # Cache the FetchContent _deps tree (SDL3 source + intermediate
+      # objects).  Keyed on top-level CMake files so a CMake change
+      # invalidates; otherwise restored on every run.  The MSVC
+      # incremental build skips most work when _deps is intact.
+      - name: Cache FetchContent _deps
+        uses: actions/cache@v4
+        with:
+          path: build/windows-sdl-release/_deps
+          key: windows-deps-${{ hashFiles('CMakeLists.txt', 'CMakePresets.json', 'src/AltirraSDL/CMakeLists.txt') }}
+          restore-keys: |
+            windows-deps-
+
+      - name: Build AltirraSDL
+        shell: bash
+        run: |
+          set -e
+          chmod +x ./build.sh ./scripts/build/*.sh || true
+          # No --librashader: librashader.dll is vendored, not built in CI.
+          # We invoke the build (configure + compile) here without --package
+          # so that we can drop the vendored librashader.dll into the build
+          # tree before package_altirra runs and picks it up.
+          ./build.sh --release
+
+      - name: Stage vendored librashader.dll (if present)
+        shell: bash
+        run: |
+          set -e
+          VENDOR_DLL="vendor/librashader-prebuilt/librashader.dll"
+          DEST_DIR="build/windows-sdl-release/src/AltirraSDL/Release"
+          if [ -f "$VENDOR_DLL" ]; then
+              echo "Found vendored librashader.dll: $VENDOR_DLL"
+              ls -lh "$VENDOR_DLL"
+              mkdir -p "$DEST_DIR"
+              cp "$VENDOR_DLL" "$DEST_DIR/librashader.dll"
+              echo "Staged at: $DEST_DIR/librashader.dll"
+          else
+              echo "::warning title=librashader::No vendored librashader.dll found at $VENDOR_DLL — Windows zip will ship without slang shader support. Build librashader v0.10.1 locally and commit the resulting .dll to enable shaders."
+          fi
+
+      - name: Package
+        shell: bash
+        run: |
+          set -e
+          # Just runs package_altirra now: AltirraSDL.exe is already
+          # compiled and librashader.dll (if vendored) is already next
+          # to it.  package_altirra will bundle whatever it finds.
+          ./build.sh --release --package
+
+      - name: Inspect zip
+        shell: bash
+        run: |
+          set -e
+          ZIP=$(ls build/windows-sdl-release/AltirraSDL-*-windows.zip | head -1)
+          echo "Produced: $ZIP"
+          ls -lh "$ZIP"
+          # Git Bash on windows-latest has no `unzip`, but 7z and cmake are
+          # both preinstalled.  Use cmake -E tar for portable listing.
+          LISTING=$(cmake -E tar tf "$ZIP")
+          echo "$LISTING"
+          echo "$LISTING" | grep -q 'AltirraSDL.exe' \
+            || { echo "ERROR: AltirraSDL.exe missing from zip"; exit 1; }
+          echo "$LISTING" | grep -q 'SDL3.dll' \
+            || { echo "ERROR: SDL3.dll missing from zip"; exit 1; }
+          # librashader is best-effort on Windows; just report whether
+          # it ended up in the zip, don't fail the workflow if it didn't.
+          if echo "$LISTING" | grep -q 'librashader.dll'; then
+            echo "OK: librashader.dll bundled (slang shaders supported)"
+          else
+            echo "::warning title=librashader::librashader.dll absent from zip — slang shaders disabled in this artifact"
+          fi
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AltirraSDL-windows-x86_64
+          path: build/windows-sdl-release/AltirraSDL-*-windows.zip
+          if-no-files-found: error
+          retention-days: 30
+
+  publish-nightly:
+    name: Attach to nightly release
+    needs: windows
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: AltirraSDL-windows-x86_64
+          path: dist
+
+      - name: Attach Windows zip to rolling nightly release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nightly
+          name: "Nightly build"
+          prerelease: true
+          draft: false
+          files: dist/*.zip
+          fail_on_unmatched_files: true
+
+  publish-release:
+    name: Attach to tagged release
+    needs: windows
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: AltirraSDL-windows-x86_64
+          path: dist
+
+      - name: Attach Windows zip to tagged release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          prerelease: false
+          files: dist/*.zip
+          fail_on_unmatched_files: true

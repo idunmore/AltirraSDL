@@ -506,6 +506,10 @@ static void HandleEvents() {
 			break;
 
 		case SDL_EVENT_GAMEPAD_ADDED:
+		case SDL_EVENT_JOYSTICK_ADDED:
+			// Devices without an SDL gamepad mapping (rare arcade
+			// sticks, generic HID pads) only fire JOYSTICK_ADDED.
+			// RescanForDevices() filters via SDL_IsGamepad internally.
 			if (g_pJoystickMgr)
 				g_pJoystickMgr->RescanForDevices();
 			break;
