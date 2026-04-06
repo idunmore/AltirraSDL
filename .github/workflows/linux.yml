@@ -1,0 +1,163 @@
+name: Linux build
+
+# Builds AltirraSDL as a portable AppImage inside an ubuntu:22.04 container
+# so the glibc floor is pinned to 2.35 (compatible with Debian 12, Ubuntu
+# 22.04+, RHEL 9+, recent Fedora/Arch). Bundles SDL3 (built via FetchContent)
+# and librashader (built from source via Rust).
+#
+# Triggers:
+#   - push to main       → updates the rolling "nightly" prerelease
+#   - push of vX.Y.Z tag → creates a versioned GitHub Release
+#   - pull_request       → just builds + uploads an artifact
+#   - workflow_dispatch  → manual
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  appimage:
+    name: Build AppImage (x86_64)
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:22.04
+      # --privileged is not available in GHA containers, so the AppImage
+      # build uses --appimage-extract-and-run rather than FUSE.
+      options: --user root
+
+    steps:
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build git ca-certificates \
+            curl wget file zip unzip xz-utils patch pkg-config \
+            python3 \
+            libgl1-mesa-dev libegl1-mesa-dev libgles2-mesa-dev \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev \
+            libxi-dev libxfixes-dev libxss-dev libxkbcommon-dev \
+            libwayland-dev wayland-protocols libdecor-0-dev \
+            libasound2-dev libpulse-dev libjack-jackd2-dev libpipewire-0.3-dev \
+            libdbus-1-dev libudev-dev libibus-1.0-dev \
+            libusb-1.0-0-dev \
+            desktop-file-utils
+
+      - name: Install Rust (for librashader)
+        shell: bash
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --default-toolchain stable --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # The container runs as root and git >= 2.35 refuses to operate on
+      # a repo owned by a different uid than the current process.
+      - name: Mark workspace as safe for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Cache librashader source + target
+        uses: actions/cache@v4
+        with:
+          path: build/_deps/librashader-src
+          key: librashader-v0.10.1-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Build, package, and produce AppImage
+        shell: bash
+        run: |
+          chmod +x ./build.sh ./scripts/build/*.sh
+          ./build.sh --appimage
+
+      - name: Inspect AppImage
+        shell: bash
+        run: |
+          set -e
+          APPIMAGE=$(ls build/linux/AltirraSDL-*-x86_64.AppImage | head -1)
+          echo "Produced: $APPIMAGE"
+          ls -lh "$APPIMAGE"
+          "$APPIMAGE" --appimage-extract >/dev/null
+          echo "=== bundled libraries ==="
+          ls -l squashfs-root/usr/bin/ || true
+          echo "=== ldd AltirraSDL ==="
+          ldd squashfs-root/usr/bin/AltirraSDL | sed 's/^/  /' || true
+          echo "=== checking libSDL3 is bundled ==="
+          test -f squashfs-root/usr/bin/libSDL3.so.0 \
+            && echo "  libSDL3.so.0 bundled OK" \
+            || { echo "  ERROR: libSDL3.so.0 missing from AppImage"; exit 1; }
+          if [ -f squashfs-root/usr/bin/librashader.so ]; then
+            echo "  librashader.so bundled OK"
+          else
+            echo "  WARNING: librashader.so not bundled"
+          fi
+
+      - name: Upload AppImage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AltirraSDL-linux-x86_64
+          path: build/linux/AltirraSDL-*-x86_64.AppImage
+          if-no-files-found: error
+          retention-days: 30
+
+  publish-nightly:
+    name: Publish nightly release
+    needs: appimage
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: AltirraSDL-linux-x86_64
+          path: dist
+
+      - name: Update rolling nightly release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nightly
+          name: "Nightly build"
+          prerelease: true
+          draft: false
+          body: |
+            Rolling nightly build from `main`.
+
+            Commit: `${{ github.sha }}`
+            Built: ${{ github.run_id }}
+
+            **Linux:** Download the `.AppImage`, `chmod +x`, and run.
+            Requires glibc ≥ 2.35 (Ubuntu 22.04+, Debian 12+, Fedora 36+, RHEL 9+).
+          files: dist/*.AppImage
+          fail_on_unmatched_files: true
+
+  publish-release:
+    name: Publish tagged release
+    needs: appimage
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: AltirraSDL-linux-x86_64
+          path: dist
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: dist/*.AppImage
+          fail_on_unmatched_files: true

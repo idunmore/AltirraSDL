@@ -15,6 +15,8 @@
 #   ./build.sh --native           Windows only: build libs for .sln (no SDL3)
 #   ./build.sh --jobs 8           Override parallel job count
 #   ./build.sh --librashader      Build librashader from source (needs Rust)
+#   ./build.sh --appimage         Linux only: produce a portable .AppImage
+#                                 (implies --package --librashader)
 #   ./build.sh --cmake "-DFOO=1"  Pass extra CMake arguments
 #   ./build.sh --help             Show this help
 #
@@ -45,6 +47,7 @@ SOURCE_ARCHIVE=0
 JOBS=""
 CMAKE_EXTRA_ARGS=""
 BUILD_LIBRASHADER=0
+APPIMAGE=0
 
 # ── Parse arguments ───────────────────────────────────────────────────────
 while [ $# -gt 0 ]; do
@@ -62,6 +65,7 @@ while [ $# -gt 0 ]; do
         --jobs)     shift; JOBS="$1" ;;
         -j*)        JOBS="${1#-j}" ;;
         --librashader) BUILD_LIBRASHADER=1 ;;
+        --appimage) APPIMAGE=1; PACKAGE=1; BUILD_LIBRASHADER=1 ;;
         --cmake)    shift; CMAKE_EXTRA_ARGS="$1" ;;
         --help|-h)
             sed -n '3,/^$/{ s/^# //; s/^#//; p }' "$0"
@@ -119,6 +123,14 @@ fi
 # ── Package (optional) ────────────────────────────────────────────────────
 if [ "$PACKAGE" = "1" ]; then
     source "$SCRIPTS_DIR/package.sh"
+fi
+
+# ── AppImage (Linux, optional) ────────────────────────────────────────────
+if [ "$APPIMAGE" = "1" ]; then
+    if [ "$PLATFORM" != "linux" ]; then
+        die "--appimage is only supported on Linux (current: $PLATFORM)"
+    fi
+    source "$SCRIPTS_DIR/appimage.sh"
 fi
 
 # ── Report output ────────────────────────────────────────────────────────
