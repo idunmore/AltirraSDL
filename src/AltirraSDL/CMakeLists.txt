@@ -141,6 +141,7 @@ target_sources(AltirraSDL PRIVATE
     source/ui/dialogs/ui_display.cpp
     source/ui/dialogs/ui_hud_customize.cpp
     source/ui/dialogs/ui_keyboard_customize.cpp
+    source/ui/dialogs/ui_keyboard_customize_tables.cpp
     source/ui/dialogs/ui_textselection.cpp
 
     # --- ui/debugger/ : Debugger pane manager and panes ---
