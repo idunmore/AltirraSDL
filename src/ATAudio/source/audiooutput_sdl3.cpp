@@ -325,8 +325,15 @@ private:
 	uint32 mBufferLevel = 0;
 	double mTickRate = 1;
 	float mMixingRate = 0;
-	int mLatency = 40;
-	int mExtraBuffer = 0;
+	// Defaults match the Windows engine (audiooutput.cpp:329-330).  These
+	// are normally overridden by ATLoadSettings shortly after construction
+	// (settings.cpp:1185-1186 -> SetLatency/SetExtraBuffer with defaults
+	// 80/100), so they only matter for the brief window before settings
+	// load and for fresh installs without an Audio: Latency key.  The
+	// previous values (40/0) gave only ~40ms of headroom which is too tight
+	// for Linux PulseAudio/PipeWire scheduling jitter.
+	int mLatency = 100;
+	int mExtraBuffer = 100;
 	bool mbMute = false;
 	bool mbFilterStereo = false;
 	uint32 mFilterMonoSamples = 0;
@@ -343,6 +350,22 @@ private:
 	uint32 mUnderflowCount = 0;
 	uint32 mOverflowCount = 0;
 	int mMixingRateInt = 63920;
+
+	// --- Adaptive clock recovery state (Phase B port of Windows
+	// RecomputeResamplingRate / mResampleAccum / mDropCounter logic) ---
+	//
+	// We do not have access to the OS hardware audio clock through SDL3 —
+	// only to the SDL audio stream queue depth.  We close the loop by
+	// observing average queue depth over a 15-call window and bending the
+	// SDL stream's input/output frequency ratio so the average tracks the
+	// midpoint of [latency, latency+extraBuffer].  Drift correction is
+	// gentle (gain 0.05, hard-clamped to ±0.5%) to prevent oscillation.
+	uint64 mQueueSampleSum = 0;       // accumulated SDL_GetAudioStreamQueued() per call
+	uint32 mQueueSampleCount = 0;     // number of samples in the current window
+	int    mQueueSampleMin = 0x7FFFFFFF;
+	int    mQueueSampleMax = 0;
+	float  mFreqRatio = 1.0f;         // last applied frequency ratio
+	uint32 mDropCounter = 0;          // sustained-overflow counter (Windows hysteresis)
 };
 
 // -------------------------------------------------------------------------
@@ -389,6 +412,14 @@ void ATAudioOutputSDL3::Init(ATScheduler& scheduler) {
 	mCheckCounter = 0;
 	mUnderflowCount = 0;
 	mOverflowCount = 0;
+
+	// Reset adaptive clock recovery state.
+	mQueueSampleSum = 0;
+	mQueueSampleCount = 0;
+	mQueueSampleMin = 0x7FFFFFFF;
+	mQueueSampleMax = 0;
+	mFreqRatio = 1.0f;
+	mDropCounter = 0;
 
 	mWritePosition = 0;
 
@@ -788,14 +819,53 @@ void ATAudioOutputSDL3::InternalWriteAudio(
 
 	// ---- Step 10: Output filtered samples to SDL3 ----
 	if (mpStream && mBufferLevel > 0) {
-		// Check queue depth before pushing — drop this block if the queue is already
-		// too full (e.g. turbo/fast-forward mode). This matches the Windows drop logic
-		// which prevents unbounded latency growth.
+		// Sample SDL stream queue depth.  This is our only source of
+		// feedback about audio consumption — there is no SDL3 equivalent
+		// of Windows' EstimateHWBufferLevel().  Note: SDL_GetAudioStreamQueued
+		// returns -1 on failure; clamp to 0 so we don't spuriously trip
+		// the underflow path or corrupt the unsigned accumulator.
 		int queued = SDL_GetAudioStreamQueued(mpStream);
-		int maxQueueBytes = mMixingRateInt * 2 * (int)sizeof(float)
-		                    * (mLatency + mExtraBuffer + 50) / 1000;
+		if (queued < 0) queued = 0;
+		const int bytesPerSecond = mMixingRateInt * 2 * (int)sizeof(float);
+		const int targetMidBytes = bytesPerSecond * (mLatency + mLatency + mExtraBuffer) / 2 / 1000;
+		const int latencyBytes   = bytesPerSecond * mLatency / 1000;
+		const int maxQueueBytes  = bytesPerSecond * (mLatency + mExtraBuffer + 50) / 1000;
+		const int underflowThresholdBytes = latencyBytes / 4;
 
-		bool dropBlock = (queued > maxQueueBytes);
+		// Update min/max for this status window (used for the live read-out).
+		if (queued < mQueueSampleMin) mQueueSampleMin = queued;
+		if (queued > mQueueSampleMax) mQueueSampleMax = queued;
+		mQueueSampleSum += (uint64)queued;
+		++mQueueSampleCount;
+
+		// --- Drop hysteresis (Phase B2, mirrors Windows audiooutput.cpp:944-967) ---
+		// Drop a block only if (a) we have not recently underflowed and
+		// (b) the over-target condition has persisted for 10 consecutive
+		// samples.  This prevents transient queue spikes (caused by audio
+		// thread scheduling jitter on Linux) from being treated as real
+		// overflow and producing audible glitches.  In turbo mode the
+		// emulator floods WriteAudio() much faster than realtime, so the
+		// 10-sample threshold is reached almost immediately and the queue
+		// is still bounded — no special turbo path needed.
+		bool dropBlock = false;
+
+		if (mUnderflowCount == 0 && queued > maxQueueBytes) {
+			if (++mDropCounter >= 10) {
+				mDropCounter = 0;
+				dropBlock = true;
+			}
+		} else {
+			mDropCounter = 0;
+		}
+
+		// --- Earlier underflow detection (Phase B4) ---
+		// Windows only flagged underflow when the queue was fully empty.
+		// We flag it when queue falls below 25% of the latency target so
+		// the recovery loop has something to react to before audible silence.
+		if (queued < underflowThresholdBytes && count > 0) {
+			++mUnderflowCount;
+			++mAudioStatus.mUnderflowCount;
+		}
 
 		if (dropBlock) {
 			++mOverflowCount;
@@ -839,10 +909,8 @@ void ATAudioOutputSDL3::InternalWriteAudio(
 				remaining -= n;
 			}
 
-			if (queued == 0 && count > 0) {
-				++mUnderflowCount;
-				++mAudioStatus.mUnderflowCount;
-			}
+			// Underflow already detected above using a more sensitive
+			// threshold (latency / 4), so no tail check needed here.
 		}
 	}
 
@@ -861,19 +929,67 @@ void ATAudioOutputSDL3::InternalWriteAudio(
 		mBufferLevel = 0;
 	}
 
-	// ---- Step 11: Status and profiling ----
+	// ---- Step 11: Status, clock recovery and profiling ----
 	if (mpStream) {
-		int queued = SDL_GetAudioStreamQueued(mpStream);
-
 		if (++mCheckCounter >= 15) {
 			mCheckCounter = 0;
 
-			mAudioStatus.mMeasuredMin = queued;
-			mAudioStatus.mMeasuredMax = queued;
+			// --- Phase B1: adaptive clock recovery via SDL stream
+			// frequency ratio.  This is the SDL3 analogue of Windows
+			// RecomputeResamplingRate / mResampleAccum (audiooutput.cpp
+			// 838-922, 1037-1056).  We bend the SDL audio stream's
+			// input/output ratio so the average queue depth tracks the
+			// midpoint of [latency, latency+extraBuffer], in bytes.
+			//
+			// Without this loop, any difference between the nominal
+			// 63920 Hz POKEY mixing rate and the real OS audio device
+			// clock accumulates as drift, eventually causing either
+			// underflow (silence) or overflow (drops).  Linux PulseAudio
+			// and PipeWire both internally resample everything and the
+			// "real" device clock is rarely exactly nominal, so the
+			// drift is real even on healthy hardware.
+			if (mQueueSampleCount > 0) {
+				const double avgQueue = (double)mQueueSampleSum / (double)mQueueSampleCount;
+				const int    bytesPerSecond = mMixingRateInt * 2 * (int)sizeof(float);
+				const int    targetMidBytes = bytesPerSecond * (mLatency + mLatency + mExtraBuffer) / 2 / 1000;
+
+				if (targetMidBytes > 0) {
+					// Positive error = queue too full = need to drain it
+					// faster.  Per SDL3 SDL_SetAudioStreamFrequencyRatio
+					// docs, ratio > 1.0 plays the audio FASTER, so input
+					// data is consumed more quickly — therefore positive
+					// error must INCREASE the ratio.
+					const double error = (avgQueue - (double)targetMidBytes) / (double)targetMidBytes;
+					constexpr double kGain = 0.05;
+					constexpr float  kRatioClamp = 0.005f; // ±0.5%
+
+					float newRatio = mFreqRatio + (float)(error * kGain);
+					if (newRatio < 1.0f - kRatioClamp) newRatio = 1.0f - kRatioClamp;
+					if (newRatio > 1.0f + kRatioClamp) newRatio = 1.0f + kRatioClamp;
+
+					if (newRatio != mFreqRatio) {
+						SDL_SetAudioStreamFrequencyRatio(mpStream, newRatio);
+						mFreqRatio = newRatio;
+					}
+				}
+
+				mAudioStatus.mMeasuredMin = mQueueSampleMin;
+				mAudioStatus.mMeasuredMax = mQueueSampleMax;
+			} else {
+				mAudioStatus.mMeasuredMin = 0;
+				mAudioStatus.mMeasuredMax = 0;
+			}
+
 			mAudioStatus.mTargetMin = mLatency;
 			mAudioStatus.mTargetMax = mLatency + mExtraBuffer;
 			mAudioStatus.mbStereoMixing = mbFilterStereo;
 			mAudioStatus.mSamplingRate = mMixingRateInt;
+
+			// Reset windowed accumulators.
+			mQueueSampleSum = 0;
+			mQueueSampleCount = 0;
+			mQueueSampleMin = 0x7FFFFFFF;
+			mQueueSampleMax = 0;
 
 			// mAudioStatus.mUnderflowCount and mOverflowCount are cumulative
 			// (incremented directly at detection time, never reset here).

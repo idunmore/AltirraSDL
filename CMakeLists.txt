@@ -250,10 +250,17 @@ if(ALTIRRA_SDL3)
             DESTINATION "${LIBRASHADER_VENDOR_DIR}"
         )
 
-        # Patch librashader_ld.h on Linux: replace the simple dlopen() call
-        # with a search function that tries the executable's directory first
-        # (for --librashader builds), then versioned sonames (for distros
-        # that don't install an unversioned symlink or ship a broken one).
+        # Patch librashader_ld.h on Linux AND macOS: replace the simple
+        # dlopen() call with a search function that tries the executable's
+        # own directory first (for --librashader builds where the .so /
+        # .dylib is bundled next to the binary), then versioned sonames
+        # (Linux) / @executable_path / system paths (macOS).
+        #
+        # Without this patch, dlopen() with a bare filename does NOT look
+        # next to the running binary on either Linux or macOS — it only
+        # consults LD_LIBRARY_PATH / DYLD_*_PATH and the system search
+        # path, so a sibling library inside the AppImage or .app bundle
+        # is invisible to it.
         if(UNIX AND NOT APPLE)
             set(_LIBRA_LD_H "${LIBRASHADER_VENDOR_DIR}/librashader_ld.h")
             file(READ "${_LIBRA_LD_H}" _LIBRA_LD_CONTENT)
@@ -295,6 +302,86 @@ static inline void *_librashader_dlopen_linux(void) {
     return NULL;
 }
 #define _LIBRASHADER_LOAD _librashader_dlopen_linux()
+]=]
+                _LIBRA_LD_CONTENT "${_LIBRA_LD_CONTENT}")
+            file(WRITE "${_LIBRA_LD_H}" "${_LIBRA_LD_CONTENT}")
+        endif()
+
+        if(APPLE)
+            set(_LIBRA_LD_H "${LIBRASHADER_VENDOR_DIR}/librashader_ld.h")
+            file(READ "${_LIBRA_LD_H}" _LIBRA_LD_CONTENT)
+            string(REPLACE
+                "#define _LIBRASHADER_LOAD dlopen(\"librashader.dylib\", RTLD_LAZY)"
+                [=[
+// Patched by AltirraSDL CMakeLists.txt — search exe dir + @executable_path
+// + system paths.  Upstream just does dlopen("librashader.dylib", ...),
+// but on macOS that does NOT look next to the running binary; it only
+// consults DYLD_LIBRARY_PATH / DYLD_FALLBACK_LIBRARY_PATH (defaults to
+// $HOME/lib:/usr/local/lib:/usr/lib), so a sibling dylib inside
+// AltirraSDL.app/Contents/MacOS/ is invisible to it.  Mirror the Linux
+// patch above using _NSGetExecutablePath() to walk the running binary's
+// own directory first.
+#include <mach-o/dyld.h>
+#include <sys/syslimits.h>
+#include <string.h>
+#include <stdint.h>
+static inline void *_librashader_dlopen_macos(void) {
+    // 1. Try loading from the running executable's own directory.
+    char exe_path[PATH_MAX];
+    uint32_t size = (uint32_t)sizeof(exe_path);
+    if (_NSGetExecutablePath(exe_path, &size) == 0) {
+        char *slash = strrchr(exe_path, '/');
+        if (slash) {
+            static const char *local_names[] = {
+                "librashader.dylib",
+                "librashader.2.dylib",
+                "librashader.1.dylib",
+            };
+            for (size_t i = 0;
+                 i < sizeof(local_names)/sizeof(local_names[0]);
+                 i++) {
+                if ((size_t)(slash - exe_path + 1)
+                        + strlen(local_names[i]) < PATH_MAX) {
+                    strcpy(slash + 1, local_names[i]);
+                    void *h = dlopen(exe_path, RTLD_LAZY);
+                    if (h) return h;
+                }
+            }
+        }
+    }
+    // 2. Try @executable_path / @loader_path — dyld resolves these
+    //    natively to the running binary's directory and the directory
+    //    of whatever Mach-O is calling dlopen() respectively.
+    {
+        static const char *at_names[] = {
+            "@executable_path/librashader.dylib",
+            "@loader_path/librashader.dylib",
+        };
+        for (size_t i = 0;
+             i < sizeof(at_names)/sizeof(at_names[0]);
+             i++) {
+            void *h = dlopen(at_names[i], RTLD_LAZY);
+            if (h) return h;
+        }
+    }
+    // 3. Bare name — falls through to DYLD_LIBRARY_PATH /
+    //    DYLD_FALLBACK_LIBRARY_PATH for users with a system-wide copy.
+    {
+        static const char *sys_names[] = {
+            "librashader.dylib",
+            "librashader.2.dylib",
+            "librashader.1.dylib",
+        };
+        for (size_t i = 0;
+             i < sizeof(sys_names)/sizeof(sys_names[0]);
+             i++) {
+            void *h = dlopen(sys_names[i], RTLD_LAZY);
+            if (h) return h;
+        }
+    }
+    return NULL;
+}
+#define _LIBRASHADER_LOAD _librashader_dlopen_macos()
 ]=]
                 _LIBRA_LD_CONTENT "${_LIBRA_LD_CONTENT}")
             file(WRITE "${_LIBRA_LD_H}" "${_LIBRA_LD_CONTENT}")
