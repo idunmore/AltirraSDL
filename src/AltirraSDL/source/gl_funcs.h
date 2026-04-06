@@ -148,7 +148,11 @@
 #endif // __APPLE__
 
 // Function pointer type declarations
+#ifndef __APPLE__
 #define GL_FUNC(ret, name, ...) typedef ret (GLAPIENTRY *PFN_##name)(__VA_ARGS__);
+#else
+#define GL_FUNC(ret, name, ...)  /* macOS: framework provides these directly */
+#endif
 #ifndef GLAPIENTRY
 	#ifdef _WIN32
 		#define GLAPIENTRY __stdcall
@@ -230,7 +234,11 @@ GL_FUNC(void, glDrawBuffers, GLsizei n, const GLenum *bufs)
 #undef GL_FUNC
 
 // Global function pointers — loaded by GLLoadFunctions()
+#ifndef __APPLE__
 #define GL_FUNC(ret, name, ...) extern PFN_##name name;
+#else
+#define GL_FUNC(ret, name, ...)
+#endif
 
 GL_FUNC(void, glEnable, GLenum cap)
 GL_FUNC(void, glDisable, GLenum cap)
@@ -290,6 +298,14 @@ GL_FUNC(void, glBlitFramebuffer, GLint srcX0, GLint srcY0, GLint srcX1, GLint sr
 GL_FUNC(void, glDrawBuffers, GLsizei n, const GLenum *bufs)
 
 #undef GL_FUNC
+
+#ifdef __APPLE__
+// glTexStorage2D is GL 4.2 and absent from Apple's gl3.h.
+// Declare it as a proc-loaded function pointer so call sites compile unchanged.
+typedef void (GLAPIENTRY *PFN_glTexStorage2D)(GLenum target, GLsizei levels,
+        GLenum internalformat, GLsizei w, GLsizei h);
+extern PFN_glTexStorage2D glTexStorage2D;
+#endif
 
 // Load all GL function pointers via SDL_GL_GetProcAddress.
 // Must be called after SDL_GL_CreateContext. Returns true on success.

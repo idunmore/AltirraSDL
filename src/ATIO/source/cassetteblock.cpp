@@ -532,7 +532,7 @@ uint32 ATCassetteImageDataBlockStd::GetDataSampleCount() const {
 }
 
 uint64 ATCassetteImageDataBlockStd::GetDataSampleCount64() const {
-	return (uint64)((vduint128(mData.size()) * vduint128(mDataSamplesPerByteF32)) >> 32);
+	return (uint64)((vduint128((uint64)mData.size()) * vduint128(mDataSamplesPerByteF32)) >> 32);
 }
 
 bool ATCassetteImageDataBlockStd::GetBit(uint32 pos, bool bypassFSK) const {

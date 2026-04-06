@@ -39,7 +39,7 @@ list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*/startuplogger\\.cpp$")     # W
 list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*/texteditor\\.cpp$")        # Win32 HWND/WndProc text editor widget
 # vgmwriter.cpp is now portable (UTF-16LE encoding fixed for non-Windows)
 # Exclude architecture-specific files for the wrong target
-if(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "(aarch64|ARM64)")
+if(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "(aarch64|ARM64|arm64)")
     list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*_neon\\.cpp$")
     list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*_arm64\\.cpp$")
 endif()
@@ -304,6 +304,12 @@ elseif(ANDROID)
     target_compile_definitions(AltirraSDL PRIVATE VD_OS_ANDROID=1 ALTIRRA_MOBILE=1)
 elseif(APPLE)
     target_compile_definitions(AltirraSDL PRIVATE VD_OS_MACOS=1)
+    # Silence Apple's blanket OpenGL deprecation warnings (entire API deprecated
+    # in macOS 10.14, but still functional and the only GL path available here).
+    target_compile_definitions(AltirraSDL PRIVATE GL_SILENCE_DEPRECATION=1)
+    # Suppress Clang's "unknown attribute" noise for the MSVC-specific
+    # [[msvc::no_unique_address]] annotation in vdalloc.h.
+    target_compile_options(AltirraSDL PRIVATE -Wno-unknown-attributes)
 elseif(UNIX)
     target_compile_definitions(AltirraSDL PRIVATE VD_OS_LINUX=1)
 endif()

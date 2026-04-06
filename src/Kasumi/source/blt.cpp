@@ -18,7 +18,11 @@
 
 #include <stdafx.h>
 #include <vector>
+#if defined(__APPLE__) || defined(__FreeBSD__)
+#include <stdlib.h>
+#else
 #include <malloc.h>
+#endif
 #ifndef _WIN32
 #include <alloca.h>
 #ifndef _alloca

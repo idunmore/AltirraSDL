@@ -7,7 +7,11 @@
 #include "logging.h"
 
 // Define all function pointer globals
+#ifndef __APPLE__
 #define GL_FUNC(ret, name, ...) PFN_##name name = nullptr;
+#else
+#define GL_FUNC(ret, name, ...)
+#endif
 
 GL_FUNC(void, glEnable, GLenum cap)
 GL_FUNC(void, glDisable, GLenum cap)
@@ -68,13 +72,22 @@ GL_FUNC(void, glDrawBuffers, GLsizei n, const GLenum *bufs)
 
 #undef GL_FUNC
 
+#ifdef __APPLE__
+// glTexStorage2D is GL 4.2, not available in Apple's gl3.h — proc-load it.
+PFN_glTexStorage2D glTexStorage2D = nullptr;
+#endif
+
 bool GLLoadFunctions() {
 	bool ok = true;
 
+#ifndef __APPLE__
 #define GL_LOAD(name) do { \
 	name = (PFN_##name)SDL_GL_GetProcAddress(#name); \
 	if (!name) { LOG_ERROR("GL", "Failed to load: %s", #name); ok = false; } \
 } while(0)
+#else
+#define GL_LOAD(name) /* macOS: framework provides 'name' directly */
+#endif
 
 	GL_LOAD(glEnable);
 	GL_LOAD(glDisable);
@@ -92,7 +105,9 @@ bool GLLoadFunctions() {
 	GL_LOAD(glGetIntegerv);
 	// glPolygonMode is optional — not available on macOS core profile.
 	// ImGui uses it for wireframe debug mode; silently skip if missing.
+#ifndef __APPLE__
 	glPolygonMode = (PFN_glPolygonMode)SDL_GL_GetProcAddress("glPolygonMode");
+#endif
 	GL_LOAD(glColorMask);
 	GL_LOAD(glGenTextures);
 	GL_LOAD(glDeleteTextures);
@@ -136,6 +151,12 @@ bool GLLoadFunctions() {
 	GL_LOAD(glDrawBuffers);
 
 #undef GL_LOAD
+
+#ifdef __APPLE__
+	// glTexStorage2D is GL 4.2 — not in macOS gl3.h, must proc-load explicitly.
+	glTexStorage2D = (PFN_glTexStorage2D)SDL_GL_GetProcAddress("glTexStorage2D");
+	if (!glTexStorage2D) { LOG_ERROR("GL", "Failed to load: glTexStorage2D"); ok = false; }
+#endif
 
 	return ok;
 }

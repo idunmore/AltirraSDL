@@ -74,7 +74,7 @@ void ATDeviceVideoGenerator::Init() {
 		float triv[3];
 		float tridx[3];
 		float tridy[3];
-		vdfloat2 pos0((float)xmin + 0.5f, (float)ymin + 0.5f);
+		vdfloat2 pos0{(float)xmin + 0.5f, (float)ymin + 0.5f};
 
 		for(int j=0; j<3; ++j) {
 			vdfloat2 edge = pts[j ? j-1 : 2] - pts[j];
