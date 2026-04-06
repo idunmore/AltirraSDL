@@ -99,6 +99,7 @@ target_sources(AltirraSDL PRIVATE
 
     # --- ui/firmware/ : Firmware Manager + category ---
     source/ui/firmware/ui_firmware.cpp
+    source/ui/firmware/ui_firmware_category.cpp
 
     # --- ui/devconfig/ : Device configuration dialogs ---
     source/ui/devconfig/ui_devconfig.cpp
