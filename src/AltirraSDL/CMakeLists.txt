@@ -162,7 +162,9 @@ target_sources(AltirraSDL PRIVATE
     # active only when ALTIRRA_MOBILE is defined at runtime)
     source/touch_layout.cpp
     source/touch_controls.cpp
+    source/touch_widgets.cpp
     source/ui_mobile.cpp
+    source/android_platform.cpp
     source/crash_report.cpp
 
     # Registry persistence (filtered out by ui* regex, so add explicitly)

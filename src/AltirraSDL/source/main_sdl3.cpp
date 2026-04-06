@@ -24,6 +24,7 @@
 #include <at/atio/image.h>
 
 #include "crash_report.h"
+#include <imgui.h>
 #include "display_sdl3_impl.h"
 #include "display_backend.h"
 #include "display_backend_gl33.h"
@@ -45,6 +46,7 @@
 #include <at/ataudio/audiooutput.h>
 #include "uiaccessors.h"
 #include "inputmanager.h"
+#include "inputmap.h"
 #include "inputdefs.h"
 #include "accel_sdl3.h"
 #include "antic.h"
@@ -67,6 +69,7 @@
 #include <pthread.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include "android_platform.h"
 #endif
 
 ATSimulator g_sim;
@@ -711,6 +714,10 @@ static void HandleEvents() {
 				SDL_GetWindowSizeInPixels(g_pWindow, &w, &h);
 				g_pBackend->OnResize(w, h);
 			}
+#ifdef __ANDROID__
+			// Orientation change / rotation → safe insets change too.
+			ATAndroid_InvalidateSafeInsets();
+#endif
 			break;
 		case SDL_EVENT_WINDOW_MOVED:
 			ATUpdateWindowedGeometry(g_pWindow);
@@ -733,12 +740,34 @@ static void HandleEvents() {
 			ATInputSDL3_ReleaseAllKeys();
 			ATUIReleaseMouse();
 			ATTouchControls_ReleaseAll();
+#ifdef ALTIRRA_MOBILE
+			// Snapshot the current emulator state so if Android kills
+			// us while backgrounded (low memory, incoming call swipe,
+			// user swipe from recents) we can resume on next launch.
+			// Also flush settings so any pending config changes land
+			// on disk before we risk being killed.
+			ATMobileUI_SaveSuspendState(g_sim, g_mobileState);
+			try {
+				extern void ATRegistryFlushToDisk();
+				ATRegistryFlushToDisk();
+			} catch (...) {
+				SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+					"Altirra: registry flush failed on background");
+			}
+#endif
 			break;
 
 		case SDL_EVENT_DID_ENTER_BACKGROUND:
 			SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
 				"Altirra: DID_ENTER_BACKGROUND — suspending render/sim");
 			g_appSuspended = true;
+#ifdef ALTIRRA_MOBILE
+			// Stop pushing audio to the device while invisible — the
+			// AudioOutput SDL3 backend queues chunks and will keep
+			// filling them if we don't mute.
+			if (IATAudioOutput *ao = g_sim.GetAudioOutput())
+				ao->SetMute(true);
+#endif
 			break;
 
 		case SDL_EVENT_WILL_ENTER_FOREGROUND:
@@ -750,14 +779,29 @@ static void HandleEvents() {
 			SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
 				"Altirra: DID_ENTER_FOREGROUND — resuming");
 			g_appSuspended = false;
+#ifdef ALTIRRA_MOBILE
+			// Re-enable audio output (unless the user explicitly
+			// muted via the hamburger menu).
+			if (IATAudioOutput *ao = g_sim.GetAudioOutput())
+				ao->SetMute(g_mobileState.audioMuted);
+			// Re-query safe insets in case rotation happened while
+			// suspended.
+			ATAndroid_InvalidateSafeInsets();
+			// Refresh the file browser when returning from Settings
+			// (after a possible "All files access" grant).
+			ATMobileUI_InvalidateFileBrowser();
+#endif
 			break;
 
 		case SDL_EVENT_TERMINATING:
-			// Last chance before the OS kills the process.  Flush settings
-			// inside a try/catch (mirrors the normal shutdown path) and
-			// request a clean exit of the main loop.
+			// Last chance before the OS kills the process.  Snapshot
+			// the emulator state (mobile only) and flush settings,
+			// both inside try/catch, then request a clean exit.
 			SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
 				"Altirra: TERMINATING — flushing settings");
+#ifdef ALTIRRA_MOBILE
+			ATMobileUI_SaveSuspendState(g_sim, g_mobileState);
+#endif
 			try {
 				extern void ATRegistryFlushToDisk();
 				ATRegistryFlushToDisk();
@@ -1483,6 +1527,8 @@ int main(int argc, char *argv[]) {
 
 #ifdef ALTIRRA_MOBILE
 	ATMobileUI_Init();
+	ATMobileUI_LoadConfig(g_mobileState);
+	ATTouchControls_SetHapticEnabled(g_mobileState.layoutConfig.hapticEnabled);
 
 	// Query display content scale for DPI-aware touch control sizing.
 	{
@@ -1492,7 +1538,19 @@ int main(int argc, char *argv[]) {
 		if (cs > 4.0f) cs = 4.0f;
 		g_mobileState.layoutConfig.contentScale = cs;
 		LOG_INFO("Main", "Touch controls content scale: %.2f", cs);
+
+		// Raise ImGui's mouse drag threshold on touch devices so small
+		// finger jitter during a tap doesn't start a drag — scales with
+		// display DPI so it's consistent across phones and tablets.
+		ImGuiIO &io = ImGui::GetIO();
+		io.MouseDragThreshold = 8.0f * cs;
 	}
+
+	// Storage permission is requested lazily by the file browser when
+	// the user actually opens it — requesting on startup spawns the
+	// dialog before the GL surface is stable, which some Android
+	// builds handle by putting the activity through onPause/onStop
+	// right at the moment we're trying to render the first frame.
 #endif
 
 	// Register device extended commands (copy/paste, explore disk, mount VHD, etc.)
@@ -1545,6 +1603,159 @@ int main(int argc, char *argv[]) {
 		if (!key.getBool("Mobile defaults applied")) {
 			g_sim.SetVideoStandard(kATVideoStandard_PAL);
 			key.setBool("Mobile defaults applied", true);
+		}
+	}
+
+	// Make sure a *port-1* joystick input map is active, otherwise
+	// the on-screen fire/joystick buttons emit input codes that are
+	// never bound to the Atari port 0 controller (port 0 = joystick 1,
+	// the port games default to).
+	//
+	// Background: on Windows / desktop, the user picks an input map
+	// via the "Input" menu, and that activation is written to the
+	// registry so next time LoadSelections() in inputmanager.cpp
+	// re-activates it.  On a fresh mobile install there's no saved
+	// selection *and* `defaultControllerType == kATInputControllerType_None`
+	// on non-5200 hardware (settings.cpp:726) — so LoadSelections
+	// skips its "pick first matching map" fallback and leaves the
+	// input manager with every preset map loaded but none active.
+	//
+	// Even after we force-activate ANY joystick map, there are three
+	// default joystick maps:
+	//   "Gamepad -> Joystick (port 1)"   mUnit=-1 (any)  port=0
+	//   "Gamepad 1 -> Joystick (port 1)" mUnit= 0         port=0
+	//   "Gamepad 2 -> Joystick (port 2)" mUnit= 1         port=1
+	// mInputMaps is a `std::map<ATInputMap*, bool>`, so iteration order
+	// is by pointer address (nondeterministic).  If we happened to
+	// pick the "port 2" map, touch inputs would route to the wrong
+	// Atari port and nothing would happen in-game.
+	//
+	// Fix: look for a map that (a) matches the current hardware's
+	// controller type, (b) uses Atari physical port 0, and
+	// (c) prefers mUnit=-1 (works for any input source) over a
+	// specific unit index.  Activate that one explicitly, and log
+	// the name so future debugging is trivial.
+	{
+		ATInputManager *im = g_sim.GetInputManager();
+
+		// First deactivate every currently-active map so we don't
+		// end up with the wrong one lingering (e.g. if a previous
+		// session saved "Gamepad 2" as active).
+		const uint32 count = im->GetInputMapCount();
+		for (uint32 i = 0; i < count; ++i) {
+			vdrefptr<ATInputMap> imap;
+			if (im->GetInputMapByIndex(i, ~imap) && imap)
+				im->ActivateInputMap(imap, false);
+		}
+
+		ATInputControllerType wanted =
+			(g_sim.GetHardwareMode() == kATHardwareMode_5200)
+				? kATInputControllerType_5200Controller
+				: kATInputControllerType_Joystick;
+
+		ATInputMap *chosen = nullptr;
+		int chosenScore = -1;
+
+		// Codes that ATTouchControls_HandleEvent actually emits.  The
+		// chosen input map MUST contain mappings for these, otherwise
+		// touch input gets swallowed by the input manager with no
+		// effect (e.g. the "Numpad -> Joystick (port 1)" preset also
+		// targets port 0 but binds kATInputCode_KeyNumpad* — useless
+		// for touch).
+		// ---------------------------------------------------------------
+		// Virtual joystick / fire wiring — how it works, in one place
+		// ---------------------------------------------------------------
+		// touch_controls.cpp converts finger events into five "source"
+		// input codes it feeds directly into the input manager via
+		// OnButtonDown/OnButtonUp with unit=0:
+		//
+		//   kATInputCode_JoyStick1Left  (0x2100)
+		//   kATInputCode_JoyStick1Right (0x2101)
+		//   kATInputCode_JoyStick1Up    (0x2102)
+		//   kATInputCode_JoyStick1Down  (0x2103)
+		//   kATInputCode_JoyButton0     (0x2800)
+		//
+		// For these to actually move the player / fire, ONE input map
+		// must be active that:
+		//   1. Has a Joystick controller attached to Atari physical
+		//      port 0 (HasControllerType(Joystick) && UsesPhysicalPort(0)).
+		//   2. SpecificInputUnit == -1 (accept any source unit — our
+		//      touch controller is not a registered input unit).
+		//   3. Contains direct 1:1 mappings from the five source codes
+		//      above to the joystick triggers Left/Right/Up/Down/Button0.
+		//
+		// Several built-in presets look plausible but silently fail:
+		//   "Numpad -> Joystick (port 1)"           — sources are
+		//       kATInputCode_KeyNumpad*, not JoyStick1*.
+		//   "Gamepad -> Joystick (port 1)"          — has all 5 direct
+		//       sources but also has fall-through analog-axis sources,
+		//       and std::map<ATInputMap*, bool> iteration order is by
+		//       pointer address, so this one sometimes won the tiebreak
+		//       over the properly-authored "Xbox 360 Controller" map.
+		//   "Gamepad N -> Joystick (port 1)"        — unit != -1.
+		//
+		// countTouchBindings() below counts distinct direct 1:1 source
+		// codes.  The selector requires all 5 to be present and picks
+		// the best candidate by (unit-agnostic bonus + match count),
+		// which reliably resolves to "Xbox 360 Controller -> Joystick
+		// (port 1)" on a default install.
+		//
+		// The activation MUST happen after default maps are loaded
+		// (settings.cpp runs LoadSelections) but BEFORE the main loop
+		// starts polling input.  ColdReset does NOT detach controllers
+		// from the port manager, so the activation is stable across
+		// subsequent sim resets.
+		auto countTouchBindings = [](ATInputMap *imap) -> int {
+			bool hasL=false,hasR=false,hasU=false,hasD=false,hasFire=false;
+			const uint32 m = imap->GetMappingCount();
+			for (uint32 i = 0; i < m; ++i) {
+				const auto &mapping = imap->GetMapping(i);
+				uint32 code = mapping.mInputCode & kATInputCode_IdMask;
+				if (code == kATInputCode_JoyStick1Left)  hasL = true;
+				if (code == kATInputCode_JoyStick1Right) hasR = true;
+				if (code == kATInputCode_JoyStick1Up)    hasU = true;
+				if (code == kATInputCode_JoyStick1Down)  hasD = true;
+				if (code == (uint32)kATInputCode_JoyButton0) hasFire = true;
+			}
+			return (hasL?1:0) + (hasR?1:0) + (hasU?1:0) + (hasD?1:0) + (hasFire?1:0);
+		};
+
+		for (uint32 i = 0; i < count; ++i) {
+			vdrefptr<ATInputMap> imap;
+			if (!im->GetInputMapByIndex(i, ~imap) || !imap)
+				continue;
+			if (!imap->HasControllerType(wanted))
+				continue;
+			// Must target Atari physical port 0 (= joystick port 1).
+			if (!imap->UsesPhysicalPort(0))
+				continue;
+			int touchMatches = countTouchBindings(imap);
+			// Must have ALL 5 direct touch source codes (4 dirs + fire),
+			// otherwise some directions/fire will silently be dead.
+			if (touchMatches < 5)
+				continue;
+			// Prefer generic (unit=-1) over a specific unit index,
+			// because our touch controller isn't registered as a
+			// specific input unit.  Break further ties by number of
+			// direct matches (already clamped to 5).
+			int score = (imap->GetSpecificInputUnit() == -1) ? 100 : 50;
+			score += touchMatches;
+			if (score > chosenScore) {
+				chosenScore = score;
+				chosen = imap;
+			}
+		}
+
+		if (chosen) {
+			im->ActivateInputMap(chosen, true);
+			VDStringA nameU8 = VDTextWToU8(VDStringW(chosen->GetName()));
+			SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+				"Altirra: activated mobile input map '%s' (unit=%d)",
+				nameU8.c_str(), chosen->GetSpecificInputUnit());
+		} else {
+			SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+				"Altirra: no port-0 joystick input map matches current "
+				"hardware — touch controls will not route to the emulator");
 		}
 	}
 #endif
@@ -1660,6 +1871,28 @@ int main(int argc, char *argv[]) {
 	phase = "main loop";
 	g_pacer.Init();
 	UpdatePacerRate();
+
+#ifdef ALTIRRA_MOBILE
+	// Apply visual effects toggles once, after the simulator is fully
+	// initialised and the GTIA is ready to accept param writes.
+	ATMobileUI_ApplyVisualEffects(g_mobileState);
+	// Apply performance preset so its bundled simulator knobs
+	// (FastBoot, Interlace, POKEY nonlinear mix, drive sounds)
+	// are set before the first frame.
+	ATMobileUI_ApplyPerformancePreset(g_mobileState);
+
+	// If we were killed while backgrounded last session, restore the
+	// emulator state the user was in.  Must happen AFTER firmware has
+	// loaded and the simulator is fully initialised, and BEFORE the
+	// main loop starts so the first frame shows the restored state.
+	{
+		bool restored = ATMobileUI_RestoreSuspendState(g_sim, g_mobileState);
+		if (restored) {
+			SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+				"Altirra: restored previous session from quicksave");
+		}
+	}
+#endif
 
 	// Present once immediately so compositors show the window.
 	RenderAndPresent();

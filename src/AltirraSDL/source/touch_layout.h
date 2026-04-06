@@ -24,11 +24,25 @@ enum class ATTouchControlSize : int {
 	Large = 2
 };
 
+enum class ATTouchJoystickStyle : int {
+	Analog = 0,   // Free-floating knob anchored at touch-down point (default).
+	DPad8  = 1,   // 8-way pizza-sliced dpad anchored at a fixed point.
+	DPad4  = 2,   // 4-way pizza-sliced dpad (cardinal snap) at a fixed point.
+};
+
 struct ATTouchLayoutConfig {
 	ATTouchControlSize controlSize = ATTouchControlSize::Medium;
+	ATTouchJoystickStyle joystickStyle = ATTouchJoystickStyle::Analog;
 	float controlOpacity = 0.5f;
 	bool hapticEnabled = true;
 	float contentScale = 1.0f;		// DPI scale factor from SDL_GetDisplayContentScale()
+};
+
+struct ATTouchLayoutInsets {
+	int top = 0;
+	int bottom = 0;
+	int left = 0;
+	int right = 0;
 };
 
 struct ATTouchLayout {
@@ -36,6 +50,10 @@ struct ATTouchLayout {
 	int screenW = 0;
 	int screenH = 0;
 	bool landscape = true;
+
+	// System UI safe-area insets (status bar, nav bar, display cutout)
+	// applied to all zones.  Zero on desktop.
+	ATTouchLayoutInsets insets;
 
 	// Normalized zones
 	ATTouchRect topBar;        // Console keys + hamburger
@@ -61,11 +79,13 @@ struct ATTouchLayout {
 	// Last-applied config (for detecting when recalculation is needed)
 	ATTouchControlSize lastControlSize = ATTouchControlSize::Medium;
 	float lastContentScale = 0.0f;
+	ATTouchLayoutInsets lastInsets;
 };
 
 // Recalculate layout for current screen dimensions
 void ATTouchLayout_Update(ATTouchLayout &layout, int screenW, int screenH,
-	const ATTouchLayoutConfig &config);
+	const ATTouchLayoutConfig &config,
+	const ATTouchLayoutInsets &insets = ATTouchLayoutInsets{});
 
 // Convert normalized rect to pixel rect
 ATTouchRect ATTouchLayout_ToPixels(const ATTouchRect &norm, int screenW, int screenH);

@@ -767,7 +767,43 @@ bool ATUIInit(SDL_Window *window, IDisplayBackend *backend) {
 		if (cs < 1.0f) cs = 1.0f;
 		// Clamp to reasonable range to avoid absurd sizes on exotic devices
 		if (cs > 4.0f) cs = 4.0f;
-		io.FontGlobalScale = cs;
+
+		// Try to load a real TTF so the UI doesn't use the ProggyClean
+		// bitmap font, which looks pixelated on modern phones.  The TTF
+		// is bundled in Android assets at "fonts/Roboto-Regular.ttf"
+		// and read via SDL_LoadFile (which resolves through
+		// AAssetManager on Android).
+		//
+		// We load the font at its native pixel size (baseSizePx * cs)
+		// and reset FontGlobalScale to 1.0, rather than loading at a
+		// small size and scaling up — this gives crisp glyphs instead
+		// of blurry bilinear enlargement.
+		const float kBaseFontSizeDp = 16.0f;
+		bool loadedTTF = false;
+		{
+			size_t dataSize = 0;
+			void *data = SDL_LoadFile("fonts/Roboto-Regular.ttf", &dataSize);
+			if (data && dataSize > 0) {
+				ImFontConfig cfg;
+				cfg.FontDataOwnedByAtlas = true; // ImGui frees it
+				io.Fonts->AddFontFromMemoryTTF(
+					data, (int)dataSize,
+					kBaseFontSizeDp * cs, &cfg);
+				loadedTTF = true;
+				LOG_INFO("UI", "Loaded Roboto-Regular.ttf (%zu bytes) at %.1fpx",
+					dataSize, kBaseFontSizeDp * cs);
+			} else {
+				LOG_INFO("UI", "Roboto TTF not found, falling back to default font");
+				if (data) SDL_free(data);
+			}
+		}
+
+		if (loadedTTF) {
+			io.FontGlobalScale = 1.0f;  // already rasterized at native DPI
+		} else {
+			io.FontGlobalScale = cs;    // scale the bitmap default font
+		}
+
 		// Also scale the default style so spacing, padding, and rounding
 		// match the larger font
 		ImGuiStyle &style = ImGui::GetStyle();
@@ -1147,7 +1183,8 @@ static void RenderAboutDialog(ATUIState &state) {
 	ImGui::TextWrapped(
 		"Atari 800/800XL/5200 emulator\n"
 		"Based on Altirra by Avery Lee\n"
-		"SDL3 + Dear ImGui cross-platform frontend\n\n"
+		"SDL3 + Dear ImGui cross-platform frontend\n"
+		"SDL Port by Jakub 'Ilmenit' Debski\n\n"
 		"Licensed under GNU GPL v2+");
 
 	ImGui::Spacing();
@@ -1565,6 +1602,12 @@ void ATUIRenderFrame(ATSimulator &sim, VDVideoDisplaySDL3 &display,
 	ATUIDebuggerRenderPanes(sim, state);
 
 	// Tools result popup (success/error messages from deferred tool actions)
+#ifdef ALTIRRA_MOBILE
+	if (g_showToolsResult) {
+		ATMobileUI_ShowInfoModal("Tool Result", g_toolsResultMessage.c_str());
+		g_showToolsResult = false;
+	}
+#else
 	if (g_showToolsResult) {
 		ImGui::OpenPopup("Tool Result");
 		g_showToolsResult = false;
@@ -1576,8 +1619,18 @@ void ATUIRenderFrame(ATSimulator &sim, VDVideoDisplaySDL3 &display,
 			ImGui::CloseCurrentPopup();
 		ImGui::EndPopup();
 	}
+#endif
 
 	// Export ROM overwrite confirmation popup
+#ifdef ALTIRRA_MOBILE
+	if (g_showExportROMOverwrite) {
+		VDStringW path = g_exportROMPath;
+		ATMobileUI_ShowConfirmDialog("Overwrite Existing Files?",
+			"There are existing files with the same names that will be overwritten.\nAre you sure?",
+			[path]() { ATUIDoExportROMSet(path); });
+		g_showExportROMOverwrite = false;
+	}
+#else
 	if (g_showExportROMOverwrite) {
 		ImGui::OpenPopup("Overwrite Existing Files?");
 		g_showExportROMOverwrite = false;
@@ -1594,6 +1647,7 @@ void ATUIRenderFrame(ATSimulator &sim, VDVideoDisplaySDL3 &display,
 			ImGui::CloseCurrentPopup();
 		ImGui::EndPopup();
 	}
+#endif
 
 	// Progress dialog popup (firmware scan, background tasks)
 	ATUIRenderProgress();
