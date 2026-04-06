@@ -19,10 +19,18 @@ case "$PLATFORM" in
 esac
 
 # Destination: next to the AltirraSDL executable.
-# On Windows, MSVC puts the binary in a per-config subdirectory (e.g. Release/).
+# - Windows: MSVC puts the binary in a per-config subdirectory (Release/).
+# - macOS:   AltirraSDL is a .app bundle; the Mach-O binary lives inside
+#            Contents/MacOS/, and that's also where dlopen() will look for
+#            sibling dylibs via @executable_path.  This must match the
+#            $<TARGET_FILE_DIR:AltirraSDL> glob used by the package_altirra
+#            target in src/AltirraSDL/CMakeLists.txt.
+# - Linux:   single-config flat layout next to the binary.
 if [ "$PLATFORM" = "windows" ]; then
     _BT="$(echo "${BUILD_TYPE:0:1}" | tr '[:lower:]' '[:upper:]')${BUILD_TYPE:1}"
     LIBRA_DEST="$BUILD_DIR/src/AltirraSDL/${_BT}/$LIBRA_SO"
+elif [ "$PLATFORM" = "macos" ]; then
+    LIBRA_DEST="$BUILD_DIR/src/AltirraSDL/AltirraSDL.app/Contents/MacOS/$LIBRA_SO"
 else
     LIBRA_DEST="$BUILD_DIR/src/AltirraSDL/$LIBRA_SO"
 fi
