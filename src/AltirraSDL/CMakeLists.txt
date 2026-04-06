@@ -182,6 +182,11 @@ target_sources(AltirraSDL PRIVATE
 
     # --- ui/mobile/ : Mobile touch UI (Android) ---
     source/ui/mobile/ui_mobile.cpp
+    source/ui/mobile/mobile_hamburger.cpp
+    source/ui/mobile/mobile_file_browser.cpp
+    source/ui/mobile/mobile_settings.cpp
+    source/ui/mobile/mobile_disk.cpp
+    source/ui/mobile/mobile_about_wizard.cpp
 
     # Registry persistence (filtered out by ui* regex, so add explicitly)
     ${CMAKE_SOURCE_DIR}/src/Altirra/source/uiregistry.cpp
