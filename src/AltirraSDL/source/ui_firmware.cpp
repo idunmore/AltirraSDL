@@ -1405,8 +1405,10 @@ void RenderFirmwareCategory(ATSimulator &sim) {
 		const char *preview = (osIdx < (int)osEntries.size()) ? osEntries[osIdx].name.c_str() : "[Autoselect]";
 		if (ImGui::BeginCombo("##OS", preview)) {
 			for (int i = 0; i < (int)osEntries.size(); ++i) {
+				ImGui::PushID(i);
 				if (ImGui::Selectable(osEntries[i].name.c_str(), osIdx == i))
 					SwitchKernel(sim, osEntries[i].id, osEntries[i].pInfo);
+				ImGui::PopID();
 			}
 			ImGui::EndCombo();
 		}
@@ -1455,10 +1457,12 @@ void RenderFirmwareCategory(ATSimulator &sim) {
 		const char *preview = (basicIdx < (int)basicEntries.size()) ? basicEntries[basicIdx].name.c_str() : "[Autoselect]";
 		if (ImGui::BeginCombo("##BASIC", preview)) {
 			for (int i = 0; i < (int)basicEntries.size(); ++i) {
+				ImGui::PushID(i);
 				if (ImGui::Selectable(basicEntries[i].name.c_str(), basicIdx == i)) {
 					sim.SetBasic(basicEntries[i].id);
 					sim.ColdReset();
 				}
+				ImGui::PopID();
 			}
 			ImGui::EndCombo();
 		}

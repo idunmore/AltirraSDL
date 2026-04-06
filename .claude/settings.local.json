@@ -109,7 +109,14 @@
       "Bash(magick identify:*)",
       "Bash(tail:*)",
       "Bash(cat:*)",
-      "Bash(cd:*)"
+      "Bash(cd:*)",
+      "Bash(git rm:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m ':*)",
+      "Bash(git push:*)",
+      "Bash(xargs sed:*)",
+      "Bash(git check-ignore:*)",
+      "Read(//home/ilm/.config/altirra/**)"
     ]
   }
 }

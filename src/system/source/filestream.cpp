@@ -622,14 +622,27 @@ void VDTextOutputStream::PutLine(const char *s, int len) {
 
 void VDTextOutputStream::Format(const char *format, ...) {
 	va_list val;
-
 	va_start(val, format);
 
+	// C99 vsnprintf returns the number of characters that WOULD have been
+	// written (excluding the terminating NUL), which may exceed the buffer
+	// size on truncation.  If we blindly added that to mLevel we would walk
+	// the write cursor past the end of mBuf and subsequent PutData()/memcpy
+	// calls would corrupt the stack (this bug is masked on legacy MSVC where
+	// _vsnprintf returned -1 on truncation, but glibc/modern CRTs follow C99).
+	//
+	// We need a second copy of the va_list for the Format2 fallback, because
+	// passing a va_list to a v*printf consumes it (UB to reuse without va_copy).
+	const int space = kBufSize - mLevel;
 	int rv = -1;
-	if (mLevel < kBufSize-4)
-		rv = vsnprintf(mBuf+mLevel, kBufSize-mLevel, format, val);
+	if (space > 4) {
+		va_list valCopy;
+		va_copy(valCopy, val);
+		rv = vsnprintf(mBuf+mLevel, space, format, valCopy);
+		va_end(valCopy);
+	}
 
-	if (rv >= 0)
+	if (rv >= 0 && rv < space)
 		mLevel += rv;
 	else
 		Format2(format, val);
@@ -639,14 +652,21 @@ void VDTextOutputStream::Format(const char *format, ...) {
 
 void VDTextOutputStream::FormatLine(const char *format, ...) {
 	va_list val;
-
 	va_start(val, format);
 
+	// See comment in Format() — vsnprintf return value must be bounds-checked
+	// against the remaining buffer space, and the va_list must be copied for
+	// the fallback path.
+	const int space = kBufSize - mLevel;
 	int rv = -1;
-	if (mLevel < kBufSize-4)
-		rv = vsnprintf(mBuf+mLevel, kBufSize-mLevel, format, val);
+	if (space > 4) {
+		va_list valCopy;
+		va_copy(valCopy, val);
+		rv = vsnprintf(mBuf+mLevel, space, format, valCopy);
+		va_end(valCopy);
+	}
 
-	if (rv >= 0)
+	if (rv >= 0 && rv < space)
 		mLevel += rv;
 	else
 		Format2(format, val);
@@ -658,9 +678,14 @@ void VDTextOutputStream::FormatLine(const char *format, ...) {
 void VDTextOutputStream::Format2(const char *format, va_list val) {
 	char buf[3072];
 
-	int rv = vsnprintf(buf, 3072, format, val);
-	if (rv > 0)
+	int rv = vsnprintf(buf, sizeof buf, format, val);
+	if (rv > 0) {
+		// Clamp: C99 vsnprintf may return a value larger than the buffer
+		// on truncation, which would cause PutData to read past the end.
+		if (rv > (int)sizeof buf - 1)
+			rv = (int)sizeof buf - 1;
 		PutData(buf, rv);
+	}
 }
 
 void VDTextOutputStream::PutData(const char *s, int len) {

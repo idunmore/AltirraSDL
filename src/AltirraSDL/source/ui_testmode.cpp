@@ -18,6 +18,7 @@
 #include "ui_main.h"
 #include "simulator.h"
 #include "gtia.h"
+#include "logging.h"
 
 bool g_testModeEnabled = false;
 
@@ -46,7 +47,7 @@ static void FlushSendBuffer() {
 
 	int sent = g_ipc.Send(g_sendBuf.data(), g_sendBuf.size());
 	if (sent < 0) {
-		fprintf(stderr, "[TestMode] Client disconnected (send error)\n");
+		LOG_ERROR("TestMode", "Client disconnected (send error)");
 		g_ipc.DisconnectClient();
 		ResetClientState();
 		return;
@@ -605,8 +606,7 @@ static void ProcessPendingActions() {
 				if (!item) {
 					// Item still not found — give up silently (click was
 					// already acknowledged with ok, so we can't error now)
-					fprintf(stderr, "[TestMode] click: item '%s' in '%s' not found, dropping\n",
-						action.targetLabel.c_str(), action.targetWindow.c_str());
+					LOG_INFO("TestMode", "click: item '%s' in '%s' not found, dropping", action.targetLabel.c_str(), action.targetWindow.c_str());
 					g_pendingActions.erase(g_pendingActions.begin() + i);
 					continue;
 				}
@@ -691,7 +691,7 @@ bool ATTestModeInit() {
 	// Register NewFrame hook to clear item registry each frame
 	EnsureHookRegistered();
 
-	fprintf(stderr, "[TestMode] Initialized (PID %lu)\n", (unsigned long)SDL_GetCurrentThreadID());
+	LOG_INFO("TestMode", "Initialized (PID %lu)", (unsigned long)SDL_GetCurrentThreadID());
 	return true;
 }
 
@@ -708,7 +708,7 @@ void ATTestModeShutdown() {
 	g_ipcAddress.clear();
 	g_items.clear();
 	ResetClientState();
-	fprintf(stderr, "[TestMode] Shutdown\n");
+	LOG_INFO("TestMode", "Shutdown");
 }
 
 void ATTestModePollCommands(ATSimulator &sim, ATUIState &state) {
@@ -727,7 +727,7 @@ void ATTestModePollCommands(ATSimulator &sim, ATUIState &state) {
 		g_recvBuf.append(buf, n);
 	} else if (n < 0) {
 		// Client disconnected or error
-		fprintf(stderr, "[TestMode] Client disconnected\n");
+		LOG_INFO("TestMode", "Client disconnected");
 		g_ipc.DisconnectClient();
 		ResetClientState();
 		return;
@@ -803,11 +803,12 @@ void ImGuiTestEngineHook_Log(ImGuiContext *ctx, const char *fmt, ...) {
 	if (!g_testModeEnabled)
 		return;
 
+	char buf[1024];
 	va_list args;
 	va_start(args, fmt);
-	vfprintf(stderr, fmt, args);
+	vsnprintf(buf, sizeof buf, fmt, args);
 	va_end(args);
-	fprintf(stderr, "\n");
+	LOG_INFO("TestMode", "%s", buf);
 }
 
 const char* ImGuiTestEngine_FindItemDebugLabel(ImGuiContext *ctx, ImGuiID id) {

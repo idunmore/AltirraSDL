@@ -23,6 +23,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include "logging.h"
 
 extern ATSimulator g_sim;
 
@@ -58,12 +59,11 @@ void ATUIStartAudioRecording(const wchar_t *path, bool raw) {
 	try {
 		g_pAudioWriter = new ATAudioWriter(path, raw, stereo, pal, nullptr);
 		g_sim.GetAudioOutput()->SetAudioTap(g_pAudioWriter);
-		fprintf(stderr, "[AltirraSDL] Audio recording started (%s, %s)\n",
-			raw ? "raw" : "WAV", stereo ? "stereo" : "mono");
+		LOG_INFO("UI", "Audio recording started (%s, %s)", raw ? "raw" : "WAV", stereo ? "stereo" : "mono");
 	} catch (...) {
 		delete g_pAudioWriter;
 		g_pAudioWriter = nullptr;
-		fprintf(stderr, "[AltirraSDL] Failed to start audio recording\n");
+		LOG_ERROR("UI", "Failed to start audio recording");
 	}
 }
 
@@ -75,11 +75,11 @@ void ATUIStartSAPRecording(const wchar_t *path) {
 	try {
 		g_pSAPWriter = ATCreateSAPWriter();
 		g_pSAPWriter->Init(g_sim.GetEventManager(), &g_sim.GetPokey(), nullptr, path, pal);
-		fprintf(stderr, "[AltirraSDL] SAP recording started\n");
+		LOG_INFO("UI", "SAP recording started");
 	} catch (...) {
 		delete g_pSAPWriter;
 		g_pSAPWriter = nullptr;
-		fprintf(stderr, "[AltirraSDL] Failed to start SAP recording\n");
+		LOG_ERROR("UI", "Failed to start SAP recording");
 	}
 }
 
@@ -89,10 +89,10 @@ void ATUIStartVGMRecording(const wchar_t *path) {
 	try {
 		g_pVGMWriter = ATCreateVgmWriter();
 		g_pVGMWriter->Init(path, g_sim);
-		fprintf(stderr, "[AltirraSDL] VGM recording started\n");
+		LOG_INFO("UI", "VGM recording started");
 	} catch (...) {
 		g_pVGMWriter = nullptr;
-		fprintf(stderr, "[AltirraSDL] Failed to start VGM recording\n");
+		LOG_ERROR("UI", "Failed to start VGM recording");
 	}
 }
 
@@ -173,7 +173,7 @@ void ATUIStartVideoRecording(const wchar_t *path, ATVideoEncoding encoding) {
 		g_sim.GetAudioOutput()->SetAudioTap(g_pVideoWriter->AsAudioTap());
 		gtia.AddVideoTap(g_pVideoWriter->AsVideoTap());
 
-		fprintf(stderr, "[AltirraSDL] Video recording started\n");
+		LOG_INFO("UI", "Video recording started");
 	} catch (const MyError& e) {
 		if (g_pVideoWriter) {
 			ATGTIAEmulator& gtia2 = g_sim.GetGTIA();
@@ -183,7 +183,7 @@ void ATUIStartVideoRecording(const wchar_t *path, ATVideoEncoding encoding) {
 			delete g_pVideoWriter;
 			g_pVideoWriter = nullptr;
 		}
-		fprintf(stderr, "[AltirraSDL] Failed to start video recording: %s\n", e.c_str());
+		LOG_ERROR("UI", "Failed to start video recording: %s", e.c_str());
 	} catch (...) {
 		if (g_pVideoWriter) {
 			ATGTIAEmulator& gtia2 = g_sim.GetGTIA();
@@ -193,7 +193,7 @@ void ATUIStartVideoRecording(const wchar_t *path, ATVideoEncoding encoding) {
 			delete g_pVideoWriter;
 			g_pVideoWriter = nullptr;
 		}
-		fprintf(stderr, "[AltirraSDL] Failed to start video recording\n");
+		LOG_ERROR("UI", "Failed to start video recording");
 	}
 }
 
@@ -208,7 +208,7 @@ void ATUIStopRecording() {
 		try {
 			g_pVideoWriter->Shutdown();
 		} catch (...) {
-			fprintf(stderr, "[AltirraSDL] Error finalizing video recording\n");
+			LOG_ERROR("UI", "Error finalizing video recording");
 		}
 		delete g_pVideoWriter;
 		g_pVideoWriter = nullptr;
@@ -219,7 +219,7 @@ void ATUIStopRecording() {
 		try {
 			g_pAudioWriter->Finalize();
 		} catch (...) {
-			fprintf(stderr, "[AltirraSDL] Error finalizing audio recording\n");
+			LOG_ERROR("UI", "Error finalizing audio recording");
 		}
 		delete g_pAudioWriter;
 		g_pAudioWriter = nullptr;
@@ -229,7 +229,7 @@ void ATUIStopRecording() {
 		try {
 			g_pSAPWriter->Shutdown();
 		} catch (...) {
-			fprintf(stderr, "[AltirraSDL] Error finalizing SAP recording\n");
+			LOG_ERROR("UI", "Error finalizing SAP recording");
 		}
 		delete g_pSAPWriter;
 		g_pSAPWriter = nullptr;
@@ -239,13 +239,13 @@ void ATUIStopRecording() {
 		try {
 			g_pVGMWriter->Shutdown();
 		} catch (...) {
-			fprintf(stderr, "[AltirraSDL] Error finalizing VGM recording\n");
+			LOG_ERROR("UI", "Error finalizing VGM recording");
 		}
 		g_pVGMWriter = nullptr;
 	}
 
 	if (wasRecording)
-		fprintf(stderr, "[AltirraSDL] Recording stopped\n");
+		LOG_INFO("UI", "Recording stopped");
 }
 
 // =========================================================================

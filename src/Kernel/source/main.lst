@@ -1,5 +1,5 @@
 mads 2.1.8
--i:autobuild -i:autobuild_default -d:_KERNEL_XLXE=1 -s -p -i:source/Shared -b:$c000 -o:/tmp/altirra-roms/kernelxl.rom source/main.xasm 
+-i:autobuild -i:autobuild -d:_KERNEL_XLXE=1 -s -p -i:source/Shared -b:$c000 -o:/tmp/kbuild/kernelxl.rom source/main.xasm 
     37 						opt		l+
     38
     39 009B					org		$5000,$d000
@@ -343,7 +343,7 @@ Source: source/Shared/bootscreen.s
    374 52EE 00					dta		d" "
    375 52EF					_KERNELSTR_VERSION_INTERNAL
 Macro: _KERNELSTR_VERSION_INTERNAL [Source: source/Shared/version.inc]
-     1 52EF 13 0E 14 17				dta		"3.47"
+     1 52EF 13 0E 14 18				dta		"3.48"
 Source: source/Shared/bootscreen.s
    376 						
    377 52F3 9B					dta		$9b
@@ -715,7 +715,7 @@ Source: source/Shared/driveimage.inc
    701 307A					org		$d7f8
    702 D7F8					_KERNELSTR_VERSION
 Macro: _KERNELSTR_VERSION [Source: source/Shared/version.inc]
-     1 D7F8 33 2E 34 37				dta		'3.47'
+     1 D7F8 33 2E 34 38				dta		'3.48'
 Source: source/Shared/bootscreen.s
    703 D7FC 00					dta		0
    704
@@ -1068,7 +1068,7 @@ Source: source/Shared/mathpack.s
    333 D8BC B0 05			bcs		notexpzero2
    334 D8BE C8				iny
    335
-   336 D8BF 7D CE DA			adc		fp_mul10,x
+   336 D8BF 7D CC DA			adc		fp_mul10,x
    337 D8C2 AA				tax
    338 D8C3			notexpzero2:
    339 D8C3 8A				txa
@@ -1089,1850 +1089,1948 @@ Source: source/Shared/mathpack.s
    354 				.endp
    355
    356 				;==========================================================================
-   357 D8D1			.proc fp_tab_hi_10000
-   358 D8D1 27 4E 75 9C C3 EA		:6 dta >[10000*[#+1]]
+   357 D8D1			.proc fp_tab_lo_100				;$0A bytes
+   358 D8D1 00 64 C8 2C 90 F4 + 		dta		$00, $64, $C8, $2C, $90, $F4, $58, $BC, $20, $84
    359 				.endp
    360
    361 				;==========================================================================
-   362 				; FASC [D8E6]		Floating Point to ASCII conversion
+   362 				; BCD to binary conversion helper.
    363 				;
-   364 				; Converts an FP number in FR0 to an ASCII representation in LBUFF, setting
-   365 				; INBUFF to the start of the string and with bit 7 set on the last
-   366 				; character.
-   367 				;
-   368 				; Negative values are preceded by '-', followed by at least one decimal
-   369 				; digit -- so values smaller than 1.0 in magnitude start with "0.".
-   370 				; Exponential notation is used for values <0.01 or >=10^10, with the
-   371 				; form m.mmmmmmmmE+nn; trailing zeroes on the mantissa are trimmed, along
-   372 				; with the . if there are no non-zero digits after it.
+   364 				; Entry:
+   365 				;	A = BCD value (fp_dectobin)
+   366 				;
+   367 				; Exit:
+   368 				;	A = unmodified or loaded BCD byte
+   369 				;	Y = MSB nibble (digit)
+   370 				;
+   371 				; Preserved:
+   372 				;	X
    373 				;
-   374 				; Quirks:
-   375 				;	- INBUFF does not always point to LBUFF. It can be up to two bytes prior
-   376 				;	  to LBUFF and one byte after LBUFF:
-   377 				;		* +1 if the leading digit of the mantissa is trimmed off
-   378 				;		* -1 if 0. is prefixed for magnitude in [0.01, 1), or odd exponents
-   379 				;		  in scientific notation
-   380 				;		* -1 if - prefixed for negative number
-   381 				;
-   382 				;	- One decimal digit is always printed for odd exponents, but not for
-   383 				;	  even exponents, e.g. 1E+10 and 1.0E+11.
-   384 				;
-   385 				; Compatibility issues:
-   386 				;	- Darg ignores INBUFF and requires integers to be validly parsable starting
-   387 				;	  at LBUFF. This means that LBUFF[0] must contain a zero if INBUFF is
-   388 				;	  beyond it.
+   374 D8DB			fp_ldfr0p1_dectobin:		;$0B bytes
+   375 D8DB B5 D5				lda		fr0+1,x
+   376 D8DD			fp_dectobin:
+   377 D8DD 48					pha
+   378 D8DE 4A					lsr
+   379 D8DF 4A					lsr
+   380 D8E0 4A					lsr
+   381 D8E1 4A					lsr
+   382 D8E2 A8					tay
+   383 D8E3 68					pla
+   384 D8E4 18					clc
+   385 D8E5 60					rts
+   386
+   387 				;==========================================================================
+   388 				; FASC [D8E6]		Floating Point to ASCII conversion
    389 				;
-   390 D8D7					fixadr	$d8e6
+   390 				; Converts an FP number in FR0 to an ASCII representation in LBUFF, setting
+   391 				; INBUFF to the start of the string and with bit 7 set on the last
+   392 				; character.
+   393 				;
+   394 				; Negative values are preceded by '-', followed by at least one decimal
+   395 				; digit -- so values smaller than 1.0 in magnitude start with "0.".
+   396 				; Exponential notation is used for values <0.01 or >=10^10, with the
+   397 				; form m.mmmmmmmmE+nn; trailing zeroes on the mantissa are trimmed, along
+   398 				; with the . if there are no non-zero digits after it.
+   399 				;
+   400 				; Quirks:
+   401 				;	- INBUFF does not always point to LBUFF. It can be up to two bytes prior
+   402 				;	  to LBUFF and one byte after LBUFF:
+   403 				;		* +1 if the leading digit of the mantissa is trimmed off
+   404 				;		* -1 if 0. is prefixed for magnitude in [0.01, 1), or odd exponents
+   405 				;		  in scientific notation
+   406 				;		* -1 if - prefixed for negative number
+   407 				;
+   408 				;	- One decimal digit is always printed for odd exponents, but not for
+   409 				;	  even exponents, e.g. 1E+10 and 1.0E+11.
+   410 				;
+   411 				; Compatibility issues:
+   412 				;	- Darg ignores INBUFF and requires integers to be validly parsable starting
+   413 				;	  at LBUFF. This means that LBUFF[0] must contain a zero if INBUFF is
+   414 				;	  beyond it.
+   415 				;
+   416 D8E6					fixadr	$d8e6
 Macro: FIXADR [Source: source/Shared/mathpack.s]
-     2 						.print ($D8E6-*),' bytes free before ',$D8E6
-     2 				$000F bytes free before $D8E6
-     3 D8D7					org		$D8E6
 Source: source/Shared/mathpack.s
-   391
-   392 D8E6			.proc	fasc
-   393 = 00F7			dotcntr	= ztemp4
-   394 = 00F8			expval	= ztemp4+1
-   395 = 00F9			trimbase = ztemp4+2
-   396
-   397 D8E6 20 51 DA			jsr		ldbufa
-   398
-   399 					;init starting output index
-   400 D8E9 A0 00			ldy		#0
-   401
-   402 					;start with no exponent to display
-   403 D8EB 84 F8			sty		expval
-   404 D8ED 84 F9			sty		trimbase
-   405
-   406 					;write a zero to the start of the buffer
-   407 D8EF A9 30			lda		#$30
-   408 D8F1 91 F3			sta		(inbuff),y
-   409
-   410 					;read exponent and check if number is zero
-   411 D8F3 A5 D4			lda		fr0
-   412 D8F5 F0 5F			beq		is_zero
-   413 					
-   414 					;set up for 5 mantissa bytes
-   415 D8F7 A2 FB			ldx		#-5
-   416
-   417 					;compute digit offset to place dot
-   418 					;  0.001 (10.0E-04) = 3E 10 00 00 00 00 -> -1
-   419 					;   0.01 ( 1.0E-02) = 3F 01 00 00 00 00 -> 1
-   420 					;    0.1 (10.0E-02) = 3F 10 00 00 00 00 -> 1
-   421 					;    1.0 ( 1.0E+00) = 40 01 00 00 00 00 -> 3
-   422 					;   10.0 (10.0E+00) = 40 10 00 00 00 00 -> 3
-   423 					;  100.0 ( 1.0E+02) = 40 01 00 00 00 00 -> 5
-   424 					; 1000.0 (10.0E+02) = 40 10 00 00 00 00 -> 5
-   425
-   426 D8F9 0A				asl
-   427 D8FA 38				sec
-   428 D8FB E9 7D			sbc		#125
-   429
-   430 					;check if we should go to exponential form (exp >= 10 or <=-3)
-   431 D8FD C9 0C			cmp		#12
-   432 D8FF 90 08			bcc		noexp
-   433
-   434 					;yes - compute and stash explicit exponent
-   435 D901 E9 02			sbc		#2				;!! - carry set from BCC fail
-   436 D903 85 F8			sta		expval			;$0A <= expval < $FE
-   437
-   438 					;reset dot counter
-   439 D905 A9 02			lda		#2
-   440
-   441 					;exclude first two digits from zero trim
-   442 D907 85 F9			sta		trimbase
-   443
-   444 D909			noexp:		
-   445 D909 85 F7			sta		dotcntr			;$02 <= dotcntr < $0C
-   446
-   447 					;check if number is less than 1.0
-   448 D90B C9 02			cmp		#2
-   449 D90D B0 7C			bcs		not_tiny
-   450 					
-   451 					;At this point A = 1 and expval = 0, so the value is
-   452 					;at least 0.01 and less than 1.0 and we are guaranteed to
-   453 					;need 0. inserted in front.
-   454
-   455 					;shift buffer ahead one
-   456 D90F C6 F3			dec		inbuff
-   457
-   458 D911 CA				dex
-   459 D912 C6 F9			dec		trimbase
-   460 D914 4A				lsr						;A=0
-   461 D915 F0 21			beq		writelowz		;!! - unconditional
-   462
-   463 					;write out mantissa digits
-   464 D917			digitloop:
-   465 D917 C6 F7			dec		dotcntr
-   466 D919 D0 05			bne		no_hidot
-   467 D91B A9 2E			lda		#'.'
-   468 D91D 91 F3			sta		(inbuff),y
-   469 D91F C8				iny
-   470 D920			no_hidot:
-   471
-   472 					;write out high digit
-   473 D920 B5 DA			lda		fr0+6,x
-   474 D922 4A				lsr
-   475 D923 4A				lsr
-   476 D924 4A				lsr
-   477 D925 4A				lsr
-   478 D926 09 30			ora		#$30
-   479 D928 91 F3			sta		(inbuff),y
-   480 D92A C8				iny
-   481 					
-   482 D92B			writelow:
-   483 					;write out low digit
-   484 D92B C6 F7			dec		dotcntr
-   485 D92D D0 05			bne		no_lodot
-   486 D92F A9 2E			lda		#'.'
-   487 D931 91 F3			sta		(inbuff),y
-   488 D933 C8				iny
-   489 D934			no_lodot:
-   490 					
-   491 D934 B5 DA			lda		fr0+6,x
-   492 D936 29 0F			and		#$0f
-   493 D938			writelowz:
-   494 D938 09 30			ora		#$30
-   495 D93A 91 F3			sta		(inbuff),y
-   496 D93C C8				iny
+   417
+   418 D8E6			.proc	fasc
+   419 = 00F7			dotcntr	= ztemp4
+   420 = 00F8			expval	= ztemp4+1
+   421 = 00F9			trimbase = ztemp4+2
+   422
+   423 D8E6 20 51 DA			jsr		ldbufa
+   424
+   425 					;init starting output index
+   426 D8E9 A0 00			ldy		#0
+   427
+   428 					;start with no exponent to display
+   429 D8EB 84 F8			sty		expval
+   430 D8ED 84 F9			sty		trimbase
+   431
+   432 					;write a zero to the start of the buffer
+   433 D8EF A9 30			lda		#$30
+   434 D8F1 91 F3			sta		(inbuff),y
+   435
+   436 					;read exponent and check if number is zero
+   437 D8F3 A5 D4			lda		fr0
+   438 D8F5 F0 5F			beq		is_zero
+   439 					
+   440 					;set up for 5 mantissa bytes
+   441 D8F7 A2 FB			ldx		#-5
+   442
+   443 					;compute digit offset to place dot
+   444 					;  0.001 (10.0E-04) = 3E 10 00 00 00 00 -> -1
+   445 					;   0.01 ( 1.0E-02) = 3F 01 00 00 00 00 -> 1
+   446 					;    0.1 (10.0E-02) = 3F 10 00 00 00 00 -> 1
+   447 					;    1.0 ( 1.0E+00) = 40 01 00 00 00 00 -> 3
+   448 					;   10.0 (10.0E+00) = 40 10 00 00 00 00 -> 3
+   449 					;  100.0 ( 1.0E+02) = 40 01 00 00 00 00 -> 5
+   450 					; 1000.0 (10.0E+02) = 40 10 00 00 00 00 -> 5
+   451
+   452 D8F9 0A				asl
+   453 D8FA 38				sec
+   454 D8FB E9 7D			sbc		#125
+   455
+   456 					;check if we should go to exponential form (exp >= 10 or <=-3)
+   457 D8FD C9 0C			cmp		#12
+   458 D8FF 90 08			bcc		noexp
+   459
+   460 					;yes - compute and stash explicit exponent
+   461 D901 E9 02			sbc		#2				;!! - carry set from BCC fail
+   462 D903 85 F8			sta		expval			;$0A <= expval < $FE
+   463
+   464 					;reset dot counter
+   465 D905 A9 02			lda		#2
+   466
+   467 					;exclude first two digits from zero trim
+   468 D907 85 F9			sta		trimbase
+   469
+   470 D909			noexp:		
+   471 D909 85 F7			sta		dotcntr			;$02 <= dotcntr < $0C
+   472
+   473 					;check if number is less than 1.0
+   474 D90B C9 02			cmp		#2
+   475 D90D B0 7C			bcs		not_tiny
+   476 					
+   477 					;At this point A = 1 and expval = 0, so the value is
+   478 					;at least 0.01 and less than 1.0 and we are guaranteed to
+   479 					;need 0. inserted in front.
+   480
+   481 					;shift buffer ahead one
+   482 D90F C6 F3			dec		inbuff
+   483
+   484 D911 CA				dex
+   485 D912 C6 F9			dec		trimbase
+   486 D914 4A				lsr						;A=0
+   487 D915 F0 21			beq		writelowz		;!! - unconditional
+   488
+   489 					;write out mantissa digits
+   490 D917			digitloop:
+   491 D917 C6 F7			dec		dotcntr
+   492 D919 D0 05			bne		no_hidot
+   493 D91B A9 2E			lda		#'.'
+   494 D91D 91 F3			sta		(inbuff),y
+   495 D91F C8				iny
+   496 D920			no_hidot:
    497
-   498 					;next digit
-   499 D93D E8				inx
-   500 D93E D0 D7			bne		digitloop
-   501
-   502 					;skip trim if dot hasn't been written
-   503 D940 A5 F7			lda		dotcntr
-   504 D942 10 11			bpl		skip_zero_trim	
-   505 					
-   506 					;trim off trailing zeroes
-   507 D944 A9 30			lda		#'0'
-   508 D946			lzloop:
-   509 D946 C4 F9			cpy		trimbase
-   510 D948 F0 05			beq		stop_zero_trim
-   511 D94A 88				dey
-   512 D94B D1 F3			cmp		(inbuff),y
-   513 D94D F0 F7			beq		lzloop
-   514
-   515 					;trim off dot
-   516 D94F			stop_zero_trim:
-   517 D94F B1 F3			lda		(inbuff),y
-   518 D951 C9 2E			cmp		#'.'
-   519 D953 D0 03			bne		no_trailing_dot
-   520
-   521 D955			skip_zero_trim:
-   522 D955 88				dey
-   523 D956			is_zero:
-   524 D956 B1 F3			lda		(inbuff),y
-   525 D958			no_trailing_dot:
-   526
-   527 					;check if we have an exponent to deal with
-   528 D958 A6 F8			ldx		expval
-   529 D95A F0 26			beq		noexp2
-   530 					
-   531 					;print an 'E'
-   532 D95C A9 45			lda		#'E'
-   533 D95E C8				iny
-   534 D95F 91 F3			sta		(inbuff),y
-   535 					
-   536 					;check for a negative exponent
-   537 D961 8A				txa
-   538 D962 10 07			bpl		exppos
-   539 D964 49 FF			eor		#$ff
-   540 D966 AA				tax
-   541 D967 E8				inx
-   542 D968 A9 2D			lda		#'-'
-   543 D96A 2C				dta		{bit $0100}
-   544 D96B			exppos:
-   545 D96B A9 2B			lda		#'+'
-   546 D96D			expneg:
-   547 D96D C8				iny
-   548 D96E 91 F3			sta		(inbuff),y
-   549 					
-   550 					;print tens digit, if any
-   551 D970 8A				txa
-   552 D971 38				sec
-   553 D972 A2 2F			ldx		#$2f
-   554 D974			tensloop:
-   555 D974 E8				inx
-   556 D975 E9 0A			sbc		#10
-   557 D977 B0 FB			bcs		tensloop
-   558 D979 48				pha
-   559 D97A 8A				txa
-   560 D97B C8				iny
-   561 D97C 91 F3			sta		(inbuff),y
-   562 D97E 68				pla
-   563 D97F 69 3A			adc		#$3a
-   564 D981 C8				iny
-   565 D982			noexp2:
-   566 					;set high bit on last char
-   567 D982 09 80			ora		#$80
-   568 D984 91 F3			sta		(inbuff),y
-   569
-   570 					;prepend minus sign for negative number (must decrement INBUFF)
-   571 D986 A5 D4			lda		fr0
-   572 D988 30 15			bmi		negative
-   573 D98A 60				rts
-   574
-   575 D98B			not_tiny:
-   576 					;check if number begins with a leading zero
-   577 D98B B5 DA			lda		fr0+6,x
-   578 D98D C9 10			cmp		#$10
-   579 D98F B0 86			bcs		digitloop
-   580
-   581 D991 C6 F9			dec		trimbase
-   582
-   583 					;yes - skip the high digit
-   584 D993 E6 F3			inc		inbuff
-   585 D995 46 F8			lsr		expval
-   586 D997 06 F8			asl		expval
-   587 D999 D0 90			bne		writelow
-   588 D99B C6 F7			dec		dotcntr
-   589 D99D 90 8C			bcc		writelow		;!! - unconditional
-   590
-   591 D99F			negative:
-   592 D99F A9 2D			lda		#'-'
-   593 D9A1 AA				tax
-   594 D9A2 C6 F3			dec		inbuff
-   595 D9A4 81 C6			sta		(inbuff-'-',x)
-   596 D9A6 60				rts
-   597 				.endp
-   598
-   599 				;==========================================================================
-   600 				; IFP [D9AA]	Convert 16-bit integer at FR0 to FP
-   601 				;
-   602 				; Converts the 16-bit unsigned binary number with LSB in FR0 and MSB in
-   603 				; FR0+1 to a floating point number in FR0. This always succeeds since all
-   604 				; 65536 values are representable.
-   605 				;
-   606 				; !NOTE! Cannot use FR2/FR3 -- MAC/65 requires that $DE-DF be preserved.
-   607 				;
-   608 D9A7				fixadr	$d9aa
+   498 					;write out high digit
+   499 D920 B5 DA			lda		fr0+6,x
+   500 D922 4A				lsr
+   501 D923 4A				lsr
+   502 D924 4A				lsr
+   503 D925 4A				lsr
+   504 D926 09 30			ora		#$30
+   505 D928 91 F3			sta		(inbuff),y
+   506 D92A C8				iny
+   507 					
+   508 D92B			writelow:
+   509 					;write out low digit
+   510 D92B C6 F7			dec		dotcntr
+   511 D92D D0 05			bne		no_lodot
+   512 D92F A9 2E			lda		#'.'
+   513 D931 91 F3			sta		(inbuff),y
+   514 D933 C8				iny
+   515 D934			no_lodot:
+   516 					
+   517 D934 B5 DA			lda		fr0+6,x
+   518 D936 29 0F			and		#$0f
+   519 D938			writelowz:
+   520 D938 09 30			ora		#$30
+   521 D93A 91 F3			sta		(inbuff),y
+   522 D93C C8				iny
+   523
+   524 					;next digit
+   525 D93D E8				inx
+   526 D93E D0 D7			bne		digitloop
+   527
+   528 					;skip trim if dot hasn't been written
+   529 D940 A5 F7			lda		dotcntr
+   530 D942 10 11			bpl		skip_zero_trim	
+   531 					
+   532 					;trim off trailing zeroes
+   533 D944 A9 30			lda		#'0'
+   534 D946			lzloop:
+   535 D946 C4 F9			cpy		trimbase
+   536 D948 F0 05			beq		stop_zero_trim
+   537 D94A 88				dey
+   538 D94B D1 F3			cmp		(inbuff),y
+   539 D94D F0 F7			beq		lzloop
+   540
+   541 					;trim off dot
+   542 D94F			stop_zero_trim:
+   543 D94F B1 F3			lda		(inbuff),y
+   544 D951 C9 2E			cmp		#'.'
+   545 D953 D0 03			bne		no_trailing_dot
+   546
+   547 D955			skip_zero_trim:
+   548 D955 88				dey
+   549 D956			is_zero:
+   550 D956 B1 F3			lda		(inbuff),y
+   551 D958			no_trailing_dot:
+   552
+   553 					;check if we have an exponent to deal with
+   554 D958 A6 F8			ldx		expval
+   555 D95A F0 26			beq		noexp2
+   556 					
+   557 					;print an 'E'
+   558 D95C A9 45			lda		#'E'
+   559 D95E C8				iny
+   560 D95F 91 F3			sta		(inbuff),y
+   561 					
+   562 					;check for a negative exponent
+   563 D961 8A				txa
+   564 D962 10 07			bpl		exppos
+   565 D964 49 FF			eor		#$ff
+   566 D966 AA				tax
+   567 D967 E8				inx
+   568 D968 A9 2D			lda		#'-'
+   569 D96A 2C				dta		{bit $0100}
+   570 D96B			exppos:
+   571 D96B A9 2B			lda		#'+'
+   572 D96D			expneg:
+   573 D96D C8				iny
+   574 D96E 91 F3			sta		(inbuff),y
+   575 					
+   576 					;print tens digit, if any
+   577 D970 8A				txa
+   578 D971 38				sec
+   579 D972 A2 2F			ldx		#$2f
+   580 D974			tensloop:
+   581 D974 E8				inx
+   582 D975 E9 0A			sbc		#10
+   583 D977 B0 FB			bcs		tensloop
+   584 D979 48				pha
+   585 D97A 8A				txa
+   586 D97B C8				iny
+   587 D97C 91 F3			sta		(inbuff),y
+   588 D97E 68				pla
+   589 D97F 69 3A			adc		#$3a
+   590 D981 C8				iny
+   591 D982			noexp2:
+   592 					;set high bit on last char
+   593 D982 09 80			ora		#$80
+   594 D984 91 F3			sta		(inbuff),y
+   595
+   596 					;prepend minus sign for negative number (must decrement INBUFF)
+   597 D986 A5 D4			lda		fr0
+   598 D988 30 15			bmi		negative
+   599 D98A 60				rts
+   600
+   601 D98B			not_tiny:
+   602 					;check if number begins with a leading zero
+   603 D98B B5 DA			lda		fr0+6,x
+   604 D98D C9 10			cmp		#$10
+   605 D98F B0 86			bcs		digitloop
+   606
+   607 D991 C6 F9			dec		trimbase
+   608
+   609 					;yes - skip the high digit
+   610 D993 E6 F3			inc		inbuff
+   611 D995 46 F8			lsr		expval
+   612 D997 06 F8			asl		expval
+   613 D999 D0 90			bne		writelow
+   614 D99B C6 F7			dec		dotcntr
+   615 D99D 90 8C			bcc		writelow		;!! - unconditional
+   616
+   617 D99F			negative:
+   618 D99F A9 2D			lda		#'-'
+   619 D9A1 AA				tax
+   620 D9A2 C6 F3			dec		inbuff
+   621 D9A4 81 C6			sta		(inbuff-'-',x)
+   622 D9A6 60				rts
+   623 				.endp
+   624
+   625 				;==========================================================================
+   626 				; IFP [D9AA]	Convert 16-bit integer at FR0 to FP
+   627 				;
+   628 				; Converts the 16-bit unsigned binary number with LSB in FR0 and MSB in
+   629 				; FR0+1 to a floating point number in FR0. This always succeeds since all
+   630 				; 65536 values are representable.
+   631 				;
+   632 				; !NOTE! Cannot use FR2/FR3 -- MAC/65 requires that $DE-DF be preserved.
+   633 				;
+   634 D9A7				fixadr	$d9aa
 Macro: FIXADR [Source: source/Shared/mathpack.s]
      2 						.print ($D9AA-*),' bytes free before ',$D9AA
      2 				$0003 bytes free before $D9AA
      3 D9A7					org		$D9AA
 Source: source/Shared/mathpack.s
-   609 D9AA			.proc ifp
-   610 						;clear remainder of mantissa
-   611 D9AA A9 00				lda		#0
-   612 D9AC 85 D6				sta		fr0+2
-   613 D9AE 85 D7				sta		fr0+3
-   614 D9B0 85 D8				sta		fr0+4
-   615 D9B2 85 D9				sta		fr0+5
-   616 					
-   617 						;prepare to shift up to 16 bits
-   618 D9B4 A0 10				ldy		#16
-   619
-   620 						;swap around bytes so that MSB is in FR0 -- this allows FR0+1 to
-   621 						;take carries out of the BCD shift for the 5th digit
-   622 D9B6 A6 D4				ldx		fr0
-   623 D9B8 A5 D5				lda		fr0+1
-   624 D9BA D0 05				bne		big
-   625 D9BC A0 08				ldy		#8
-   626 D9BE 8A					txa
-   627 D9BF A2 00				ldx		#0
-   628 D9C1			big:
-   629 D9C1 86 D5				stx		fr0+1
-   630
-   631 						;shift until we get the first set bit
-   632 D9C3			find_loop:
-   633 D9C3 06 D5				asl		fr0+1
-   634 D9C5 2A					rol
-   635 D9C6 B0 04				bcs		found_leading_bit
-   636 D9C8 88					dey
-   637 D9C9 D0 F8				bne		find_loop
-   638 D9CB 60					rts
-   639
-   640 D9CC			found_leading_bit:
-   641 D9CC F8					sed
-   642 D9CD 85 D4				sta		fr0
-   643 D9CF 4C E2 DC				jmp		ifp_cont
-   644 				.endp
+   635 D9AA			.proc ifp
+   636 						;clear remainder of mantissa
+   637 D9AA A9 00				lda		#0
+   638 D9AC 85 D6				sta		fr0+2
+   639 D9AE 85 D7				sta		fr0+3
+   640 D9B0 85 D8				sta		fr0+4
+   641 D9B2 85 D9				sta		fr0+5
+   642 					
+   643 						;prepare to shift up to 16 bits
+   644 D9B4 A0 10				ldy		#16
    645
-   646 				;==========================================================================
-   647 				; FPI [D9D2]	Convert FR0 to 16-bit integer at FR0 with rounding
-   648 				;
-   649 				; This cannot overwrite FR1. Darg relies on being able to stash a value
-   650 				; there across a call to FPI in its startup.
-   651 				;
-   652 				; Errors:
-   653 				;	- Error if input negative or >= 65536.
-   654 				;
-   655 				; Quirks:
-   656 				;	- Negative numbers in [-0.5, 0) cause an error instead of being
-   657 				;	  rounded up to 0.
-   658 				;	- Numbers in [65535, 65536) are rounded up to 65536 and then
-   659 				;	  truncated to 0 without error.
-   660 				;
-   661 D9D2				fixadr	$d9d2
+   646 						;swap around bytes so that MSB is in FR0 -- this allows FR0+1 to
+   647 						;take carries out of the BCD shift for the 5th digit
+   648 D9B6 A6 D4				ldx		fr0
+   649 D9B8 A5 D5				lda		fr0+1
+   650 D9BA D0 05				bne		big
+   651 D9BC A0 08				ldy		#8
+   652 D9BE 8A					txa
+   653 D9BF A2 00				ldx		#0
+   654 D9C1			big:
+   655 D9C1 86 D5				stx		fr0+1
+   656
+   657 						;shift until we get the first set bit
+   658 D9C3			find_loop:
+   659 D9C3 06 D5				asl		fr0+1
+   660 D9C5 2A					rol
+   661 D9C6 B0 04				bcs		found_leading_bit
+   662 D9C8 88					dey
+   663 D9C9 D0 F8				bne		find_loop
+   664 D9CB 60					rts
+   665
+   666 D9CC			found_leading_bit:
+   667 D9CC F8					sed
+   668 D9CD 85 D4				sta		fr0
+   669 D9CF 4C E8 DB				jmp		ifp_cont
+   670 				.endp
+   671
+   672 				;==========================================================================
+   673 				; FPI [D9D2]	Convert FR0 to 16-bit integer at FR0 with rounding
+   674 				;
+   675 				; This cannot overwrite FR1. Darg relies on being able to stash a value
+   676 				; there across a call to FPI in its startup.
+   677 				;
+   678 				; Errors:
+   679 				;	- Error if input negative or >= 65536.
+   680 				;
+   681 				; Quirks:
+   682 				;	- Negative numbers in [-0.5, 0) cause an error instead of being
+   683 				;	  rounded up to 0.
+   684 				;	- Numbers in [65535, 65536) are rounded up to 65536 and then
+   685 				;	  truncated to 0 without error.
+   686 				;
+   687 D9D2				fixadr	$d9d2
 Macro: FIXADR [Source: source/Shared/mathpack.s]
 Source: source/Shared/mathpack.s
-   662 D9D2			.nowarn .proc fpi
-   663 = 00E6			_acc0 = fr2
-   664 = 00E7			_acc1 = fr2+1
-   665 					
-   666 					;error out if it's guaranteed to be too big or negative (>999999)
-   667 D9D2 A5 D4			lda		fr0
-   668 D9D4 C9 43			cmp		#$43
-   669 D9D6 B0 66			bcs		err
-   670
-   671 					;zero number if it's guaranteed to be too small (<0.01)
-   672 D9D8 E9 3E			sbc		#$3f-1			;!!- carry is clear
-   673 D9DA 90 68			bcc		zfr0
-   674
-   675 D9DC AA				tax
-   676 					
-   677 					;clear temp accum and set up rounding
-   678 D9DD A9 00			lda		#0
-   679 D9DF B4 D5			ldy		fr0+1,x
-   680 D9E1 C0 50			cpy		#$50
-   681 D9E3 2A				rol						;!! - clears carry too
-   682 D9E4 85 D4			sta		fr0
-   683 D9E6 A9 00			lda		#0
-   684
-   685 					;check for [0.01, 1)
-   686 D9E8 CA				dex
-   687 D9E9 30 51			bmi		done
-   688
-   689 					;convert ones/tens digit pair to binary (one result byte: 0-100)
-   690 D9EB 20 C3 DA			jsr		fp_ldfr0p1_dectobin
-   691 D9EE 65 D4			adc		fr0
-   692 D9F0 F9 F6 DF			sbc		fp_dectobin_tab,y
-   693 D9F3 18				clc
-   694 D9F4 85 D4			sta		fr0
-   695 D9F6 A9 00			lda		#0
+   688 D9D2			.nowarn .proc fpi
+   689 = 00E6			_acc0 = fr2
+   690 = 00E7			_acc1 = fr2+1
+   691 					
+   692 					;error out if it's guaranteed to be too big or negative (>999999)
+   693 D9D2 A5 D4			lda		fr0
+   694 D9D4 C9 43			cmp		#$43
+   695 D9D6 B0 66			bcs		err
    696
-   697 					;check if we're done
-   698 D9F8 CA				dex
-   699 D9F9 30 41			bmi		done
+   697 					;zero number if it's guaranteed to be too small (<0.01)
+   698 D9D8 E9 3E			sbc		#$3f-1			;!!- carry is clear
+   699 D9DA 90 68			bcc		zfr0
    700
-   701 					;convert hundreds/thousands digit pair to binary (two result bytes: 0-10000)
-   702 D9FB 20 C3 DA			jsr		fp_ldfr0p1_dectobin
-   703 D9FE A5 D4			lda		fr0
-   704 DA00 79 44 DF			adc		fp_tab_lo_1000,y
-   705 DA03 85 D4			sta		fr0
-   706 DA05 B9 4E DF			lda		fp_tab_hi_1000,y
-   707 DA08 69 00			adc		#0
-   708 DA0A 48				pha
-   709 DA0B B5 D5			lda		fr0+1,x
-   710 DA0D 29 0F			and		#$0f
-   711 DA0F A8				tay
-   712 DA10 A5 D4			lda		fr0
-   713 DA12 79 F0 DB			adc		fp_tab_lo_100,y
-   714 DA15 85 D4			sta		fr0
-   715 DA17 68				pla
-   716 DA18 79 E6 DB			adc		fp_tab_hi_100,y
-   717
-   718 					;check if we're done
-   719 DA1B CA				dex
-   720 DA1C 30 1E			bmi		done
-   721
-   722 					;convert ten thousands digit pair to binary (two result bytes: 0-100000, overflow possible)
-   723 					;LSB = digit * 16
-   724 					;MSB = digit * 39.0625
-   725 DA1E AA				tax
-   726 DA1F A4 D5			ldy		fr0+1
-   727 DA21 C0 07			cpy		#$07
-   728 DA23 B0 19			bcs		err
-   729 DA25 98				tya
-   730 DA26 0A				asl
-   731 DA27 0A				asl
-   732 DA28 0A				asl
-   733 DA29 0A				asl
-   734 DA2A 65 D4			adc		fr0
-   735 DA2C 85 D4			sta		fr0
-   736 DA2E 8A				txa
-   737 DA2F 79 D0 D8			adc		fp_tab_hi_10000-1,y
-   738
-   739 					;Bug compat -- if we had an overflow error, clear it if the value was
-   740 					;exactly rounded up to 0. We can only enter this path if the value was
-   741 					;between [10000, 70000), so if the high byte is 0, the only possible
-   742 					;way is a source value of [65535.5, 65791.5).
-   743 DA32 D0 08			bne		done
-   744 DA34 A6 D4			ldx		fr0
-   745 DA36 D0 04			bne		done
-   746 DA38 A2 4F			ldx		#$4f
-   747 DA3A E4 D8			cpx		fr0+4
-   748
-   749 DA3C			done:
-   750 					;move result back to FR0, with rounding
-   751 DA3C 85 D5			sta		fr0+1
-   752 DA3E			err:
-   753 DA3E 60				rts
-   754 				.endp
-   755
-   756 				;==========================================================================
-   757 DA3F					fixadr	$da43
+   701 D9DC AA				tax
+   702 					
+   703 					;clear temp accum and set up rounding
+   704 D9DD A9 00			lda		#0
+   705 D9DF B4 D5			ldy		fr0+1,x
+   706 D9E1 C0 50			cpy		#$50
+   707 D9E3 2A				rol						;!! - clears carry too
+   708 D9E4 85 D4			sta		fr0
+   709 D9E6 A9 00			lda		#0
+   710
+   711 					;check for [0.01, 1)
+   712 D9E8 CA				dex
+   713 D9E9 30 51			bmi		done
+   714
+   715 					;convert ones/tens digit pair to binary (one result byte: 0-100)
+   716 D9EB 20 DB D8			jsr		fp_ldfr0p1_dectobin
+   717 D9EE 65 D4			adc		fr0
+   718 D9F0 F9 F6 DF			sbc		fp_dectobin_tab,y
+   719 D9F3 18				clc
+   720 D9F4 85 D4			sta		fr0
+   721 D9F6 A9 00			lda		#0
+   722
+   723 					;check if we're done
+   724 D9F8 CA				dex
+   725 D9F9 30 41			bmi		done
+   726
+   727 					;convert hundreds/thousands digit pair to binary (two result bytes: 0-10000)
+   728 D9FB 20 DB D8			jsr		fp_ldfr0p1_dectobin
+   729 D9FE A5 D4			lda		fr0
+   730 DA00 79 39 DE			adc		fp_tab_lo_1000,y
+   731 DA03 85 D4			sta		fr0
+   732 DA05 B9 43 DE			lda		fp_tab_hi_1000,y
+   733 DA08 69 00			adc		#0
+   734 DA0A 48				pha
+   735 DA0B B5 D5			lda		fr0+1,x
+   736 DA0D 29 0F			and		#$0f
+   737 DA0F A8				tay
+   738 DA10 A5 D4			lda		fr0
+   739 DA12 79 D1 D8			adc		fp_tab_lo_100,y
+   740 DA15 85 D4			sta		fr0
+   741 DA17 68				pla
+   742 DA18 79 10 DD			adc		fp_tab_hi_100,y
+   743
+   744 					;check if we're done
+   745 DA1B CA				dex
+   746 DA1C 30 1E			bmi		done
+   747
+   748 					;convert ten thousands digit pair to binary (two result bytes: 0-100000, overflow possible)
+   749 					;LSB = digit * 16
+   750 					;MSB = digit * 39.0625
+   751 DA1E AA				tax
+   752 DA1F A4 D5			ldy		fr0+1
+   753 DA21 C0 07			cpy		#$07
+   754 DA23 B0 19			bcs		err
+   755 DA25 98				tya
+   756 DA26 0A				asl
+   757 DA27 0A				asl
+   758 DA28 0A				asl
+   759 DA29 0A				asl
+   760 DA2A 65 D4			adc		fr0
+   761 DA2C 85 D4			sta		fr0
+   762 DA2E 8A				txa
+   763 DA2F 79 1B DB			adc		fp_tab_hi_10000-1,y
+   764
+   765 					;Bug compat -- if we had an overflow error, clear it if the value was
+   766 					;exactly rounded up to 0. We can only enter this path if the value was
+   767 					;between [10000, 70000), so if the high byte is 0, the only possible
+   768 					;way is a source value of [65535.5, 65791.5).
+   769 DA32 D0 08			bne		done
+   770 DA34 A6 D4			ldx		fr0
+   771 DA36 D0 04			bne		done
+   772 DA38 A2 4F			ldx		#$4f
+   773 DA3A E4 D8			cpx		fr0+4
+   774
+   775 DA3C			done:
+   776 					;move result back to FR0, with rounding
+   777 DA3C 85 D5			sta		fr0+1
+   778 DA3E			err:
+   779 DA3E 60				rts
+   780 				.endp
+   781
+   782 				;==========================================================================
+   783 DA3F					fixadr	$da43
 Macro: FIXADR [Source: source/Shared/mathpack.s]
      2 						.print ($DA43-*),' bytes free before ',$DA43
      2 				$0004 bytes free before $DA43
      3 DA3F					org		$DA43
 Source: source/Shared/mathpack.s
-   758 DA43			fp_clc_zfr0:
-   759 DA43 18					clc
-   760
-   761 				;==========================================================================
-   762 				; ZFR0 [DA44]	Zero FR0
-   763 				; ZF1 [DA46]	Zero float at (X)
-   764 				; ZFL [DA48]	Zero float at (X) with length Y (UNDOCUMENTED)
-   765 				;
-   766 DA44				fixadr	$da44
+   784 DA43			fp_clc_zfr0:
+   785 DA43 18					clc
+   786
+   787 				;==========================================================================
+   788 				; ZFR0 [DA44]	Zero FR0
+   789 				; ZF1 [DA46]	Zero float at (X)
+   790 				; ZFL [DA48]	Zero float at (X) with length Y (UNDOCUMENTED)
+   791 				;
+   792 DA44				fixadr	$da44
 Macro: FIXADR [Source: source/Shared/mathpack.s]
 Source: source/Shared/mathpack.s
-   767 DA44			zfr0:
-   768 DA44 A2 D4			ldx		#fr0
-   769 DA46				ckaddr	$da46
+   793 DA44			zfr0:
+   794 DA44 A2 D4			ldx		#fr0
+   795 DA46				ckaddr	$da46
 Macro: CKADDR [Source: source/Shared/mathpack.s]
 Source: source/Shared/mathpack.s
-   770 DA46			zf1:
-   771 DA46 A0 06			ldy		#6
-   772 DA48				ckaddr	$da48
+   796 DA46			zf1:
+   797 DA46 A0 06			ldy		#6
+   798 DA48				ckaddr	$da48
 Macro: CKADDR [Source: source/Shared/mathpack.s]
 Source: source/Shared/mathpack.s
-   773 DA48			zfl:
-   774 DA48 A9 00			lda		#0
-   775 DA4A			zflloop:
-   776 DA4A 95 00			sta		0,x
-   777 DA4C E8				inx
-   778 DA4D 88				dey
-   779 DA4E D0 FA			bne		zflloop
-   780 DA50 60				rts
-   781
-   782 				;==========================================================================
-   783 				; LDBUFA [DA51]	Set LBUFF to #INBUFF (UNDOCUMENTED)
-   784 				;
-   785 DA51					fixadr	$da51
-Macro: FIXADR [Source: source/Shared/mathpack.s]
-Source: source/Shared/mathpack.s
-   786 DA51			ldbufa:
-   787 DA51 A9 80 85 F3 A9 05 + 	mwa		#lbuff inbuff
-   788 DA59 60				rts
-   789
-   790 				;==========================================================================
-   791 				; FPILL_SHL16 [DA5A] Shift left 16-bit word at $F7:F8 (UNDOCUMENTED)
-   792 				;
-   793 				; Illegal entry point used by MAC/65 when doing hex conversion.
-   794 				;
-   795 				; Yes, even the byte ordering is wrong.
-   796 				;
-   797 DA5A					fixadr	$da5a
-Macro: FIXADR [Source: source/Shared/mathpack.s]
-Source: source/Shared/mathpack.s
-   798 					
-   799 DA5A			.nowarn .proc fpill_shl16
-   800 DA5A 06 F8				asl		$f8
-   801 DA5C 26 F7				rol		$f7
-   802 DA5E 60					rts
-   803 				.endp
-   804
-   805 				;** 1 byte free**
-   806
-   807 				;==========================================================================
-   808 				; FSUB [DA60]	Subtract FR1 from FR0; FR1 is altered
-   809 				; FADD [DA66]	Add FR1 to FR0; FR1 is altered
+   799 DA48			zfl:
+   800 DA48 A9 00			lda		#0
+   801 DA4A			zflloop:
+   802 DA4A 95 00			sta		0,x
+   803 DA4C E8				inx
+   804 DA4D 88				dey
+   805 DA4E D0 FA			bne		zflloop
+   806 DA50 60				rts
+   807
+   808 				;==========================================================================
+   809 				; LDBUFA [DA51]	Set LBUFF to #INBUFF (UNDOCUMENTED)
    810 				;
-   811 				; Add or subtract two numbers. When denormalizing the smaller number, any
-   812 				; precision shifted out is dropped by truncation instead of rounding.
-   813 				; For instance, 1.23456788 + 0.000000019 = 1.23456789 and not 1.23456790.
-   814 				;
-   815 DA5F					fixadr	$da60
+   811 DA51					fixadr	$da51
+Macro: FIXADR [Source: source/Shared/mathpack.s]
+Source: source/Shared/mathpack.s
+   812 DA51			ldbufa:
+   813 DA51 A9 80 85 F3 A9 05 + 	mwa		#lbuff inbuff
+   814 DA59 60				rts
+   815
+   816 				;==========================================================================
+   817 				; FPILL_SHL16 [DA5A] Shift left 16-bit word at $F7:F8 (UNDOCUMENTED)
+   818 				;
+   819 				; Illegal entry point used by MAC/65 when doing hex conversion.
+   820 				;
+   821 				; Yes, even the byte ordering is wrong.
+   822 				;
+   823 DA5A					fixadr	$da5a
+Macro: FIXADR [Source: source/Shared/mathpack.s]
+Source: source/Shared/mathpack.s
+   824 					
+   825 DA5A			.nowarn .proc fpill_shl16
+   826 DA5A 06 F8				asl		$f8
+   827 DA5C 26 F7				rol		$f7
+   828 DA5E 60					rts
+   829 				.endp
+   830
+   831 				;** 1 byte free**
+   832
+   833 				;==========================================================================
+   834 				; FSUB [DA60]	Subtract FR1 from FR0; FR1 is altered
+   835 				; FADD [DA66]	Add FR1 to FR0; FR1 is altered
+   836 				;
+   837 				; Add or subtract two numbers. When denormalizing the smaller number, any
+   838 				; precision shifted out is dropped by truncation instead of rounding.
+   839 				; For instance, 1.23456788 + 0.000000019 = 1.23456789 and not 1.23456790.
+   840 				;
+   841 				; Quirks:
+   842 				;	- FADD must be able to handle negative zeroes for either FR0 or FR1.
+   843 				;	  FR1 falls out of the address of FSUB, since the most obvious
+   844 				;	  implementation is to negate the FR1 sign. FR0 is possible via
+   845 				;	  VAL("-0") in BASIC.
+   846 				;
+   847 DA5F					fixadr	$da60
 Macro: FIXADR [Source: source/Shared/mathpack.s]
      2 						.print ($DA60-*),' bytes free before ',$DA60
      2 				$0001 bytes free before $DA60
      3 DA5F					org		$DA60
 Source: source/Shared/mathpack.s
-   816 = DA66			fadd = fsub._fadd
-   817 DA60			.proc fsub
-   818
-   819 = 00E0			_diffmode = fr1
-   820
-   821 					;toggle sign on FR1
-   822 DA60 A5 E0			lda		fr1
-   823 DA62 49 80			eor		#$80
-   824 DA64 85 E0			sta		fr1
-   825 					
-   826 					;fall through to FADD
-   827 					
-   828 DA66				ckaddr	$da66
+   848 DA60			.proc fsub
+   849 						;toggle sign on FR1
+   850 DA60 A5 E0				lda		fr1
+   851 DA62 49 80				eor		#$80
+   852 DA64 85 E0				sta		fr1
+   853 					
+   854 						;fall through to FADD
+   855 DA66					ckaddr	$da66
 Macro: CKADDR [Source: source/Shared/mathpack.s]
 Source: source/Shared/mathpack.s
-   829 DA66			_fadd:
-   830 					;if fr1 is zero, we're done
-   831 DA66 A5 E0			lda		fr1
-   832 DA68 F0 48			beq		sum_xit
-   833 					
-   834 					;if fr0 is zero, swap
-   835 DA6A A5 D4			lda		fr0
-   836 DA6C F0 0E			beq		swap
-   837
-   838 DA6E			retry:
-   839 					;compute difference in exponents, ignoring sign
-   840 DA6E A5 E0			lda		fr1			;load fr1 sign
-   841 DA70 45 D4			eor		fr0			;compute fr0 ^ fr1 signs
-   842 DA72 29 80			and		#$80		;mask to just sign
-   843 DA74 AA				tax
-   844 DA75 45 E0			eor		fr1			;flip fr1 sign to match fr0
-   845 DA77 18				clc
-   846 DA78 E5 D4			sbc		fr0			;compute difference in exponents - 1
-   847 DA7A 90 0F			bcc		noswap
-   848 					
-   849 					;swap FR0 and FR1
-   850 DA7C			swap:
-   851 DA7C A2 05			ldx		#5
-   852 DA7E			swaploop:
-   853 DA7E B5 D4			lda		fr0,x
-   854 DA80 B4 E0			ldy		fr1,x
-   855 DA82 95 E0			sta		fr1,x
-   856 DA84 94 D4			sty		fr0,x
-   857 DA86 CA				dex
-   858 DA87 10 F5			bpl		swaploop
-   859 					
-   860 					;loop back and retry
-   861 DA89 30 E3			bmi		retry
-   862 					
-   863 DA8B			noswap:	
-   864 					;A = FR1 - FR0 - 1
-   865 					;X = add/sub flag
-   866
-   867 					;compute positions for add/subtract	
-   868 DA8B 69 05			adc		#5			;A = (FR1) - (FR0) + 4   !! carry is clear coming in
-   869 DA8D A8				tay
-   870 					
-   871 					;check if FR1 is too small in magnitude to matter
-   872 DA8E 30 22			bmi		sum_xit
-   873 					
-   874 					;jump to decimal mode and prepare for add/sub loops
-   875 DA90 F8				sed
-   876
-   877 					;check if we are doing a sum or a difference
-   878 DA91 E0 80			cpx		#$80
-   879 DA93 A2 05			ldx		#5
-   880 DA95 B0 1E			bcs		do_subtract
-   881 							
-   882 					;add mantissas
-   883 DA97			add_loop:
-   884 DA97 B9 E1 00			lda		fr1+1,y
-   885 DA9A 75 D4			adc		fr0,x
-   886 DA9C 95 D4			sta		fr0,x
-   887 DA9E CA				dex
-   888 DA9F 88				dey
-   889 DAA0 10 F5			bpl		add_loop
-   890 DAA2 30 06			bmi		sum_carryloop_start
-   891
-   892 DAA4			sum_carryloop:
-   893 DAA4 B5 D5			lda		fr0+1,x
-   894 DAA6 69 00			adc		#0
-   895 DAA8 95 D5			sta		fr0+1,x
-   896 DAAA			sum_carryloop_start:
-   897 DAAA 90 06			bcc		sum_xit
-   898 DAAC CA				dex
-   899 DAAD 10 F5			bpl		sum_carryloop
-   900
-   901 DAAF 20 3C DE			jsr		fp_carry_expup
-   902 					
-   903 DAB2			sum_xit:
-   904 					;exit decimal mode
-   905 					;normalize if necessary and exit (needed for borrow, as well to check over/underflow)
-   906 DAB2 4C FF DB			jmp		fp_normalize_cld
-   907
-   908 DAB5			do_subtract:
-   909 					;subtract FR0 and FR1 mantissas (!! carry is set coming in)
-   910 DAB5			sub_loop:
-   911 DAB5 B5 D4			lda		fr0,x
-   912 DAB7 F9 E1 00			sbc		fr1+1,y
-   913 DABA 95 D4			sta		fr0,x
-   914 DABC CA				dex
-   915 DABD 88				dey
-   916 DABE 10 F5			bpl		sub_loop
-   917 DAC0 4C 30 DC			jmp		fp_fsub_cont.entry
-   918 				.endp
-   919
-   920 				;==========================================================================
-   921 				; BCD to binary conversion helper.
-   922 				;
-   923 				; Entry:
-   924 				;	A = BCD value (fp_dectobin)
-   925 				;
-   926 				; Exit:
-   927 				;	A = unmodified or loaded BCD byte
-   928 				;	Y = MSB nibble (digit)
-   929 				;
-   930 				; Preserved:
-   931 				;	X
-   932 				;
-   933 DAC3			fp_ldfr0p1_dectobin:		;$0B bytes
-   934 DAC3 B5 D5				lda		fr0+1,x
-   935 DAC5			fp_dectobin:
-   936 DAC5 48					pha
-   937 DAC6 4A					lsr
-   938 DAC7 4A					lsr
-   939 DAC8 4A					lsr
-   940 DAC9 4A					lsr
-   941 DACA A8					tay
-   942 DACB 68					pla
-   943 DACC			fp_exit_success:
-   944 DACC 18					clc
-   945 DACD 60					rts
-   946
-   947 				;==========================================================================
-   948 DACE			fp_mul10:
-   949 DACE 00 0A 14 1E 28 32 + 	dta		0,10,20,30,40,50,60,70,80,90
-   950
-   951 				;==========================================================================
-   952 				; FMUL [DADB]:	Multiply FR0 * FR1 -> FR0; FR1 modified
-   953 				;
-   954 				; Multiply two floating point numbers.
-   955 				;
-   956 				; FMUL generates and accumulates full partial products, so intermediate
-   957 				; results produce the full 19 significant digits, but the result is then
-   958 				; truncated without rounding back to 10 significant digits.
-   959 				;
-   960 DAD8				fixadr	$dad8
-Macro: FIXADR [Source: source/Shared/mathpack.s]
-Source: source/Shared/mathpack.s
-   961 DAD8			fp_fld1r_fmul:
-   962 DAD8 20 98 DD			jsr		fld1r
-   963 DADB				ckaddr	$dadb
-Macro: CKADDR [Source: source/Shared/mathpack.s]
-Source: source/Shared/mathpack.s
-   964 DADB			.proc fmul
+   856 = DA66			.def :fadd
+   857 						;if fr1 is zero or negative zero, we're done. Call the normalization
+   858 						;routine in case FR0 is negative zero.
+   859 DA66 A5 E1				lda		fr1+1
+   860 DA68 F0 15				beq		norm_fr0
+   861 					
+   862 						;if fr0 is zero, swap; we know fr1 can't be a signed zero
+   863 DA6A A5 D5				lda		fr0+1
+   864 DA6C F0 14				beq		return_fr1
+   865
+   866 DA6E			fr0_nonzero:
+   867 						;compute difference in exponents, ignoring sign
+   868 DA6E A5 E0				lda		fr1			;load fr1 sign
+   869 DA70 45 D4				eor		fr0			;compute fr0 ^ fr1 signs
+   870 DA72 29 80				and		#$80		;mask to just sign
+   871 DA74 AA					tax					;store add/subtract flag
+   872 DA75 45 E0				eor		fr1			;flip fr1 sign to match fr0
+   873 DA77 18					clc
+   874 DA78 E5 D4				sbc		fr0			;compute difference in exponents
+   875 DA7A 90 09				bcc		noswap		;jump if FR1 exponent <= FR0 exponent
+   876 					
+   877 DA7C			swap:
+   878 DA7C 4C 54 DC				jmp		fp_reverse_addsub
+   879
+   880 DA7F			norm_fr0:
+   881 DA7F 4C 00 DC				jmp		fp_normalize
+   882
+   883 DA82			return_fr1:
+   884 DA82 4C 49 DC				jmp		fp_rmove
+   885
+   886 DA85			noswap:	
+   887 						;A = FR1 - FR0 - 1
+   888 						;X = add/sub flag
+   889
+   890 						;compute positions for add/subtract	
+   891 DA85 69 05				adc		#5			;A = (FR1) - (FR0) + 4   !! carry is clear coming in
+   892 DA87 A8					tay
+   893 					
+   894 						;check if FR1 is too small in magnitude to matter
+   895 DA88 30 32				bmi		sum_xit
+   896 					
+   897 						;jump to decimal mode and prepare for add/sub loops
+   898 DA8A F8					sed
+   899
+   900 						;check if we are doing a sum or a difference
+   901 DA8B E0 80				cpx		#$80
+   902 DA8D A2 05				ldx		#5
+   903 DA8F B0 2D				bcs		do_subtract
+   904 							
+   905 						;add mantissas
+   906 DA91			add_loop:
+   907 DA91 B9 E1 00				lda		fr1+1,y
+   908 DA94 75 D4				adc		fr0,x
+   909 DA96 95 D4				sta		fr0,x
+   910 DA98 CA					dex
+   911 DA99 88					dey
+   912 DA9A 10 F5				bpl		add_loop
+   913 DA9C 30 06				bmi		sum_carryloop_start
+   914
+   915 DA9E			sum_carryloop:
+   916 DA9E B5 D5				lda		fr0+1,x
+   917 DAA0 69 00				adc		#0
+   918 DAA2 95 D5				sta		fr0+1,x
+   919 DAA4			sum_carryloop_start:
+   920 DAA4 90 16				bcc		sum_xit
+   921 DAA6 CA					dex
+   922 DAA7 10 F5				bpl		sum_carryloop
+   923
+   924 DAA9			sum_finalize:
+   925 						;adjust exponent
+   926 DAA9 E6 D4				inc		fr0
+   927
+   928 						;shift down FR0
+   929 DAAB A2 04				ldx		#4
+   930 DAAD			sum_shiftloop:
+   931 DAAD B5 D4				lda		fr0,x
+   932 DAAF 95 D5				sta		fr0+1,x
+   933 DAB1 CA					dex
+   934 DAB2 D0 F9				bne		sum_shiftloop
+   935 					
+   936 						;add a $01 at the top
+   937 DAB4 E8					inx
+   938 DAB5 86 D5				stx		fr0+1
+   939
+   940 						;turn off decimal mode
+   941
+   942 						;signal overflow if we hit 1E+98 or higher in magnitude
+   943 DAB7 A5 D4				lda		fr0
+   944 DAB9 0A					asl
+   945 DABA C9 E2				cmp		#(64+49)*2
+   946 DABC			sum_xit:
+   947 DABC D8					cld
+   948 DABD 60					rts
+   949 					
+   950 DABE			do_subtract:
+   951 						;subtract FR0 and FR1 mantissas (!! carry is set coming in)
+   952 DABE			sub_loop:
+   953 DABE B5 D4				lda		fr0,x
+   954 DAC0 F9 E1 00				sbc		fr1+1,y
+   955 DAC3 95 D4				sta		fr0,x
+   956 DAC5 CA					dex
+   957 DAC6 88					dey
+   958 DAC7 10 F5				bpl		sub_loop
+   959 DAC9 4C 30 DC				jmp		fp_fsub_cont.entry
+   960 				.endp
+   961
+   962 				;==========================================================================
+   963 DACC			fp_mul10:
+   964 DACC 00 0A 14 1E 28 32 + 	dta		0,10,20,30,40,50,60,70,80,90
    965
-   966 					;We use FR0:FRE as a double-precision accumulator, and copy the
-   967 					;original multiplicand value in FR0 to FR1. The multiplier in
-   968 					;FR1 is converted to binary digit pairs into FR2.
-   969 					
-   970 = 00DF			_offset = _fr3+5
-   971 = 00E6			_offset2 = fr2
-   972
-   973 					;if FR0 is zero, we're done
-   974 DADB A5 D4			lda		fr0
-   975 DADD F0 ED			beq		fp_exit_success
-   976 					
-   977 					;if FR1 is zero, zero FR0 and exit
-   978 DADF A5 E0			lda		fr1
-   979 DAE1 18				clc
-   980 DAE2 F0 1A			beq		fp_exit_zero
-   981 					
-   982 					;move fr0 to fr2
-   983 DAE4 20 74 DD			jsr		fp_fmul_fr0_to_binfr2
+   966 				;==========================================================================
+   967 				; FMUL [DADB]:	Multiply FR0 * FR1 -> FR0; FR1 modified
+   968 				;
+   969 				; Multiply two floating point numbers.
+   970 				;
+   971 				; FMUL generates and accumulates full partial products, so intermediate
+   972 				; results produce the full 19 significant digits, but the result is then
+   973 				; truncated without rounding back to 10 significant digits.
+   974 				;
+   975 DAD6				fixadr	$dad8
+Macro: FIXADR [Source: source/Shared/mathpack.s]
+     2 						.print ($DAD8-*),' bytes free before ',$DAD8
+     2 				$0002 bytes free before $DAD8
+     3 DAD6					org		$DAD8
+Source: source/Shared/mathpack.s
+   976 DAD8			fp_fld1r_fmul:
+   977 DAD8 20 98 DD			jsr		fld1r
+   978 DADB				ckaddr	$dadb
+Macro: CKADDR [Source: source/Shared/mathpack.s]
+Source: source/Shared/mathpack.s
+   979 DADB			.proc fmul
+   980
+   981 						;We use FR0:FRE as a double-precision accumulator, and copy the
+   982 						;original multiplicand value in FR0 to FR1. The multiplier in
+   983 						;FR1 is converted to binary digit pairs into FR2.
    984 					
-   985 					;compute new exponent and stash
-   986 DAE7 A5 E0			lda		fr1
-   987 DAE9 18				clc
-   988 DAEA 20 04 DB			jsr		fp_adjust_exponent.fmul_entry
-   989 					
-   990 DAED E6 D4			inc		fr0
-   991
-   992 					;clear accumulator through to exponent byte of fr1
-   993 DAEF A2 D5			ldx		#fr0+1
-   994 DAF1 A0 0C			ldy		#12
-   995 DAF3 F8				sed
-   996
-   997 DAF4 20 48 DA			jsr		zfl
-   998
-   999 					;set up for 7 bits per digit pair (0-99 in 0-127)
-  1000 DAF7 A0 07			ldy		#7
-  1001
-  1002 DAF9 4C 91 DC			jmp		fp_fmul_innerloop.offloop_entry
-  1003 				.endp
-  1004
-  1005 				;--------------------------------------------------------------------------
-  1006 DAFC			underflow_overflow:
-  1007 DAFC 68				pla
-  1008 DAFD 68				pla
-  1009 DAFE			fp_exit_zero:
-  1010 DAFE 4C 44 DA			jmp		zfr0
-  1011
-  1012 DB01			.proc fp_adjust_exponent
-  1013 DB01			fdiv_entry:
-  1014 DB01 49 7F			eor		#$7f
-  1015 DB03 38				sec
-  1016 DB04			fmul_entry:
-  1017 					;stash modified exp1
-  1018 DB04 AA				tax
-  1019 					
-  1020 					;compute new sign
-  1021 DB05 45 D4			eor		fr0
-  1022 DB07 29 80			and		#$80
-  1023 DB09 85 E0			sta		fr1
-  1024 					
-  1025 					;merge exponents
-  1026 DB0B 8A				txa
-  1027 DB0C 65 D4			adc		fr0
-  1028 DB0E AA				tax
-  1029 DB0F 45 E0			eor		fr1
-  1030 					
-  1031 					;check for underflow/overflow
-  1032 DB11 C9 4F			cmp		#128-49
-  1033 DB13 90 E7			bcc		underflow_overflow
-  1034 					
-  1035 DB15 C9 B1			cmp		#128+49
-  1036 DB17 B0 E3			bcs		underflow_overflow
+   985 = 00DF			_offset = _fr3+5
+   986 = 00E6			_offset2 = fr2
+   987
+   988 						;if FR0 is zero, we're done
+   989 DADB 18					clc
+   990 DADC A5 D4				lda		fr0
+   991 DADE F0 3B				beq		fp_exit
+   992 					
+   993 						;if FR1 is zero, zero FR0 and exit
+   994 DAE0 A5 E0				lda		fr1
+   995 DAE2 F0 19				beq		fp_exit_zero
+   996 						
+   997 						;compute new exponent and stash (note: C=0 from above)
+   998 DAE4 A5 E0				lda		fr1
+   999 DAE6 20 01 DB				jsr		fp_adjust_exponent.fmul_entry
+  1000 					
+  1001 DAE9 E6 D4				inc		fr0
+  1002
+  1003 						;move fr0 to fr2, converting each digit pair to binary and inverting
+  1004 DAEB 20 74 DD				jsr		fp_fmul_fr0_to_binfr2
+  1005
+  1006 						;clear accumulator through to exponent byte of fr1
+  1007 DAEE A0 0C				ldy		#12
+  1008 DAF0			clear_loop:
+  1009 DAF0 96 D4				stx		fr0,y		;!! - X=0 from previous call
+  1010 DAF2 88					dey
+  1011 DAF3 D0 FB				bne		clear_loop
+  1012
+  1013 						;enter decimal mode for main accumulation
+  1014 DAF5 F8					sed
+  1015
+  1016 						;set up for 7 bits per digit pair (0-99 in 0-127)
+  1017 DAF6 A0 07				ldy		#7
+  1018
+  1019 						;jump into the middle of the bit loop, so we can avoid an unnecessary
+  1020 						;double after the last bit
+  1021 DAF8 4C BF DC				jmp		fp_fmul_innerloop.offloop_entry
+  1022 				.endp
+  1023
+  1024 				;--------------------------------------------------------------------------
+  1025 DAFB			.proc fp_adjust_exponent
+  1026 DAFB			underflow_overflow:
+  1027 DAFB 68				pla
+  1028 DAFC 68				pla
+  1029 = DAFD			.def :fp_exit_zero
+  1030 DAFD 4C 44 DA			jmp		zfr0
+  1031
+  1032 DB00			fdiv_entry:
+  1033 DB00 38				sec
+  1034 DB01			fmul_entry:
+  1035 					;stash modified exp1
+  1036 DB01 AA				tax
   1037 					
-  1038 					;rebias exponent
-  1039 DB19 8A				txa
-  1040 DB1A E9 3F			sbc		#$40-1		;!! - C=0 from bcs fail
-  1041 DB1C 85 D4			sta		fr0
-  1042 DB1E 60				rts
-  1043 				.endp
-  1044
-  1045 				;==========================================================================
-  1046 				; FDIV [DB28]	Divide FR0 / FR1 -> FR0
-  1047 				;
-  1048 				; Working space:
-  1049 				;	- FR0,6:	Working dividend
-  1050 				;	- FRE:		Mantissa byte counter
-  1051 				;	- FRE,6:	Divisor x1
-  1052 				;	- FR1+1,5:	Divisor x10
-  1053 				;	- FR2,6:	Working quotient
-  1054 				;	- FRX:		Adjusted exponent
-  1055 				;
-  1056 DB1F					fixadr	$db23
+  1038 					;compute new sign
+  1039 DB02 45 D4			eor		fr0
+  1040 DB04 29 80			and		#$80
+  1041 DB06 85 E0			sta		fr1
+  1042 					
+  1043 					;merge exponents
+  1044 DB08 8A				txa
+  1045 DB09 65 D4			adc		fr0
+  1046 DB0B AA				tax
+  1047 DB0C 45 E0			eor		fr1
+  1048 					
+  1049 					;check for underflow/overflow
+  1050 DB0E C9 4F			cmp		#128-49
+  1051 DB10 90 E9			bcc		underflow_overflow
+  1052 					
+  1053 DB12 C9 B1			cmp		#128+49
+  1054 DB14 B0 E5			bcs		underflow_overflow
+  1055 					
+  1056 					;rebias exponent
+  1057 DB16 8A				txa
+  1058 DB17 E9 3F			sbc		#$40-1		;!! - C=0 from bcs fail
+  1059 DB19 85 D4			sta		fr0
+  1060 = DB1B			.def :fp_exit
+  1061 DB1B 60				rts
+  1062 				.endp
+  1063
+  1064 				;==========================================================================
+  1065 DB1C			.proc fp_tab_hi_10000
+  1066 DB1C 27 4E 75 9C C3 EA			dta		$27, $4E, $75, $9C, $C3, $EA
+  1067 				.endp
+  1068
+  1069 				;==========================================================================
+  1070 				; FDIV [DB28]	Divide FR0 / FR1 -> FR0
+  1071 				;
+  1072 				; Working space:
+  1073 				;	- FR0,6:	Working dividend
+  1074 				;	- FRE:		Mantissa byte counter
+  1075 				;	- FRE,6:	Divisor x1
+  1076 				;	- FR1+1,5:	Divisor x10
+  1077 				;	- FR2,6:	Working quotient
+  1078 				;	- FRX:		Adjusted exponent
+  1079 				;
+  1080 DB22					fixadr	$db23
 Macro: FIXADR [Source: source/Shared/mathpack.s]
      2 						.print ($DB23-*),' bytes free before ',$DB23
-     2 				$0004 bytes free before $DB23
-     3 DB1F					org		$DB23
+     2 				$0001 bytes free before $DB23
+     3 DB22					org		$DB23
 Source: source/Shared/mathpack.s
-  1057 DB23			fp_fdiv_fld1r_fpconst:
-  1058 DB23 A0 DE				ldy		#>fpconst_log10_e
-  1059 DB25			fp_fdiv_fld1r:
-  1060 DB25 20 98 DD				jsr		fld1r
-  1061
-  1062 DB28					ckaddr	$db28
+  1081 DB23			fp_fdiv_fld1r_fpconst:
+  1082 DB23 A0 DE				ldy		#>fpconst_log10_e
+  1083 DB25			fp_fdiv_fld1r:
+  1084 DB25 20 98 DD				jsr		fld1r
+  1085
+  1086 DB28					ckaddr	$db28
 Macro: CKADDR [Source: source/Shared/mathpack.s]
 Source: source/Shared/mathpack.s
-  1063 DB28			.proc fdiv
-  1064 						;check if divisor is zero -- must be first as 0/0 is an error
-  1065 DB28 A5 E0				lda		fr1
-  1066 DB2A F0 6E				beq		err
-  1067
-  1068 						;check if dividend is zero
-  1069 DB2C A6 D4				ldx		fr0
-  1070 DB2E F0 68				beq		ok
-  1071 					
-  1072 						;compute new exponent
-  1073 DB30 20 01 DB				jsr		fp_adjust_exponent.fdiv_entry
-  1074
-  1075 DB33 20 49 DC				jsr		fp_fdiv_init	
-  1076
-  1077 DB36			digitloop:
-  1078 						;start with 0 for the tens digit
-  1079 DB36 A2 00				ldx		#0
-  1080
-  1081 						;subtract 10x divisor and increment quotient tens digit until underflow
-  1082 DB38 38					sec
-  1083 DB39 20 BA DB				jsr		fp_fdiv_decloop.entry
-  1084
-  1085 						;add +10 so we don't have to deal with BCD half carry; note that we
-  1086 						;couldn't pre-add this previously due to the binary 4-bit shift
-  1087 DB3C 09 0A				ora		#10
-  1088 DB3E AA					tax
-  1089
-  1090 						;add 1x divisor and decrement quotient ones digit until overflow
-  1091 DB3F 18					clc
-  1092
-  1093 DB40			incloop:
-  1094 						;decrement quotient mantissa byte
-  1095 DB40 CA					dex
-  1096 					
-  1097 						;add 1x divisor
-  1098 						.rept 5
-  1099 							LDA		FR0+(5-#)
-  1100 							ADC		FR1+(5-#)
-  1101 							STA		FR0+(5-#)
-  1102 						.endr
-Source: REPT
-  1099 DB41 A5 D9					LDA		FR0+(5-#)
-  1099 DB43 65 E5					ADC		FR1+(5-#)
-  1099 DB45 85 D9					STA		FR0+(5-#)
-  1099 DB47 A5 D8					LDA		FR0+(5-#)
-  1099 DB49 65 E4					ADC		FR1+(5-#)
-  1099 DB4B 85 D8					STA		FR0+(5-#)
-  1099 DB4D A5 D7					LDA		FR0+(5-#)
-  1099 DB4F 65 E3					ADC		FR1+(5-#)
-  1099 DB51 85 D7					STA		FR0+(5-#)
-  1099 DB53 A5 D6					LDA		FR0+(5-#)
-  1099 DB55 65 E2					ADC		FR1+(5-#)
-  1099 DB57 85 D6					STA		FR0+(5-#)
-  1099 DB59 A5 D5					LDA		FR0+(5-#)
-  1099 DB5B 65 E1					ADC		FR1+(5-#)
-  1099 DB5D 85 D5					STA		FR0+(5-#)
-Source: source/Shared/mathpack.s
-  1103 DB5F A5 EC				lda		frx
-  1104 DB61 69 00				adc		#0
-  1105 DB63 85 EC				sta		frx
-  1106 					
-  1107 						;keep going until we overflow
-  1108 DB65 90 D9				bcc		incloop	
-  1109
-  1110 						;write quotient digit
-  1111 DB67 96 6B				stx		fr2+5-$80,y
-  1112 					
-  1113 						;shift dividend
-  1114 DB69 A5 D5				lda		fr0+1
-  1115 DB6B 85 EC				sta		frx
-  1116 DB6D A2 FC				ldx		#$100-4
-  1117 DB6F			bitloop:
-  1118 DB6F B5 DA				lda		fr0+6,x
-  1119 DB71 95 D9				sta		fr0+5,x
-  1120 DB73 E8					inx
-  1121 DB74 D0 F9				bne		bitloop
-  1122 DB76 86 D9				stx		fr0+5
-  1123 					
-  1124 						;next quo byte
-  1125 DB78 C8					iny
-  1126 DB79 10 BB				bpl		digitloop
+  1087 DB28			.proc fdiv
+  1088 						;check if divisor is zero -- must be first as 0/0 is an error
+  1089 DB28 A5 E0				lda		fr1
+  1090 DB2A F0 6F				beq		err
+  1091
+  1092 						;check if dividend is zero
+  1093 DB2C A6 D4				ldx		fr0
+  1094 DB2E F0 69				beq		ok
+  1095 					
+  1096 						;compute new exponent
+  1097 DB30 49 7F				eor		#$7f
+  1098 DB32 20 00 DB				jsr		fp_adjust_exponent.fdiv_entry
+  1099
+  1100 DB35 20 44 DF				jsr		fp_fdiv_init
+  1101 DB38 D0 0F				bne		digitloop_entry		;!! - unconditional
+  1102
+  1103 DB3A			digitloop:
+  1104 						;shift dividend
+  1105 DB3A A5 D5				lda		fr0+1
+  1106 DB3C 85 EC				sta		frx
+  1107 DB3E A2 FC				ldx		#$100-4
+  1108 DB40			bitloop:
+  1109 DB40 B5 DA				lda		fr0+6,x
+  1110 DB42 95 D9				sta		fr0+5,x
+  1111 DB44 E8					inx
+  1112 DB45 D0 F9				bne		bitloop
+  1113 DB47 86 D9				stx		fr0+5
+  1114
+  1115 DB49			digitloop_entry:
+  1116 						;start with 0 for the tens digit
+  1117 DB49 A2 00				ldx		#0
+  1118
+  1119 						;subtract 10x divisor and increment quotient tens digit until underflow
+  1120 DB4B 38					sec
+  1121 DB4C 20 BA DB				jsr		fp_fdiv_decloop.entry
+  1122
+  1123 DB4F AA					tax
+  1124
+  1125 						;add 1x divisor and decrement quotient ones digit until overflow
+  1126 						;note - C=0 from shift in decloop
   1127
-  1128 						;if we have a zero leading quotient byte, loop back for one more iteration
-  1129 DB7B A5 E6				lda		fr2
-  1130 DB7D D0 0D				bne		quotient_ok
-  1131 DB7F 84 E6				sty		fr2
-  1132 DB81 C6 D4				dec		fr0
-  1133 DB83 A5 D4				lda		fr0
-  1134 DB85 0A					asl
-  1135 DB86 C9 1E				cmp		#(64-49)*2
-  1136 DB88 90 12				bcc		underflow
-  1137 DB8A B0 AA				bcs		digitloop
-  1138 					
-  1139 DB8C			quotient_ok:
-  1140 						;copy last 5 mantissa bytes back to FR0
-  1141 DB8C A2 05				ldx		#5
-  1142 DB8E			finalcopy_loop:
-  1143 DB8E 88					dey
-  1144 DB8F B9 6B 00				lda		fr2+5-$80,y
-  1145 DB92 95 D4				sta		fr0,x
-  1146
-  1147 DB94 CA					dex
-  1148 DB95 D0 F7				bne		finalcopy_loop
-  1149
-  1150 DB97 D8					cld
-  1151 DB98			ok:
-  1152 DB98 18					clc
-  1153 DB99 60					rts
-  1154 DB9A			err:
-  1155 DB9A 38					sec
-  1156 DB9B 60					rts
-  1157
-  1158 DB9C			underflow:
-  1159 DB9C D8					cld
-  1160 DB9D 4C 43 DA				jmp		fp_clc_zfr0
-  1161 				.endp
-  1162
-  1163 				;==========================================================================
-  1164 				; SKPSPC [DBA1]	Increment CIX while INBUFF[CIX] is a space
-  1165 DBA0					fixadr	$dba1
-Macro: FIXADR [Source: source/Shared/mathpack.s]
-     2 						.print ($DBA1-*),' bytes free before ',$DBA1
-     2 				$0001 bytes free before $DBA1
-     3 DBA0					org		$DBA1
-Source: source/Shared/mathpack.s
-  1166 DBA1			skpspc:
-  1167 DBA1 A9 20			lda		#' '
-  1168 DBA3 A4 F2			ldy		cix
-  1169 DBA5			fp_skipchar:
-  1170 DBA5			skpspc_loop:
-  1171 DBA5 D1 F3			cmp		(inbuff),y
-  1172 DBA7 D0 03			bne		skpspc_xit
-  1173 DBA9 C8				iny
-  1174 DBAA D0 F9			bne		skpspc_loop
-  1175 DBAC			skpspc_xit:
-  1176 DBAC 84 F2			sty		cix
-  1177 DBAE 60				rts
-  1178
-  1179 				;==========================================================================
-  1180 				; ISDIGT [DBAF]	Check if INBUFF[CIX] is a digit (UNDOCUMENTED)
-  1181 DBAF					fixadr	$dbaf
-Macro: FIXADR [Source: source/Shared/mathpack.s]
-Source: source/Shared/mathpack.s
-  1182 = DBAF			isdigt = _isdigt
-  1183 DBAF			.proc _isdigt
-  1184 DBAF A4 F2			ldy		cix
-  1185 = DBB1			.def :fp_isdigit_y = *
-  1186 DBB1 B1 F3			lda		(inbuff),y
-  1187 DBB3 38				sec
-  1188 DBB4 E9 30			sbc		#'0'
-  1189 DBB6 C9 0A			cmp		#10
-  1190 DBB8 60				rts
-  1191 				.endp
-  1192
-  1193 				;==========================================================================
-  1194 DBB9			.proc fp_fdiv_decloop
-  1195 DBB9			decloop:
-  1196 						;increment quotient tens digit
-  1197 DBB9 E8					inx
-  1198
-  1199 DBBA			entry:
-  1200 						;subtract 10x divisor
-  1201 						.rept 5
-  1202 							LDA		FR0+(5-#)
-  1203 							SBC		FRE+(5-#)
-  1204 							STA		FR0+(5-#)
-  1205 						.endr
+  1128 DB50			incloop:
+  1129 						;decrement quotient mantissa byte
+  1130 DB50 CA					dex
+  1131 					
+  1132 						;add 1x divisor
+  1133 						.rept 5
+  1134 							LDA		FR0+(5-#)
+  1135 							ADC		FR1+(5-#)
+  1136 							STA		FR0+(5-#)
+  1137 						.endr
 Source: REPT
-  1202 DBBA A5 D9					LDA		FR0+(5-#)
-  1202 DBBC E5 DF					SBC		FRE+(5-#)
-  1202 DBBE 85 D9					STA		FR0+(5-#)
-  1202 DBC0 A5 D8					LDA		FR0+(5-#)
-  1202 DBC2 E5 DE					SBC		FRE+(5-#)
-  1202 DBC4 85 D8					STA		FR0+(5-#)
-  1202 DBC6 A5 D7					LDA		FR0+(5-#)
-  1202 DBC8 E5 DD					SBC		FRE+(5-#)
-  1202 DBCA 85 D7					STA		FR0+(5-#)
-  1202 DBCC A5 D6					LDA		FR0+(5-#)
-  1202 DBCE E5 DC					SBC		FRE+(5-#)
-  1202 DBD0 85 D6					STA		FR0+(5-#)
-  1202 DBD2 A5 D5					LDA		FR0+(5-#)
-  1202 DBD4 E5 DB					SBC		FRE+(5-#)
-  1202 DBD6 85 D5					STA		FR0+(5-#)
+  1134 DB51 A5 D9					LDA		FR0+(5-#)
+  1134 DB53 65 E5					ADC		FR1+(5-#)
+  1134 DB55 85 D9					STA		FR0+(5-#)
+  1134 DB57 A5 D8					LDA		FR0+(5-#)
+  1134 DB59 65 E4					ADC		FR1+(5-#)
+  1134 DB5B 85 D8					STA		FR0+(5-#)
+  1134 DB5D A5 D7					LDA		FR0+(5-#)
+  1134 DB5F 65 E3					ADC		FR1+(5-#)
+  1134 DB61 85 D7					STA		FR0+(5-#)
+  1134 DB63 A5 D6					LDA		FR0+(5-#)
+  1134 DB65 65 E2					ADC		FR1+(5-#)
+  1134 DB67 85 D6					STA		FR0+(5-#)
+  1134 DB69 A5 D5					LDA		FR0+(5-#)
+  1134 DB6B 65 E1					ADC		FR1+(5-#)
+  1134 DB6D 85 D5					STA		FR0+(5-#)
 Source: source/Shared/mathpack.s
-  1206 DBD8 A5 EC				lda		frx
-  1207 DBDA E5 DA				sbc		fre
-  1208 DBDC 85 EC				sta		frx
-  1209
-  1210 						;keep going until we underflow
-  1211 DBDE B0 D9				bcs		decloop
-  1212
-  1213 						;shift tens digit (con't after)
-  1214 DBE0 8A					txa
-  1215 DBE1 0A					asl
-  1216 DBE2 0A					asl
-  1217 DBE3 0A					asl
-  1218 DBE4 0A					asl
-  1219 DBE5 60					rts
-  1220 				.endp
-  1221
-  1222 				;==========================================================================
-  1223 DBE6			.proc fp_tab_hi_100
-  1224 DBE6 00 00 00 01 01 01 + 	:10 dta >[100*#]
-  1225 				.endp
-  1226
-  1227 				;==========================================================================
-  1228 DBF0			.proc fp_tab_lo_100				;$0A bytes
-  1229 DBF0 00 64 C8 2C 90 F4 + 	:10 dta <[100*#]
-  1230 				.endp
-  1231
-  1232 				;==========================================================================
-  1233 DBFA				fixadr	$dc00-5
+  1138 DB6F A5 EC				lda		frx
+  1139 DB71 69 00				adc		#0
+  1140 DB73 85 EC				sta		frx
+  1141 					
+  1142 						;keep going until we overflow
+  1143 DB75 90 D9				bcc		incloop	
+  1144
+  1145 						;write quotient digit
+  1146 DB77 96 6B				stx		fr2+5-$80,y
+  1147 						
+  1148 						;next quo byte
+  1149 DB79 C8					iny
+  1150 DB7A 10 BE				bpl		digitloop
+  1151
+  1152 						;if we have a zero leading quotient byte, loop back for one more iteration
+  1153 DB7C A5 E6				lda		fr2
+  1154 DB7E D0 0D				bne		quotient_ok
+  1155 DB80 84 E6				sty		fr2
+  1156 DB82 C6 D4				dec		fr0
+  1157 DB84 A5 D4				lda		fr0
+  1158 DB86 0A					asl
+  1159 DB87 C9 1E				cmp		#(64-49)*2
+  1160 DB89 90 12				bcc		underflow
+  1161 DB8B B0 AD				bcs		digitloop
+  1162 					
+  1163 DB8D			quotient_ok:
+  1164 						;copy last 5 mantissa bytes back to FR0
+  1165 DB8D A2 05				ldx		#5
+  1166 DB8F			finalcopy_loop:
+  1167 DB8F 88					dey
+  1168 DB90 B9 6B 00				lda		fr2+5-$80,y
+  1169 DB93 95 D4				sta		fr0,x
+  1170
+  1171 DB95 CA					dex
+  1172 DB96 D0 F7				bne		finalcopy_loop
+  1173
+  1174 DB98 D8					cld
+  1175 DB99			ok:
+  1176 DB99 18					clc
+  1177 DB9A 60					rts
+  1178 DB9B			err:
+  1179 DB9B 38					sec
+  1180 DB9C 60					rts
+  1181
+  1182 DB9D			underflow:
+  1183 DB9D D8					cld
+  1184 DB9E 4C 43 DA				jmp		fp_clc_zfr0
+  1185 				.endp
+  1186
+  1187 				;==========================================================================
+  1188 				; SKPSPC [DBA1]	Increment CIX while INBUFF[CIX] is a space
+  1189 DBA1					fixadr	$dba1
 Macro: FIXADR [Source: source/Shared/mathpack.s]
-     2 						.print ($DC00-5-*),' bytes free before ',$DC00-5
-     2 				$0001 bytes free before $DBFB
-     3 DBFA					org		$DC00-5
 Source: source/Shared/mathpack.s
-  1234 DBFB			ifp_final:
-  1235 DBFB A9 42				lda		#$42
-  1236 DBFD 85 D4				sta		fr0
-  1237
-  1238 				;==========================================================================
-  1239 				; NORMALIZE [DC00]	Normalize FR0 (UNDOCUMENTED)
-  1240 DBFF					fixadr	$dc00-1
+  1190 DBA1			skpspc:
+  1191 DBA1 A9 20			lda		#' '
+  1192 DBA3 A4 F2			ldy		cix
+  1193 DBA5			fp_skipchar:
+  1194 DBA5			skpspc_loop:
+  1195 DBA5 D1 F3			cmp		(inbuff),y
+  1196 DBA7 D0 03			bne		skpspc_xit
+  1197 DBA9 C8				iny
+  1198 DBAA D0 F9			bne		skpspc_loop
+  1199 DBAC			skpspc_xit:
+  1200 DBAC 84 F2			sty		cix
+  1201 DBAE 60				rts
+  1202
+  1203 				;==========================================================================
+  1204 				; ISDIGT [DBAF]	Check if INBUFF[CIX] is a digit (UNDOCUMENTED)
+  1205 DBAF					fixadr	$dbaf
 Macro: FIXADR [Source: source/Shared/mathpack.s]
 Source: source/Shared/mathpack.s
-  1241 DBFF			fp_normalize_cld:
-  1242 DBFF D8				cld
-  1243 DC00				ckaddr	$dc00
+  1206 = DBAF			isdigt = _isdigt
+  1207 DBAF			.proc _isdigt
+  1208 DBAF A4 F2			ldy		cix
+  1209 = DBB1			.def :fp_isdigit_y = *
+  1210 DBB1 B1 F3			lda		(inbuff),y
+  1211 DBB3 38				sec
+  1212 DBB4 E9 30			sbc		#'0'
+  1213 DBB6 C9 0A			cmp		#10
+  1214 DBB8 60				rts
+  1215 				.endp
+  1216
+  1217 				;==========================================================================
+  1218 DBB9			.proc fp_fdiv_decloop
+  1219 DBB9			decloop:
+  1220 						;increment quotient tens digit
+  1221 DBB9 E8					inx
+  1222
+  1223 DBBA			entry:
+  1224 						;subtract 10x divisor
+  1225 						.rept 5
+  1226 							LDA		FR0+(5-#)
+  1227 							SBC		FRE+(5-#)
+  1228 							STA		FR0+(5-#)
+  1229 						.endr
+Source: REPT
+  1226 DBBA A5 D9					LDA		FR0+(5-#)
+  1226 DBBC E5 DF					SBC		FRE+(5-#)
+  1226 DBBE 85 D9					STA		FR0+(5-#)
+  1226 DBC0 A5 D8					LDA		FR0+(5-#)
+  1226 DBC2 E5 DE					SBC		FRE+(5-#)
+  1226 DBC4 85 D8					STA		FR0+(5-#)
+  1226 DBC6 A5 D7					LDA		FR0+(5-#)
+  1226 DBC8 E5 DD					SBC		FRE+(5-#)
+  1226 DBCA 85 D7					STA		FR0+(5-#)
+  1226 DBCC A5 D6					LDA		FR0+(5-#)
+  1226 DBCE E5 DC					SBC		FRE+(5-#)
+  1226 DBD0 85 D6					STA		FR0+(5-#)
+  1226 DBD2 A5 D5					LDA		FR0+(5-#)
+  1226 DBD4 E5 DB					SBC		FRE+(5-#)
+  1226 DBD6 85 D5					STA		FR0+(5-#)
+Source: source/Shared/mathpack.s
+  1230 DBD8 A5 EC				lda		frx
+  1231 DBDA E5 DA				sbc		fre
+  1232 DBDC 85 EC				sta		frx
+  1233
+  1234 						;keep going until we underflow
+  1235 DBDE B0 D9				bcs		decloop
+  1236
+  1237 						;shift tens digit (con't after)
+  1238 DBE0 8A					txa
+  1239 DBE1 0A					asl
+  1240 DBE2 0A					asl
+  1241 DBE3 0A					asl
+  1242 DBE4 0A					asl
+  1243
+  1244 						;add +10 so we don't have to deal with BCD half carry; note that we
+  1245 						;couldn't pre-add this previously due to the binary 4-bit shift
+  1246 DBE5 09 0A				ora		#10
+  1247
+  1248 						;exit C=0 (because tens digit < 10)
+  1249 DBE7 60					rts
+  1250 				.endp
+  1251
+  1252 				;==========================================================================
+  1253 DBE8					fixadr	$dc00-24
+Macro: FIXADR [Source: source/Shared/mathpack.s]
+Source: source/Shared/mathpack.s
+  1254
+  1255 DBE8			.proc ifp_cont
+  1256 DBE8			bitloop:
+  1257 						;shift in BCD bit, shift out BCD carry
+  1258 DBE8 A5 D7				lda		fr0+3
+  1259 DBEA 65 D7				adc		fr0+3
+  1260 DBEC 85 D7				sta		fr0+3
+  1261 DBEE A5 D6				lda		fr0+2
+  1262 DBF0 65 D6				adc		fr0+2
+  1263 DBF2 85 D6				sta		fr0+2
+  1264 					
+  1265 						;shift in BCD carry, shift out binary bit
+  1266 DBF4 26 D5				rol		fr0+1
+  1267 DBF6 26 D4				rol		fr0
+  1268
+  1269 DBF8 88					dey
+  1270 DBF9 D0 ED				bne		bitloop
+  1271
+  1272 DBFB A9 42				lda		#$42
+  1273 DBFD 85 D4				sta		fr0
+  1274 				.endp
+  1275
+  1276 				;==========================================================================
+  1277 				; NORMALIZE [DC00]	Normalize FR0 (UNDOCUMENTED)
+  1278 DBFF					ckaddr	$dc00-1
 Macro: CKADDR [Source: source/Shared/mathpack.s]
 Source: source/Shared/mathpack.s
-  1244 DC00			fp_normalize:
-  1245 DC00			.nowarn .proc normalize
-  1246
-  1247 DC00 A0 05			ldy		#5
-  1248 DC02			normloop:
-  1249 DC02 A5 D4			lda		fr0
-  1250 DC04 0A				asl
-  1251 DC05 C9 1E			cmp		#(64-49)*2
-  1252 DC07 90 1E			bcc		underflow
-  1253 					
-  1254 DC09 A6 D5			ldx		fr0+1
-  1255 DC0B F0 03			beq		need_norm
-  1256
-  1257 					;Okay, we're done normalizing... check if the exponent is in bounds.
-  1258 					;It needs to be within +/-48 to be valid. If the exponent is <-49,
-  1259 					;we set it to zero; otherwise, we mark overflow.
-  1260 					
-  1261 DC0D C9 E2			cmp		#(64+49)*2
-  1262 DC0F 60				rts
-  1263 					
-  1264 DC10			need_norm:
-  1265 DC10 C6 D4			dec		fr0
-  1266
-  1267 DC12 A5 D6 85 D5			mva		fr0+2 fr0+1
-  1268 DC16 A5 D7 85 D6			mva		fr0+3 fr0+2
-  1269 DC1A A5 D8 85 D7			mva		fr0+4 fr0+3
-  1270 DC1E A5 D9 85 D8			mva		fr0+5 fr0+4
-  1271 DC22 86 D9			stx		fr0+5
-  1272
-  1273 DC24 88				dey
-  1274 DC25 D0 DB			bne		normloop
-  1275 					
-  1276 					;Hmm, we shifted out everything... must be zero; reset exponent. This
-  1277 					;is critical since Atari Basic depends on the exponent being zero for
-  1278 					;a zero result.
-  1279 DC27			underflow:
-  1280 DC27 4C 43 DA			jmp		fp_clc_zfr0
-  1281 					
-  1282 				.endp
-  1283
-  1284 				;==========================================================================
-  1285 				; HELPER ROUTINES
-  1286 				;==========================================================================
-  1287
-  1288 				;--------------------------------------------------------------------------
-  1289 DC2A			.proc fp_fsub_cont
-  1290 					;propagate borrow up
-  1291 DC2A			borrow_loop:
-  1292 DC2A B5 D5			lda		fr0+1,x
-  1293 DC2C E9 00			sbc		#0
-  1294 DC2E 95 D5			sta		fr0+1,x
-  1295 DC30			entry:
-  1296 					;exit if no more borrow
-  1297 DC30 B0 CD			bcs		fp_normalize_cld
-  1298 DC32 CA				dex
-  1299 DC33 10 F5			bpl		borrow_loop
-  1300
-  1301 					;we borrowed out the top... invert sign and then subtract from 0
-  1302 DC35 A9 80			lda		#$80
-  1303 DC37 45 D4			eor		fr0
-  1304 DC39 85 D4			sta		fr0
-  1305
-  1306 DC3B A2 05			ldx		#5
-  1307 DC3D 38				sec
-  1308 DC3E			underflow_loop:
-  1309 DC3E A9 00			lda		#0
-  1310 DC40 F5 D4			sbc		fr0,x
-  1311 DC42 95 D4			sta		fr0,x
-  1312 DC44 CA				dex
-  1313 DC45 D0 F7			bne		underflow_loop
-  1314 DC47 F0 B6			beq		fp_normalize_cld
-  1315 				.endp
-  1316
-  1317 				;--------------------------------------------------------------------------
-  1318 DC49			.proc fp_fdiv_init
-  1319 					;save off x1 divisor
-  1320 DC49 A2 04			ldx		#4
-  1321 DC4B B5 E1 95 DB CA 10 + 	mva:rpl	fr1+1,x fre+1,x-
-  1322
-  1323 					;extend working dividend to 6 digit pairs
-  1324 DC52 A9 00			lda		#0
-  1325 DC54 85 EC			sta		frx
-  1326 					
-  1327 					;compute x10 divisor
-  1328 DC56 A0 04			ldy		#4
-  1329 DC58			bitloop:
-  1330 DC58 06 DF			asl		fre+5
-  1331 DC5A 26 DE			rol		fre+4
-  1332 DC5C 26 DD			rol		fre+3
-  1333 DC5E 26 DC			rol		fre+2
-  1334 DC60 26 DB			rol		fre+1
-  1335 DC62 2A				rol
-  1336 DC63 88				dey
-  1337 DC64 D0 F2			bne		bitloop
-  1338
-  1339 DC66 85 DA			sta		fre
-  1340
-  1341 DC68 F8				sed
-  1342
-  1343 DC69 A0 7B			ldy		#$80-5
-  1344 DC6B 60				rts
-  1345 				.endp
-  1346
-  1347 				;--------------------------------------------------------------------------
-  1348 DC6C			.proc fp_fmul_innerloop
-  1349 = 00DF			_offset = _fr3+5
-  1350 = 00E6			_offset2 = fr2
-  1351
-  1352 						;begin outer loop -- this is where we process one _bit_ out of each
-  1353 						;multiplier byte in FR2's mantissa (note that this is inverted in that
-  1354 						;it is bytes-in-bits instead of bits-in-bytes)
-  1355 DC6C			offloop:
-  1356 						;double multiplicand in fr1
-  1357 DC6C 18					clc
-  1358 DC6D A5 E5				lda		fr1+5
-  1359 DC6F 65 E5				adc		fr1+5
-  1360 DC71 85 E5				sta		fr1+5
-  1361 DC73 A5 E4				lda		fr1+4
-  1362 DC75 65 E4				adc		fr1+4
-  1363 DC77 85 E4				sta		fr1+4
-  1364 DC79 A5 E3				lda		fr1+3
-  1365 DC7B 65 E3				adc		fr1+3
-  1366 DC7D 85 E3				sta		fr1+3
-  1367 DC7F A5 E2				lda		fr1+2
-  1368 DC81 65 E2				adc		fr1+2
-  1369 DC83 85 E2				sta		fr1+2
-  1370 DC85 A5 E1				lda		fr1+1
-  1371 DC87 65 E1				adc		fr1+1
-  1372 DC89 85 E1				sta		fr1+1
-  1373 DC8B A5 E0				lda		fr1+0
-  1374 DC8D 65 E0				adc		fr1+0
-  1375 DC8F 85 E0				sta		fr1+0
-  1376
-  1377 DC91			offloop_entry:
-  1378 						;begin inner loop -- here we process the same bit in each multiplier
-  1379 						;byte, going from byte 5 down to byte 1
-  1380 DC91 A2 05				ldx		#5
-  1381 DC93			offloop2:
-  1382 						;shift an inverted bit out of multiplier byte
-  1383 DC93 56 E6				lsr		fr2,x
-  1384 DC95 B0 33				bcs		post_addsub
-  1385 							
-  1386 						;add fr1 to fr0 at offset	
-  1387 						.rept 6
-  1388 							LDA		FR0+(5-#),X
-  1389 							ADC		FR1+(5-#)
-  1390 							STA		FR0+(5-#),X
-  1391 						.endr
-Source: REPT
-  1388 DC97 B5 D9					LDA		FR0+(5-#),X
-  1388 DC99 65 E5					ADC		FR1+(5-#)
-  1388 DC9B 95 D9					STA		FR0+(5-#),X
-  1388 DC9D B5 D8					LDA		FR0+(5-#),X
-  1388 DC9F 65 E4					ADC		FR1+(5-#)
-  1388 DCA1 95 D8					STA		FR0+(5-#),X
-  1388 DCA3 B5 D7					LDA		FR0+(5-#),X
-  1388 DCA5 65 E3					ADC		FR1+(5-#)
-  1388 DCA7 95 D7					STA		FR0+(5-#),X
-  1388 DCA9 B5 D6					LDA		FR0+(5-#),X
-  1388 DCAB 65 E2					ADC		FR1+(5-#)
-  1388 DCAD 95 D6					STA		FR0+(5-#),X
-  1388 DCAF B5 D5					LDA		FR0+(5-#),X
-  1388 DCB1 65 E1					ADC		FR1+(5-#)
-  1388 DCB3 95 D5					STA		FR0+(5-#),X
-  1388 DCB5 B5 D4					LDA		FR0+(5-#),X
-  1388 DCB7 65 E0					ADC		FR1+(5-#)
-  1388 DCB9 95 D4					STA		FR0+(5-#),X
+  1279 DBFF			fp_normalize_cld:
+  1280 DBFF D8				cld
+  1281 DC00				ckaddr	$dc00
+Macro: CKADDR [Source: source/Shared/mathpack.s]
 Source: source/Shared/mathpack.s
-  1392 					
-  1393 						;check if we have a carry out to the upper bytes
-  1394 DCBB 90 0D				bcc		no_carry
-  1395 DCBD 86 E6				stx		_offset2
-  1396
-  1397 DCBF			carry_loop:
-  1398 DCBF CA					dex
-  1399 DCC0 A9 00				lda		#0
-  1400 DCC2 75 D4				adc		fr0,x
-  1401 DCC4 95 D4				sta		fr0,x
-  1402 DCC6 B0 F7				bcs		carry_loop
-  1403
-  1404 DCC8 A6 E6				ldx		_offset2
-  1405 DCCA			no_carry:
-  1406
-  1407 DCCA			post_addsub:
-  1408 						;go back for next byte
-  1409 DCCA CA					dex
-  1410 DCCB D0 C6				bne		offloop2
-  1411
-  1412 						;decrement bit counter
-  1413 DCCD 88					dey
-  1414 DCCE D0 9C				bne		offloop
-  1415
-  1416 DCD0			bits_done:
-  1417 						;check if we need to shift up -- note that unlike the stock
-  1418 						;normalize routine, we must shift in the 6th mantissa byte
-  1419 DCD0 A5 D5				lda		fr0+1
-  1420 DCD2 D0 0B				bne		no_shift
-  1421
-  1422 DCD4 A2 FB				ldx		#<-5
-  1423 DCD6			shift_loop:
-  1424 DCD6 B5 DB				lda		fr0+7,x
-  1425 DCD8 95 DA				sta		fr0+6,x
-  1426 DCDA E8					inx
-  1427 DCDB D0 F9				bne		shift_loop
-  1428
-  1429 DCDD C6 D4				dec		fr0
-  1430
-  1431 DCDF			no_shift:
-  1432 						;all done
-  1433 DCDF 4C FF DB				jmp		fp_normalize_cld
-  1434 				.endp
-  1435
-  1436 				;==========================================================================
-  1437 DCE2			.proc ifp_cont
-  1438 DCE2			bitloop:
-  1439 						;shift in BCD bit, shift out BCD carry
-  1440 DCE2 A5 D7				lda		fr0+3
-  1441 DCE4 65 D7				adc		fr0+3
-  1442 DCE6 85 D7				sta		fr0+3
-  1443 DCE8 A5 D6				lda		fr0+2
-  1444 DCEA 65 D6				adc		fr0+2
-  1445 DCEC 85 D6				sta		fr0+2
-  1446 					
-  1447 						;shift in BCD carry, shift out binary bit
-  1448 DCEE 26 D5				rol		fr0+1
-  1449 DCF0 26 D4				rol		fr0
-  1450
-  1451 DCF2 88					dey
-  1452 DCF3 D0 ED				bne		bitloop
-  1453
-  1454 DCF5 4C FB DB				jmp		ifp_final
-  1455 				.endp
-  1456
-  1457 				;==========================================================================
-  1458 				; PLYEVL [DD40]	Eval polynomial at (X:Y) with A coefficients using FR0
-  1459 				;
-  1460 DCF8					fixadr	$dd3e
+  1282 DC00			fp_normalize:
+  1283 DC00			.nowarn .proc normalize
+  1284
+  1285 DC00 A0 05			ldy		#5
+  1286 DC02			normloop:
+  1287 DC02 A5 D4			lda		fr0
+  1288 DC04 0A				asl
+  1289 DC05 C9 1E			cmp		#(64-49)*2
+  1290 DC07 90 1E			bcc		underflow
+  1291 					
+  1292 DC09 A6 D5			ldx		fr0+1
+  1293 DC0B F0 03			beq		need_norm
+  1294
+  1295 					;Okay, we're done normalizing... check if the exponent is in bounds.
+  1296 					;It needs to be within +/-48 to be valid. If the exponent is <-49,
+  1297 					;we set it to zero; otherwise, we mark overflow.
+  1298 					
+  1299 DC0D C9 E2			cmp		#(64+49)*2
+  1300 DC0F 60				rts
+  1301 					
+  1302 DC10			need_norm:
+  1303 DC10 C6 D4			dec		fr0
+  1304
+  1305 DC12 A5 D6 85 D5			mva		fr0+2 fr0+1
+  1306 DC16 A5 D7 85 D6			mva		fr0+3 fr0+2
+  1307 DC1A A5 D8 85 D7			mva		fr0+4 fr0+3
+  1308 DC1E A5 D9 85 D8			mva		fr0+5 fr0+4
+  1309 DC22 86 D9			stx		fr0+5
+  1310
+  1311 DC24 88				dey
+  1312 DC25 D0 DB			bne		normloop
+  1313 					
+  1314 					;Hmm, we shifted out everything... must be zero; reset exponent. This
+  1315 					;is critical since Atari Basic depends on the exponent being zero for
+  1316 					;a zero result.
+  1317 DC27			underflow:
+  1318 DC27 4C 43 DA			jmp		fp_clc_zfr0
+  1319 					
+  1320 				.endp
+  1321
+  1322 				;==========================================================================
+  1323 				; HELPER ROUTINES
+  1324 				;==========================================================================
+  1325
+  1326 				;--------------------------------------------------------------------------
+  1327 DC2A			.proc fp_fsub_cont					;$1F bytes
+  1328 					;propagate borrow up
+  1329 DC2A			borrow_loop:
+  1330 DC2A B5 D5			lda		fr0+1,x
+  1331 DC2C E9 00			sbc		#0
+  1332 DC2E 95 D5			sta		fr0+1,x
+  1333 DC30			entry:
+  1334 					;exit if no more borrow
+  1335 DC30 B0 CD			bcs		fp_normalize_cld
+  1336 DC32 CA				dex
+  1337 DC33 10 F5			bpl		borrow_loop
+  1338
+  1339 DC35			reverse_sub_entry:
+  1340 					;we borrowed out the top... invert sign and then subtract from 0
+  1341 DC35 A9 80			lda		#$80
+  1342 DC37 45 D4			eor		fr0
+  1343 DC39 85 D4			sta		fr0
+  1344
+  1345 DC3B A2 05			ldx		#5
+  1346 DC3D 38				sec
+  1347 DC3E			underflow_loop:
+  1348 DC3E A9 00			lda		#0
+  1349 DC40 F5 D4			sbc		fr0,x
+  1350 DC42 95 D4			sta		fr0,x
+  1351 DC44 CA				dex
+  1352 DC45 D0 F7			bne		underflow_loop
+  1353 DC47 F0 B6			beq		fp_normalize_cld
+  1354 				.endp
+  1355
+  1356 				;--------------------------------------------------------------------------
+  1357 DC49			.proc fp_rmove
+  1358 DC49 A2 05				ldx		#5
+  1359 DC4B			loop:
+  1360 DC4B B5 E0				lda		fr1,x
+  1361 DC4D 95 D4				sta		fr0,x
+  1362
+  1363 DC4F CA					dex
+  1364 DC50 10 F9				bpl		loop
+  1365 DC52 18					clc
+  1366 DC53 60					rts
+  1367 				.endp
+  1368
+  1369 				;--------------------------------------------------------------------------
+  1370
+  1371 DC54			.proc fp_reverse_addsub
+  1372 DC54			noswap:	
+  1373 						;A = FR1 - FR0 - 1 on entry
+  1374 						;X = add/sub flag
+  1375
+  1376 						;complement (~x = -x - 1)
+  1377 DC54 49 FF				eor		#$ff
+  1378
+  1379 						;A = FR0 - FR1
+  1380
+  1381 						;compute positions for add/subtract	
+  1382 DC56 69 03				adc		#3			;A = (FR0) - (FR1) + 4   !! carry is set coming in
+  1383
+  1384 						;check if FR1 is too small in magnitude to matter
+  1385 DC58 30 EF				bmi		fp_rmove
+  1386
+  1387 						;jump to decimal mode and prepare for add/sub loops
+  1388 DC5A F8					sed
+  1389 DC5B A8					tay
+  1390
+  1391 						;copy down exponent from larger number in FR1
+  1392 DC5C A5 E0				lda		fr1
+  1393 DC5E 85 D4				sta		fr0
+  1394
+  1395 						;check if we are doing a sum or a difference
+  1396 DC60 E0 80				cpx		#$80
+  1397 DC62 A2 05				ldx		#5
+  1398 DC64 B0 1B				bcs		do_subtract
+  1399 							
+  1400 						;add mantissas
+  1401 DC66			add_loop:
+  1402 DC66 B9 D5 00				lda		fr0+1,y
+  1403 DC69 75 E0				adc		fr1,x
+  1404 DC6B 95 D4				sta		fr0,x
+  1405 DC6D CA					dex
+  1406 DC6E 88					dey
+  1407 DC6F 10 F5				bpl		add_loop
+  1408
+  1409 						;apply any carries from the common mantissa bytes; we are guaranteed
+  1410 						;at least one additional non-common byte, since this path is only
+  1411 						;executed for non-equal exponents
+  1412 DC71			sum_carryloop:
+  1413 DC71 B5 E0				lda		fr1,x
+  1414 DC73 69 00				adc		#0
+  1415 DC75 95 D4				sta		fr0,x
+  1416 DC77 CA					dex
+  1417 DC78 D0 F7				bne		sum_carryloop
+  1418
+  1419 						;if we still carried out, jump out to bump the exponent and shift
+  1420 						;a $01 at the top of the mantissa
+  1421 DC7A B0 02				bcs		sum_finalize
+  1422
+  1423 						;exit -- no renormalization required
+  1424 DC7C D8					cld
+  1425 DC7D 60					rts
+  1426
+  1427 DC7E			sum_finalize:
+  1428 DC7E 4C A9 DA				jmp		fsub.sum_finalize
+  1429
+  1430 DC81			do_subtract:
+  1431 						;subtract FR0 and FR1 mantissas (!! carry is set coming in)
+  1432 DC81			sub_loop:
+  1433 DC81 B5 E0				lda		fr1,x
+  1434 DC83 F9 D5 00				sbc		fr0+1,y
+  1435 DC86 95 D4				sta		fr0,x
+  1436 DC88 CA					dex
+  1437 DC89 88					dey
+  1438 DC8A 10 F5				bpl		sub_loop
+  1439
+  1440 						;propagate borrow up -- always at least one iteration as this
+  1441 						;call path is executed with unequal exponents
+  1442 DC8C			borrow_loop:
+  1443 DC8C B5 E0				lda		fr1,x
+  1444 DC8E E9 00				sbc		#0
+  1445 DC90 95 D4				sta		fr0,x
+  1446 DC92 CA					dex
+  1447 DC93 10 F7				bpl		borrow_loop
+  1448
+  1449 						;if borrowed out the top, invert sign and then subtract from 0
+  1450 DC95 90 9E				bcc		fp_fsub_cont.reverse_sub_entry
+  1451
+  1452 						;no more borrow, normalize and exit
+  1453 DC97 4C FF DB				jmp		fp_normalize_cld
+  1454 				.endp
+  1455
+  1456 				;--------------------------------------------------------------------------
+  1457 DC9A			.proc fp_fmul_innerloop
+  1458 = 00DF			_offset = _fr3+5
+  1459 = 00E6			_offset2 = fr2
+  1460
+  1461 						;begin outer loop -- this is where we process one _bit_ out of each
+  1462 						;multiplier byte in FR2's mantissa (note that this is inverted in that
+  1463 						;it is bytes-in-bits instead of bits-in-bytes)
+  1464 DC9A			offloop:
+  1465 						;double multiplicand in fr1
+  1466 DC9A 18					clc
+  1467 DC9B A5 E5				lda		fr1+5
+  1468 DC9D 65 E5				adc		fr1+5
+  1469 DC9F 85 E5				sta		fr1+5
+  1470 DCA1 A5 E4				lda		fr1+4
+  1471 DCA3 65 E4				adc		fr1+4
+  1472 DCA5 85 E4				sta		fr1+4
+  1473 DCA7 A5 E3				lda		fr1+3
+  1474 DCA9 65 E3				adc		fr1+3
+  1475 DCAB 85 E3				sta		fr1+3
+  1476 DCAD A5 E2				lda		fr1+2
+  1477 DCAF 65 E2				adc		fr1+2
+  1478 DCB1 85 E2				sta		fr1+2
+  1479 DCB3 A5 E1				lda		fr1+1
+  1480 DCB5 65 E1				adc		fr1+1
+  1481 DCB7 85 E1				sta		fr1+1
+  1482 DCB9 A5 E0				lda		fr1+0
+  1483 DCBB 65 E0				adc		fr1+0
+  1484 DCBD 85 E0				sta		fr1+0
+  1485
+  1486 DCBF			offloop_entry:
+  1487 						;begin inner loop -- here we process the same bit in each multiplier
+  1488 						;byte, going from byte 5 down to byte 1
+  1489 DCBF A2 05				ldx		#5
+  1490 DCC1			offloop2:
+  1491 						;shift an inverted bit out of multiplier byte
+  1492 DCC1 56 E6				lsr		fr2,x
+  1493 DCC3 B0 33				bcs		post_addsub
+  1494 							
+  1495 						;add fr1 to fr0 at offset	
+  1496 						.rept 6
+  1497 							LDA		FR0+(5-#),X
+  1498 							ADC		FR1+(5-#)
+  1499 							STA		FR0+(5-#),X
+  1500 						.endr
+Source: REPT
+  1497 DCC5 B5 D9					LDA		FR0+(5-#),X
+  1497 DCC7 65 E5					ADC		FR1+(5-#)
+  1497 DCC9 95 D9					STA		FR0+(5-#),X
+  1497 DCCB B5 D8					LDA		FR0+(5-#),X
+  1497 DCCD 65 E4					ADC		FR1+(5-#)
+  1497 DCCF 95 D8					STA		FR0+(5-#),X
+  1497 DCD1 B5 D7					LDA		FR0+(5-#),X
+  1497 DCD3 65 E3					ADC		FR1+(5-#)
+  1497 DCD5 95 D7					STA		FR0+(5-#),X
+  1497 DCD7 B5 D6					LDA		FR0+(5-#),X
+  1497 DCD9 65 E2					ADC		FR1+(5-#)
+  1497 DCDB 95 D6					STA		FR0+(5-#),X
+  1497 DCDD B5 D5					LDA		FR0+(5-#),X
+  1497 DCDF 65 E1					ADC		FR1+(5-#)
+  1497 DCE1 95 D5					STA		FR0+(5-#),X
+  1497 DCE3 B5 D4					LDA		FR0+(5-#),X
+  1497 DCE5 65 E0					ADC		FR1+(5-#)
+  1497 DCE7 95 D4					STA		FR0+(5-#),X
+Source: source/Shared/mathpack.s
+  1501 					
+  1502 						;check if we have a carry out to the upper bytes
+  1503 DCE9 90 0D				bcc		no_carry
+  1504 DCEB 86 E6				stx		_offset2
+  1505
+  1506 DCED			carry_loop:
+  1507 DCED CA					dex
+  1508 DCEE A9 00				lda		#0
+  1509 DCF0 75 D4				adc		fr0,x
+  1510 DCF2 95 D4				sta		fr0,x
+  1511 DCF4 B0 F7				bcs		carry_loop
+  1512
+  1513 DCF6 A6 E6				ldx		_offset2
+  1514 DCF8			no_carry:
+  1515
+  1516 DCF8			post_addsub:
+  1517 						;go back for next byte
+  1518 DCF8 CA					dex
+  1519 DCF9 D0 C6				bne		offloop2
+  1520
+  1521 						;decrement bit counter
+  1522 DCFB 88					dey
+  1523 DCFC D0 9C				bne		offloop
+  1524
+  1525 DCFE			bits_done:
+  1526 						;check if we need to shift up -- note that unlike the stock
+  1527 						;normalize routine, we must shift in the 6th mantissa byte
+  1528 DCFE A5 D5				lda		fr0+1
+  1529 DD00 D0 0B				bne		no_shift
+  1530
+  1531 DD02 A2 FB				ldx		#<-5
+  1532 DD04			shift_loop:
+  1533 DD04 B5 DB				lda		fr0+7,x
+  1534 DD06 95 DA				sta		fr0+6,x
+  1535 DD08 E8					inx
+  1536 DD09 D0 F9				bne		shift_loop
+  1537
+  1538 DD0B C6 D4				dec		fr0
+  1539
+  1540 DD0D			no_shift:
+  1541 						;all done
+  1542 DD0D 4C FF DB				jmp		fp_normalize_cld
+  1543 				.endp
+  1544
+  1545 				;==========================================================================
+  1546 DD10			.proc fp_tab_hi_100				;$0A bytes
+  1547 DD10 00 00 00 01 01 01 + 		dta		$00, $00, $00, $01, $01, $01, $02, $02, $03, $03
+  1548 				.endp
+  1549
+  1550 				;==========================================================================
+  1551 				; PLYEVL [DD40]	Eval polynomial at (X:Y) with A coefficients using FR0
+  1552 				;
+  1553 DD1A					fixadr	$dd3e
 Macro: FIXADR [Source: source/Shared/mathpack.s]
      2 						.print ($DD3E-*),' bytes free before ',$DD3E
-     2 				$0046 bytes free before $DD3E
-     3 DCF8					org		$DD3E
+     2 				$0024 bytes free before $DD3E
+     3 DD1A					org		$DD3E
 Source: source/Shared/mathpack.s
-  1461 DD3E			fp_plyevl_10:
-  1462 DD3E A9 0A			lda		#10
-  1463 DD40			.nowarn .proc plyevl
-  1464 					;stash arguments
-  1465 DD40 86 FE			stx		fptr2
-  1466 DD42 84 FF			sty		fptr2+1
-  1467 DD44 85 EC			sta		_fpcocnt
-  1468 					
-  1469 					;copy FR0 -> PLYARG
-  1470 DD46 A2 E0			ldx		#<plyarg
-  1471 DD48 A0 05			ldy		#>plyarg
-  1472 DD4A 20 A7 DD			jsr		fst0r
-  1473 					
-  1474 DD4D 20 44 DA			jsr		zfr0
-  1475 					
-  1476 DD50			loop:
-  1477 					;load next coefficient and increment coptr
-  1478 DD50 A5 FE			lda		fptr2
-  1479 DD52 AA				tax
-  1480 DD53 18				clc
-  1481 DD54 69 06			adc		#6
-  1482 DD56 85 FE			sta		fptr2
-  1483 DD58 A4 FF			ldy		fptr2+1
-  1484 DD5A 90 02 E6 FF			scc:inc	fptr2+1
-  1485 DD5E 20 98 DD			jsr		fld1r
-  1486
-  1487 					;add coefficient to acc
-  1488 DD61 20 66 DA			jsr		fadd
-  1489 DD64 B0 0D			bcs		xit
-  1490
-  1491 DD66 C6 EC			dec		_fpcocnt
-  1492 DD68 F0 09			beq		xit
-  1493 					
-  1494 					;copy PLYARG -> FR1
-  1495 					;multiply accumulator by Z and continue
-  1496 DD6A A2 E0			ldx		#<plyarg
-  1497 DD6C A0 05			ldy		#>plyarg	
-  1498 DD6E 20 D8 DA			jsr		fp_fld1r_fmul
-  1499 DD71 90 DD			bcc		loop
-  1500 DD73			xit:
-  1501 DD73 60				rts
-  1502 				.endp
-  1503
-  1504 				;==========================================================================
-  1505 				; FMUL multiplier conversion helper
-  1506 				;
-  1507 				; This helper is used to convert multiplier digit pair bytes to binary
-  1508 				; 0-99 numbers in preparation for generating partial factors from
-  1509 				; multiplier bit slices.
-  1510 				;
-  1511 				; Each byte is also inverted so that a 0 bit means to add. This saves a
-  1512 				; CLC per add. This inversion is done for free by a tricky rearrangement
-  1513 				; of the math to convert the BCD tens digit.
-  1514 				;
-  1515 DD74			.proc fp_fmul_fr0_to_binfr2		;$15 bytes
-  1516 DD74 A2 04				ldx		#4
-  1517 DD76			loop:
-  1518 						;extract tens digit
-  1519 DD76 B5 D5				lda		fr0+1,x
-  1520 DD78 4A					lsr
-  1521 DD79 4A					lsr
-  1522 DD7A 4A					lsr
-  1523 DD7B 4A					lsr
-  1524 DD7C A8					tay
-  1525
-  1526 						;z = ~(x - (x/16)*10)         (BCD to binary, inverted)
-  1527 						;  = -(x - (x/16)*10) - 1
-  1528 						;  = ((x/16)*10 - x) - 1
-  1529 DD7D 38					sec
-  1530 DD7E B9 F6 DF				lda		fp_dectobin_tab,y
-  1531 DD81 F5 D5				sbc		fr0+1,x
-  1532 DD83 95 E7				sta		fr2+1,x
-  1533
-  1534 DD85 CA					dex
-  1535 DD86 10 EE				bpl		loop
-  1536 DD88 60					rts
-  1537 				.endp
-  1538
-  1539 				;==========================================================================
-  1540 				; FLD0R [DD89]	Load FR0 from (X:Y)
-  1541 				; FLD0P [DD8D]	Load FR0 from (FLPTR)
-  1542 				;
-  1543 DD89				fixadr	$dd89
+  1554 DD3E			fp_plyevl_10:
+  1555 DD3E A9 0A			lda		#10
+  1556 DD40			.nowarn .proc plyevl
+  1557 					;stash arguments
+  1558 DD40 86 FE			stx		fptr2
+  1559 DD42 84 FF			sty		fptr2+1
+  1560 DD44 85 EC			sta		_fpcocnt
+  1561 					
+  1562 					;copy FR0 -> PLYARG
+  1563 DD46 A2 E0			ldx		#<plyarg
+  1564 DD48 A0 05			ldy		#>plyarg
+  1565 DD4A 20 A7 DD			jsr		fst0r
+  1566 					
+  1567 DD4D 20 44 DA			jsr		zfr0
+  1568 					
+  1569 DD50			loop:
+  1570 					;load next coefficient and increment coptr
+  1571 DD50 A5 FE			lda		fptr2
+  1572 DD52 AA				tax
+  1573 DD53 18				clc
+  1574 DD54 69 06			adc		#6
+  1575 DD56 85 FE			sta		fptr2
+  1576 DD58 A4 FF			ldy		fptr2+1
+  1577 DD5A 90 02 E6 FF			scc:inc	fptr2+1
+  1578 DD5E 20 98 DD			jsr		fld1r
+  1579
+  1580 					;add coefficient to acc
+  1581 DD61 20 66 DA			jsr		fadd
+  1582 DD64 B0 0D			bcs		xit
+  1583
+  1584 DD66 C6 EC			dec		_fpcocnt
+  1585 DD68 F0 09			beq		xit
+  1586 					
+  1587 					;copy PLYARG -> FR1
+  1588 					;multiply accumulator by Z and continue
+  1589 DD6A A2 E0			ldx		#<plyarg
+  1590 DD6C A0 05			ldy		#>plyarg	
+  1591 DD6E 20 D8 DA			jsr		fp_fld1r_fmul
+  1592 DD71 90 DD			bcc		loop
+  1593 DD73			xit:
+  1594 DD73 60				rts
+  1595 				.endp
+  1596
+  1597 				;==========================================================================
+  1598 				; FMUL multiplier conversion helper
+  1599 				;
+  1600 				; This helper is used to convert multiplier digit pair bytes to binary
+  1601 				; 0-99 numbers in preparation for generating partial factors from
+  1602 				; multiplier bit slices.
+  1603 				;
+  1604 				; Each byte is also inverted so that a 0 bit means to add. This saves a
+  1605 				; CLC per add. This inversion is done for free by a tricky rearrangement
+  1606 				; of the math to convert the BCD tens digit.
+  1607 				;
+  1608 DD74			.proc fp_fmul_fr0_to_binfr2		;$15 bytes
+  1609 DD74 A2 05				ldx		#5
+  1610 DD76			loop:
+  1611 						;extract tens digit
+  1612 DD76 B5 D4				lda		fr0,x
+  1613 DD78 4A					lsr
+  1614 DD79 4A					lsr
+  1615 DD7A 4A					lsr
+  1616 DD7B 4A					lsr
+  1617 DD7C A8					tay
+  1618
+  1619 						;z = ~(x - (x/16)*10)         (BCD to binary, inverted)
+  1620 						;  = -(x - (x/16)*10) - 1
+  1621 						;  = ((x/16)*10 - x) - 1
+  1622 DD7D 38					sec
+  1623 DD7E B9 F6 DF				lda		fp_dectobin_tab,y
+  1624 DD81 F5 D4				sbc		fr0,x
+  1625 DD83 95 E6				sta		fr2,x
+  1626
+  1627 DD85 CA					dex
+  1628 DD86 D0 EE				bne		loop
+  1629
+  1630 						;exit X=0 for calling code
+  1631 DD88 60					rts
+  1632 				.endp
+  1633
+  1634 				;==========================================================================
+  1635 				; FLD0R [DD89]	Load FR0 from (X:Y)
+  1636 				; FLD0P [DD8D]	Load FR0 from (FLPTR)
+  1637 				;
+  1638 DD89				fixadr	$dd89
 Macro: FIXADR [Source: source/Shared/mathpack.s]
 Source: source/Shared/mathpack.s
-  1544 DD89			fld0r:
-  1545 DD89 86 FC			stx		flptr
-  1546 DD8B 84 FD			sty		flptr+1
-  1547 DD8D				ckaddr	$dd8d
+  1639 DD89			fld0r:
+  1640 DD89 86 FC			stx		flptr
+  1641 DD8B			fld0r_y:
+  1642 DD8B 84 FD			sty		flptr+1
+  1643 DD8D				ckaddr	$dd8d
 Macro: CKADDR [Source: source/Shared/mathpack.s]
 Source: source/Shared/mathpack.s
-  1548 DD8D			fld0p:
-  1549 DD8D A0 05			ldy		#5
-  1550 DD8F			fld0ploop:
-  1551 DD8F B1 FC			lda		(flptr),y
-  1552 DD91 99 D4 00			sta		fr0,y
-  1553 DD94 88				dey
-  1554 DD95 10 F8			bpl		fld0ploop
-  1555 DD97 60				rts
-  1556
-  1557 				;==========================================================================
-  1558 				; FLD1R [DD98]	Load FR1 from (X:Y)
-  1559 				; FLD1P [DD9C]	Load FR1 from (FLPTR)
-  1560 				;
-  1561 DD98				fixadr	$dd98
+  1644 DD8D			fld0p:
+  1645 DD8D A0 05			ldy		#5
+  1646 DD8F			fld0ploop:
+  1647 DD8F B1 FC			lda		(flptr),y
+  1648 DD91 99 D4 00			sta		fr0,y
+  1649 DD94 88				dey
+  1650 DD95 10 F8			bpl		fld0ploop
+  1651 DD97 60				rts
+  1652
+  1653 				;==========================================================================
+  1654 				; FLD1R [DD98]	Load FR1 from (X:Y)
+  1655 				; FLD1P [DD9C]	Load FR1 from (FLPTR)
+  1656 				;
+  1657 DD98				fixadr	$dd98
 Macro: FIXADR [Source: source/Shared/mathpack.s]
 Source: source/Shared/mathpack.s
-  1562 DD98			fld1r:
-  1563 DD98 86 FC			stx		flptr
-  1564 DD9A 84 FD			sty		flptr+1
-  1565 DD9C				ckaddr	$dd9c
+  1658 DD98			fld1r:
+  1659 DD98 86 FC			stx		flptr
+  1660 DD9A 84 FD			sty		flptr+1
+  1661 DD9C				ckaddr	$dd9c
 Macro: CKADDR [Source: source/Shared/mathpack.s]
 Source: source/Shared/mathpack.s
-  1566 DD9C			fld1p:
-  1567 DD9C A0 05			ldy		#5
-  1568 DD9E			fld1ploop:
-  1569 DD9E B1 FC			lda		(flptr),y
-  1570 DDA0 99 E0 00			sta		fr1,y
-  1571 DDA3 88				dey
-  1572 DDA4 10 F8			bpl		fld1ploop
-  1573 DDA6 60				rts
-  1574
-  1575 				;==========================================================================
-  1576 				; FST0R [DDA7]	Store FR0 to (X:Y)
-  1577 				; FST0P [DDAB]	Store FR0 to (FLPTR)
-  1578 				;
-  1579 DDA7				fixadr	$dda7
+  1662 DD9C			fld1p:
+  1663 DD9C A0 05			ldy		#5
+  1664 DD9E			fld1ploop:
+  1665 DD9E B1 FC			lda		(flptr),y
+  1666 DDA0 99 E0 00			sta		fr1,y
+  1667 DDA3 88				dey
+  1668 DDA4 10 F8			bpl		fld1ploop
+  1669 DDA6 60				rts
+  1670
+  1671 				;==========================================================================
+  1672 				; FST0R [DDA7]	Store FR0 to (X:Y)
+  1673 				; FST0P [DDAB]	Store FR0 to (FLPTR)
+  1674 				;
+  1675 DDA7				fixadr	$dda7
 Macro: FIXADR [Source: source/Shared/mathpack.s]
 Source: source/Shared/mathpack.s
-  1580 DDA7			fst0r:
-  1581 DDA7 86 FC			stx		flptr
-  1582 DDA9 84 FD			sty		flptr+1
-  1583 DDAB				ckaddr	$ddab
+  1676 DDA7			fst0r:
+  1677 DDA7 86 FC			stx		flptr
+  1678 DDA9 84 FD			sty		flptr+1
+  1679 DDAB				ckaddr	$ddab
 Macro: CKADDR [Source: source/Shared/mathpack.s]
 Source: source/Shared/mathpack.s
-  1584 DDAB			fst0p:
-  1585 DDAB A0 05			ldy		#5
-  1586 DDAD			fst0ploop:
-  1587 DDAD B9 D4 00			lda		fr0,y
-  1588 DDB0 91 FC			sta		(flptr),y
-  1589 DDB2 88				dey
-  1590 DDB3 10 F8			bpl		fst0ploop
-  1591 DDB5 60				rts
-  1592
-  1593 				;==========================================================================
-  1594 				; FMOVE [DDB6]	Move FR0 to FR1
-  1595 				;
-  1596 DDB6				fixadr	$ddb6
+  1680 DDAB			fst0p:
+  1681 DDAB A0 05			ldy		#5
+  1682 DDAD			fst0ploop:
+  1683 DDAD B9 D4 00			lda		fr0,y
+  1684 DDB0 91 FC			sta		(flptr),y
+  1685 DDB2 88				dey
+  1686 DDB3 10 F8			bpl		fst0ploop
+  1687 DDB5 60				rts
+  1688
+  1689 				;==========================================================================
+  1690 				; FMOVE [DDB6]	Move FR0 to FR1
+  1691 				;
+  1692 DDB6				fixadr	$ddb6
 Macro: FIXADR [Source: source/Shared/mathpack.s]
 Source: source/Shared/mathpack.s
-  1597 DDB6			fmove:
-  1598 DDB6 A2 05			ldx		#5
-  1599 DDB8			fmoveloop:
-  1600 DDB8 B5 D4			lda		fr0,x
-  1601 DDBA 95 E0			sta		fr1,x
-  1602 DDBC CA				dex
-  1603 DDBD 10 F9			bpl		fmoveloop
-  1604 DDBF 60				rts
-  1605
-  1606 				;==========================================================================
-  1607 				; EXP [DDC0]	Compute e^x
-  1608 				; EXP10 [DDCC]	Compute 10^x
-  1609 				;
-  1610 				; Algorithm is based on Ruckdeschel, Table VI.13, Series approximation
-  1611 				; for 10^X over the interval 0 <= X <= 1, using a minimax polynomial:
-  1612 				;
-  1613 				;	10^X = (1 + A1*X + A2*X^3 + A3*X^5 + A4*X^7 + A5*X^9 + A6*X^11
-  1614 				;		+ A7*X^13 + A8*X^15 + A9*X^17)^2
-  1615 				;
-  1616 				; The input X value is split into integer and fraction, integer/2 is added
-  1617 				; to the final exponent, and an additional x10 multipled if integer is odd.
-  1618 				;
-  1619 				; There are, however, adjustments to match precise behavior in the standard
-  1620 				; math pack, including quirks:
-  1621 				;
-  1622 				;	- The polynomial is biased down slightly from the original minimax by
-  1623 				;	  1 ulp.
-  1624 				;
-  1625 				;	- If the input exponent is negative, 1/10^|X| is computed. This is
-  1626 				;	  terrible, but needed to match.
-  1627 				;
-  1628 				;	- Smaller negative exponents underflow to 0 in the original math pack,
-  1629 				;	  but some larger negative exponents produce an error.
-  1630 				;
-  1631 				;	- The integer is computed by _rounding_ instead of truncation. This
-  1632 				;	  causes the polynomial to be evaluated over [-0.5, 0.5] instead
-  1633 				;	  of the [0, 1] region it was optimized over. This is also terrible,
-  1634 				;	  but we need to do it to match.
-  1635 				;
-  1636 				;	- A bug in the math pack causes inputs of |X| > 65535.5 to give incorrect
-  1637 				;	  results instead of an overflow. We don't currently replicate this
-  1638 				;	  bug.
-  1639 				;
-  1640 DDC0				fixadr	$ddc0
+  1693 DDB6			fmove:
+  1694 DDB6 A2 05			ldx		#5
+  1695 DDB8			fmoveloop:
+  1696 DDB8 B5 D4			lda		fr0,x
+  1697 DDBA 95 E0			sta		fr1,x
+  1698 DDBC CA				dex
+  1699 DDBD 10 F9			bpl		fmoveloop
+  1700 DDBF 60				rts
+  1701
+  1702 				;==========================================================================
+  1703 				; EXP [DDC0]	Compute e^x
+  1704 				; EXP10 [DDCC]	Compute 10^x
+  1705 				;
+  1706 				; Algorithm is based on Ruckdeschel, Table VI.13, Series approximation
+  1707 				; for 10^X over the interval 0 <= X <= 1, using a minimax polynomial:
+  1708 				;
+  1709 				;	10^X = (1 + A1*X + A2*X^3 + A3*X^5 + A4*X^7 + A5*X^9 + A6*X^11
+  1710 				;		+ A7*X^13 + A8*X^15 + A9*X^17)^2
+  1711 				;
+  1712 				; The input X value is split into integer and fraction, integer/2 is added
+  1713 				; to the final exponent, and an additional x10 multipled if integer is odd.
+  1714 				;
+  1715 				; There are, however, adjustments to match precise behavior in the standard
+  1716 				; math pack, including quirks:
+  1717 				;
+  1718 				;	- The polynomial is biased down slightly from the original minimax by
+  1719 				;	  1 ulp.
+  1720 				;
+  1721 				;	- If the input exponent is negative, 1/10^|X| is computed. This is
+  1722 				;	  terrible, but needed to match.
+  1723 				;
+  1724 				;	- Smaller negative exponents underflow to 0 in the original math pack,
+  1725 				;	  but some larger negative exponents produce an error.
+  1726 				;
+  1727 				;	- The integer is computed by _rounding_ instead of truncation. This
+  1728 				;	  causes the polynomial to be evaluated over [-0.5, 0.5] instead
+  1729 				;	  of the [0, 1] region it was optimized over. This is also terrible,
+  1730 				;	  but we need to do it to match.
+  1731 				;
+  1732 				;	- A bug in the math pack causes inputs of |X| > 65535.5 to give incorrect
+  1733 				;	  results instead of an overflow. We don't currently replicate this
+  1734 				;	  bug.
+  1735 				;
+  1736 DDC0				fixadr	$ddc0
 Macro: FIXADR [Source: source/Shared/mathpack.s]
 Source: source/Shared/mathpack.s
-  1641 = DDCC			exp10 = exp._exp10
-  1642 DDC0			.proc exp
-  1643 DDC0 A2 89				ldx		#<fpconst_log10_e
-  1644 DDC2 A0 DE				ldy		#>fpconst_log10_e
-  1645 DDC4 20 98 DD				jsr		fld1r		;we could use fp_fld1r_fmul, but then we have a hole :(
-  1646 DDC7 20 DB DA				jsr		fmul
-  1647 DDCA B0 6F				bcs		err2
-  1648
-  1649 DDCC					ckaddr	$ddcc
+  1737 = DDCC			exp10 = exp._exp10
+  1738 DDC0			.proc exp
+  1739 DDC0 A2 89				ldx		#<fpconst_log10_e
+  1740 DDC2 A0 DE				ldy		#>fpconst_log10_e
+  1741 DDC4 20 98 DD				jsr		fld1r		;we could use fp_fld1r_fmul, but then we have a hole :(
+  1742 DDC7 20 DB DA				jsr		fmul
+  1743 DDCA B0 6C				bcs		err2
+  1744
+  1745 DDCC					ckaddr	$ddcc
 Macro: CKADDR [Source: source/Shared/mathpack.s]
 Source: source/Shared/mathpack.s
-  1650 DDCC			_exp10:
-  1651 						;check if the input is negative
-  1652 DDCC A5 D4				lda		fr0
-  1653 DDCE 10 19				bpl		input_positive
-  1654
-  1655 						;input is negative -- compute absolute, then invert
-  1656 DDD0 29 7F				and		#$7f
-  1657 DDD2 85 D4				sta		fr0
-  1658 DDD4 20 E9 DD				jsr		input_positive
-  1659 DDD7 B0 0D				bcs		underflow
-  1660
-  1661 DDD9 20 B6 DD				jsr		fmove
-  1662 DDDC A2 EA				ldx		#<fpconst_one
-  1663 DDDE A0 DF				ldy		#>fpconst_one
-  1664 DDE0 20 89 DD				jsr		fld0r
-  1665 DDE3 4C 28 DB				jmp		fdiv
-  1666
-  1667 DDE6			underflow:
-  1668 DDE6 4C 43 DA				jmp		fp_clc_zfr0
-  1669
-  1670 DDE9			input_positive:
-  1671 						;check for input >= 100; this will always overflow
-  1672 DDE9 C9 41				cmp		#$41
-  1673 DDEB B0 4E				bcs		err2
-  1674
-  1675 						;check for <0.01, in which case round(x) is guaranteed zero
-  1676 DDED A8					tay
-  1677 DDEE A9 00				lda		#0
-  1678 DDF0 85 E2				sta		fr1+2
-  1679 DDF2 85 E3				sta		fr1+3
-  1680 DDF4 85 E4				sta		fr1+4
-  1681 DDF6 85 E5				sta		fr1+5
-  1682 DDF8 C0 40				cpy		#$40
-  1683 DDFA 90 0A				bcc		tiny_input
-  1684
-  1685 						;load integer digit pair if in [1, 100), and round up based on the fraction
-  1686 DDFC F8					sed
-  1687 DDFD A6 D6				ldx		fr0+2
-  1688 DDFF E0 50				cpx		#$50
-  1689 DE01 65 D5				adc		fr0+1
-  1690 DE03 D8					cld
-  1691
-  1692 						;if we carried, the integer is at least 99 and we are guaranteed to overflow
-  1693 DE04 B0 35				bcs		err2
-  1694
-  1695 DE06			tiny_input:
-  1696 						;write integer digit pair to FR1
-  1697 DE06 85 E1				sta		fr1+1
-  1698
-  1699 						;convert to binary and save it
-  1700 DE08 20 C5 DA				jsr		fp_dectobin
-  1701 DE0B F9 F6 DF				sbc		fp_dectobin_tab,y
-  1702
-  1703 						;save integer portion to adjust exponent later
-  1704 DE0E 85 F8				sta		_fptemp0
-  1705
-  1706 						;skip subtraction if it's zero
-  1707 DE10 F0 07				beq		no_integer
-  1708
-  1709 						;compute y = frac(x)
-  1710 DE12 A2 40				ldx		#$40
-  1711 DE14 86 E0				stx		fr1
-  1712 DE16 20 60 DA				jsr		fsub
-  1713
-  1714 DE19			no_integer:
-  1715 						;evaluate f(y)
-  1716 DE19 A2 4D				ldx		#<fpconst_exp10_coeff
-  1717 DE1B A0 DE				ldy		#>fpconst_exp10_coeff
-  1718 DE1D 20 3E DD				jsr		fp_plyevl_10
-  1719
-  1720 						;square result
-  1721 DE20 20 B6 DD				jsr		fmove
-  1722 DE23 20 DB DA				jsr		fmul
-  1723 					
-  1724 						;halve integer portion to compute exponent adjustment
-  1725 DE26 46 F8				lsr		_fptemp0
-  1726 					
-  1727 						;scale by 10 if necessary
-  1728 DE28 90 09				bcc		even
-  1729 DE2A A2 8F				ldx		#<fpconst_ten
-  1730 DE2C A0 DE				ldy		#>fpconst_ten
-  1731 DE2E 20 D8 DA				jsr		fp_fld1r_fmul
-  1732 DE31 B0 08				bcs		err2
-  1733 DE33			even:
-  1734
-  1735 						;bias exponent
-  1736 DE33 A5 F8				lda		_fptemp0
-  1737 DE35 65 D4				adc		fr0
-  1738 DE37 C9 71				cmp		#64+49			;set error flag if overflow
-  1739 DE39 85 D4				sta		fr0
-  1740
-  1741 DE3B			err2:
-  1742 DE3B			xit2:
-  1743 DE3B 60					rts
-  1744 				.endp	
-  1745
-  1746 				;==========================================================================
-  1747 DE3C			.proc fp_carry_expup			;$0F bytes
-  1748 					;adjust exponent
-  1749 DE3C E6 D4			inc		fr0
+  1746 DDCC			_exp10:
+  1747 						;check if the input is negative
+  1748 DDCC A6 D4				ldx		fr0
+  1749 DDCE 10 19				bpl		input_positive
   1750
-  1751 					;shift down FR0
-  1752 DE3E A2 04			ldx		#4
-  1753 DE40			sum_shiftloop:
-  1754 DE40 B5 D4			lda		fr0,x
-  1755 DE42 95 D5			sta		fr0+1,x
-  1756 DE44 CA				dex
-  1757 DE45 D0 F9			bne		sum_shiftloop
-  1758 					
-  1759 					;add a $01 at the top
-  1760 DE47 E8				inx
-  1761 DE48 86 D5			stx		fr0+1
-  1762 DE4A 60				rts
-  1763 				.endp
-  1764
-  1765 				;==========================================================================
-  1766 				; Minimax polynomial for 10^x over 0 <= x < 1 (required by Turbo Basic XL)
-  1767 				;
-  1768 				; See Ruckdeschel, Table VI.13, page 174.
-  1769 				;
-  1770 DE4B					fixadr		$de4d
-Macro: FIXADR [Source: source/Shared/mathpack.s]
-     2 						.print ($DE4D-*),' bytes free before ',$DE4D
-     2 				$0002 bytes free before $DE4D
-     3 DE4B					org		$DE4D
-Source: source/Shared/mathpack.s
-  1771 DE4D			fpconst_exp10_coeff:
-  1772 DE4D 3D 17 94 19 00 00			dta		$3D, $17, $94, $19, $00, $00	;A9 = 0.0000179419
-  1773 DE53 3D 57 33 05 00 00			dta		$3D, $57, $33, $05, $00, $00	;A8 = 0.0000573305
-  1774 DE59 3E 05 54 76 62 00			dta		$3E, $05, $54, $76, $62, $00	;A7 = 0.0005547662
-  1775 DE5F 3E 32 19 62 27 00			dta		$3E, $32, $19, $62, $27, $00	;A6 = 0.0032196227
-  1776 DE65 3F 01 68 60 30 36			dta		$3F, $01, $68, $60, $30, $36	;A5 = 0.0168603036
-  1777 DE6B 3F 07 32 03 27 41			dta		$3F, $07, $32, $03, $27, $41	;A4 = 0.0732032741
-  1778 DE71 3F 25 43 34 56 75			dta		$3F, $25, $43, $34, $56, $75	;A3 = 0.2543345675
-  1779 DE77 3F 66 27 37 30 50			dta		$3F, $66, $27, $37, $30, $50	;A2 = 0.6627373050
-  1780 DE7D 40 01 15 12 92 55			dta		$40, $01, $15, $12, $92, $55	;A1 = 1.1512925485
-  1781 DE83 3F 99 99 99 99 99			dta		$3F, $99, $99, $99, $99, $99	;constant 1 term (with tweak)
+  1751 						;input is negative -- compute absolute, then invert
+  1752 DDD0 06 D4				asl		fr0
+  1753 DDD2 46 D4				lsr		fr0
+  1754 DDD4 20 CC DD				jsr		_exp10
+  1755 DDD7 B0 0D				bcs		underflow
+  1756
+  1757 DDD9 20 B6 DD				jsr		fmove
+  1758 DDDC A2 EA				ldx		#<fpconst_one
+  1759 DDDE A0 DF				ldy		#>fpconst_one
+  1760 DDE0 20 89 DD				jsr		fld0r
+  1761 DDE3 4C 28 DB				jmp		fdiv
+  1762
+  1763 DDE6			underflow:
+  1764 DDE6 4C 43 DA				jmp		fp_clc_zfr0
+  1765
+  1766 DDE9			input_positive:
+  1767 						;set up FR1 for round(X)
+  1768 DDE9 A9 00				lda		#0
+  1769 DDEB 85 E2				sta		fr1+2
+  1770 DDED 85 E3				sta		fr1+3
+  1771 DDEF 85 E4				sta		fr1+4
+  1772 DDF1 85 E5				sta		fr1+5
+  1773
+  1774 						;check exponent to detect input < 0.01 or >= 100
+  1775 DDF3 E0 40				cpx		#$40
+  1776
+  1777 						;jump if round(x) must be zero
+  1778 DDF5 90 0C				bcc		tiny_input
+  1779
+  1780 						;check for input >= 100; this will always overflow
+  1781 DDF7 D0 3F				bne		err2
   1782
-  1783 				;==========================================================================
-  1784 				; log10(e) constant (required by Turbo Basic XL)
-  1785 				;
-  1786 DE89					fixadr		$de89
-Macro: FIXADR [Source: source/Shared/mathpack.s]
-Source: source/Shared/mathpack.s
-  1787 DE89			fpconst_log10_e:
-  1788 DE89 3F 43 42 94 48 19			dta		$3F,$43,$42,$94,$48,$19			;0.4342944819[0325182765112891891661]
+  1783 						;load integer digit pair if in [1, 100), and round up based on the fraction
+  1784 DDF9 F8					sed
+  1785 DDFA A6 D6				ldx		fr0+2
+  1786 DDFC E0 50				cpx		#$50
+  1787 DDFE 65 D5				adc		fr0+1
+  1788 DE00 D8					cld
   1789
-  1790 				;==========================================================================	
-  1791 				; 10.0 factor for LOG/EXP
-  1792 				;
-  1793 				; This constant is NOT used by Turbo Basic XL.
-  1794 				;
-  1795 DE8F			fpconst_ten:
-  1796 DE8F 40 10 00 00 00 00			dta		$40,$10,$00,$00,$00,$00		;10
-  1797
-  1798 				;==========================================================================
-  1799 				; REDRNG [DE95]	Reduce range via y = (x-C)/(x+C) (undocumented)
-  1800 				;
-  1801 				; Used for better convergence in multiple polynomial approximations.
-  1802 				;
-  1803 				; X:Y = pointer to C argument
-  1804 				;
-  1805 DE95				fixadr	$de95
+  1790 						;if we carried, the integer is at least 99 and we are guaranteed to overflow
+  1791 DE01 B0 35				bcs		err2
+  1792
+  1793 DE03			tiny_input:
+  1794 						;write integer digit pair to FR1
+  1795 DE03 85 E1				sta		fr1+1
+  1796
+  1797 						;convert to binary and save it
+  1798 DE05 20 DD D8				jsr		fp_dectobin
+  1799 DE08 F9 F6 DF				sbc		fp_dectobin_tab,y
+  1800
+  1801 						;save integer portion to adjust exponent later
+  1802 DE0B 85 F8				sta		_fptemp0
+  1803
+  1804 						;skip subtraction if it's zero
+  1805 DE0D F0 07				beq		no_integer
+  1806
+  1807 						;compute y = frac(x)
+  1808 DE0F A2 40				ldx		#$40
+  1809 DE11 86 E0				stx		fr1
+  1810 DE13 20 60 DA				jsr		fsub
+  1811
+  1812 DE16			no_integer:
+  1813 						;evaluate f(y)
+  1814 DE16 A2 4D				ldx		#<fpconst_exp10_coeff
+  1815 DE18 A0 DE				ldy		#>fpconst_exp10_coeff
+  1816 DE1A 20 3E DD				jsr		fp_plyevl_10
+  1817
+  1818 						;square result
+  1819 DE1D 20 B6 DD				jsr		fmove
+  1820 DE20 20 DB DA				jsr		fmul
+  1821 					
+  1822 						;halve integer portion to compute exponent adjustment
+  1823 DE23 46 F8				lsr		_fptemp0
+  1824 					
+  1825 						;scale by 10 if necessary
+  1826 DE25 90 09				bcc		even
+  1827 DE27 A2 8F				ldx		#<fpconst_ten
+  1828 DE29 A0 DE				ldy		#>fpconst_ten
+  1829 DE2B 20 D8 DA				jsr		fp_fld1r_fmul
+  1830 DE2E B0 08				bcs		err2
+  1831 DE30			even:
+  1832
+  1833 						;bias exponent
+  1834 DE30 A5 F8				lda		_fptemp0
+  1835 DE32 65 D4				adc		fr0
+  1836 DE34 C9 71				cmp		#64+49			;set error flag if overflow
+  1837 DE36 85 D4				sta		fr0
+  1838
+  1839 DE38			err2:
+  1840 DE38			xit2:
+  1841 DE38 60					rts
+  1842 				.endp	
+  1843
+  1844 				;==========================================================================
+  1845 DE39			.proc fp_tab_lo_1000
+  1846 DE39 00 E8 D0 B8 A0 88 + 		dta		$00, $E8, $D0, $B8, $A0, $88, $70, $58, $40, $28
+  1847 				.endp
+  1848
+  1849 				;==========================================================================
+  1850 DE43			.proc fp_tab_hi_1000
+  1851 DE43 00 03 07 0B 0F 13 + 		dta		$00, $03, $07, $0B, $0F, $13, $17, $1B, $1F, $23
+  1852 				.endp
+  1853
+  1854 				;==========================================================================
+  1855 				; Minimax polynomial for 10^x over 0 <= x < 1 (required by Turbo Basic XL)
+  1856 				;
+  1857 				; See Ruckdeschel, Table VI.13, page 174.
+  1858 				;
+  1859 DE4D					fixadr		$de4d
 Macro: FIXADR [Source: source/Shared/mathpack.s]
 Source: source/Shared/mathpack.s
-  1806 = DE95			redrng = _redrng
-  1807 DE95			.proc _redrng
-  1808 DE95 86 FE			stx		fptr2
-  1809 DE97 84 FF			sty		fptr2+1
-  1810 DE99 20 98 DD			jsr		fld1r
-  1811 DE9C A2 E6			ldx		#<fpscr
-  1812 DE9E A0 05			ldy		#>fpscr
-  1813 DEA0 20 A7 DD			jsr		fst0r
-  1814 DEA3 20 66 DA			jsr		fadd
-  1815 DEA6 B0 33			bcs		fail
-  1816 DEA8 A2 E0			ldx		#<plyarg
-  1817 DEAA A0 05			ldy		#>plyarg
-  1818 DEAC 20 A7 DD			jsr		fst0r
-  1819 DEAF A2 E6			ldx		#<fpscr
-  1820 DEB1 A0 05			ldy		#>fpscr
-  1821 DEB3 20 89 DD			jsr		fld0r
-  1822 DEB6 A6 FE			ldx		fptr2
-  1823 DEB8 A4 FF			ldy		fptr2+1
-  1824 DEBA 20 98 DD			jsr		fld1r
-  1825 DEBD 20 60 DA			jsr		fsub
-  1826 DEC0 B0 19			bcs		fail
-  1827 DEC2 A2 E0			ldx		#<plyarg
-  1828 DEC4 A0 05			ldy		#>plyarg
-  1829 DEC6 4C 25 DB			jmp		fp_fdiv_fld1r
-  1830 					
-  1831 = DEDB			fail = log.xit2
-  1832 				.endp
-  1833
-  1834 				;==========================================================================
-  1835 				; LOG [DECD]	Compute ln x
-  1836 				; LOG10 [DED1]	Compute log10 x
-  1837 				;
-  1838 				; The algorithm is from Ruckdeschel, Table VI.11, page 173:
-  1839 				;
-  1840 				;	LOG10(X) = 0.5 + A1*Z + A2*Z^3 + ... + A10*Z^19
-  1841 				;		where Z = (X - c) / (X + c) where c - 3.162277660
-  1842 				;		for 1 <= X <= 10 [sic].
-  1843 				;
-  1844 				; The constant c is sqrt(10). The exponent of the input number is removed
-  1845 				; and the mantissa divided by 10 if needed to reduce range to [1, 10).
-  1846 				;
-  1847 				; LOG(x) is computed by dividing LOG10(x) by LOG10(e). It would be faster
-  1848 				; to multiply by the reciprocal instead, but the division needs to be done
-  1849 				; to match results.
-  1850 				;
-  1851 DEC9				fixadr	$decd
+  1860 DE4D			fpconst_exp10_coeff:
+  1861 DE4D 3D 17 94 19 00 00			dta		$3D, $17, $94, $19, $00, $00	;A9 = 0.0000179419
+  1862 DE53 3D 57 33 05 00 00			dta		$3D, $57, $33, $05, $00, $00	;A8 = 0.0000573305
+  1863 DE59 3E 05 54 76 62 00			dta		$3E, $05, $54, $76, $62, $00	;A7 = 0.0005547662
+  1864 DE5F 3E 32 19 62 27 00			dta		$3E, $32, $19, $62, $27, $00	;A6 = 0.0032196227
+  1865 DE65 3F 01 68 60 30 36			dta		$3F, $01, $68, $60, $30, $36	;A5 = 0.0168603036
+  1866 DE6B 3F 07 32 03 27 41			dta		$3F, $07, $32, $03, $27, $41	;A4 = 0.0732032741
+  1867 DE71 3F 25 43 34 56 75			dta		$3F, $25, $43, $34, $56, $75	;A3 = 0.2543345675
+  1868 DE77 3F 66 27 37 30 50			dta		$3F, $66, $27, $37, $30, $50	;A2 = 0.6627373050
+  1869 DE7D 40 01 15 12 92 55			dta		$40, $01, $15, $12, $92, $55	;A1 = 1.1512925485
+  1870 DE83 3F 99 99 99 99 99			dta		$3F, $99, $99, $99, $99, $99	;constant 1 term (with tweak)
+  1871
+  1872 				;==========================================================================
+  1873 				; log10(e) constant (required by Turbo Basic XL)
+  1874 				;
+  1875 DE89					fixadr		$de89
+Macro: FIXADR [Source: source/Shared/mathpack.s]
+Source: source/Shared/mathpack.s
+  1876 DE89			fpconst_log10_e:
+  1877 DE89 3F 43 42 94 48 19			dta		$3F,$43,$42,$94,$48,$19			;0.4342944819[0325182765112891891661]
+  1878
+  1879 				;==========================================================================	
+  1880 				; 10.0 factor for LOG/EXP
+  1881 				;
+  1882 				; This constant is NOT used by Turbo Basic XL.
+  1883 				;
+  1884 DE8F			fpconst_ten:
+  1885 DE8F 40 10 00 00 00 00			dta		$40,$10,$00,$00,$00,$00		;10
+  1886
+  1887 				;==========================================================================
+  1888 				; REDRNG [DE95]	Reduce range via y = (x-C)/(x+C) (undocumented)
+  1889 				;
+  1890 				; Used for better convergence in multiple polynomial approximations.
+  1891 				;
+  1892 				; X:Y = pointer to C argument
+  1893 				;
+  1894 DE95				fixadr	$de95
+Macro: FIXADR [Source: source/Shared/mathpack.s]
+Source: source/Shared/mathpack.s
+  1895 = DE95			redrng = _redrng
+  1896 DE95			.proc _redrng
+  1897 DE95 86 FE			stx		fptr2
+  1898 DE97 84 FF			sty		fptr2+1
+  1899 DE99 20 98 DD			jsr		fld1r
+  1900 DE9C A2 E6			ldx		#<fpscr
+  1901 DE9E A0 05			ldy		#>fpscr
+  1902 DEA0 20 A7 DD			jsr		fst0r
+  1903 DEA3 20 66 DA			jsr		fadd
+  1904 DEA6 B0 33			bcs		fail
+  1905 DEA8 A2 E0			ldx		#<plyarg
+  1906 DEAA A0 05			ldy		#>plyarg
+  1907 DEAC 20 A7 DD			jsr		fst0r
+  1908 DEAF A2 E6			ldx		#<fpscr
+  1909 DEB1 A0 05			ldy		#>fpscr
+  1910 DEB3 20 89 DD			jsr		fld0r
+  1911 DEB6 A6 FE			ldx		fptr2
+  1912 DEB8 A4 FF			ldy		fptr2+1
+  1913 DEBA 20 98 DD			jsr		fld1r
+  1914 DEBD 20 60 DA			jsr		fsub
+  1915 DEC0 B0 19			bcs		fail
+  1916 DEC2 A2 E0			ldx		#<plyarg
+  1917 DEC4 A0 05			ldy		#>plyarg
+  1918 DEC6 4C 25 DB			jmp		fp_fdiv_fld1r
+  1919 					
+  1920 = DEDB			fail = log.xit2
+  1921 				.endp
+  1922
+  1923 				;==========================================================================
+  1924 				; LOG [DECD]	Compute ln x
+  1925 				; LOG10 [DED1]	Compute log10 x
+  1926 				;
+  1927 				; The algorithm is from Ruckdeschel, Table VI.11, page 173:
+  1928 				;
+  1929 				;	LOG10(X) = 0.5 + A1*Z + A2*Z^3 + ... + A10*Z^19
+  1930 				;		where Z = (X - c) / (X + c) where c - 3.162277660
+  1931 				;		for 1 <= X <= 10 [sic].
+  1932 				;
+  1933 				; The constant c is sqrt(10). The exponent of the input number is removed
+  1934 				; and the mantissa divided by 10 if needed to reduce range to [1, 10).
+  1935 				;
+  1936 				; LOG(x) is computed by dividing LOG10(x) by LOG10(e). It would be faster
+  1937 				; to multiply by the reciprocal instead, but the division needs to be done
+  1938 				; to match results.
+  1939 				;
+  1940 DEC9				fixadr	$decd
 Macro: FIXADR [Source: source/Shared/mathpack.s]
      2 						.print ($DECD-*),' bytes free before ',$DECD
      2 				$0004 bytes free before $DECD
      3 DEC9					org		$DECD
 Source: source/Shared/mathpack.s
-  1852 DECD			.proc log
-  1853 DECD 46 F9				lsr		_fptemp1
-  1854 DECF 10 03				bpl		entry
-  1855 DED1					ckaddr	$ded1
+  1941 DECD			.proc log
+  1942 DECD 46 F9				lsr		_fptemp1
+  1943 DECF 10 03				bpl		entry
+  1944 DED1					ckaddr	$ded1
 Macro: CKADDR [Source: source/Shared/mathpack.s]
 Source: source/Shared/mathpack.s
-  1856 = DED1			.def :log10 = *
-  1857 DED1 38					sec
-  1858 DED2 66 F9				ror		_fptemp1
-  1859 DED4			entry:
-  1860 						;throw error on negative number or zero
-  1861 DED4 A5 D4				lda		fr0
-  1862 DED6 30 02				bmi		err
-  1863 DED8 D0 02				bne		ok
-  1864 DEDA			err:
-  1865 DEDA 38					sec
-  1866 DEDB			xit2:
-  1867 DEDB 60					rts
-  1868 					
-  1869 DEDC			ok:
-  1870 						;stash exponentx2 - 128
-  1871 DEDC 0A					asl
-  1872 DEDD 49 80				eor		#$80
-  1873 DEDF 85 F8				sta		_fptemp0
-  1874 					
-  1875 						;reset exponent so we are in 1 <= z < 100
-  1876 DEE1 A2 40				ldx		#$40
-  1877 DEE3 86 D4				stx		fr0
-  1878 					
-  1879 						;divide by 10 if >=10 (yes, this needs to truncate)
-  1880 DEE5 A5 D5				lda		fr0+1
-  1881 DEE7 C9 10				cmp		#$10
-  1882 DEE9 90 07				bcc		in_range
-  1883
-  1884 DEEB A2 8F				ldx		#<fpconst_ten
-  1885 DEED 20 23 DB				jsr		fp_fdiv_fld1r_fpconst				;cannot fail
-  1886
-  1887 						;adjust final value by +1 to reflect this
-  1888 DEF0 E6 F8				inc		_fptemp0
-  1889
-  1890 DEF2			in_range:
-  1891 						;apply y = (z-sqrt(10))/(z+sqrt(10)) change of variable so we can use a
-  1892 						;faster converging series
-  1893 DEF2 A2 66				ldx		#<fpconst_sqrt10
-  1894 DEF4 A0 DF				ldy		#>fpconst_sqrt10
-  1895 DEF6 20 95 DE				jsr		redrng
-  1896 					
-  1897 						;stash y so we can later multiply it back in
-  1898 DEF9 A2 E6				ldx		#<fpscr
-  1899 DEFB A0 05				ldy		#>fpscr
-  1900 DEFD 20 A7 DD				jsr		fst0r
-  1901 					
-  1902 						;square the value so we compute a series on y^2n
-  1903 DF00 20 B6 DD				jsr		fmove
-  1904 DF03 20 DB DA				jsr		fmul
-  1905 					
-  1906 						;do polynomial expansion (cannot fail)
-  1907 DF06 A2 72				ldx		#<fpconst_log10coeff
-  1908 DF08 A0 DF				ldy		#>fpconst_log10coeff
-  1909 DF0A 20 3E DD				jsr		fp_plyevl_10		;cannot fail
-  1910 					
-  1911 						;multiply back in so we have series on y^(2n+1)
-  1912 DF0D A2 E6				ldx		#<fpscr
-  1913 DF0F A0 05				ldy		#>fpscr
-  1914 DF11 20 D8 DA				jsr		fp_fld1r_fmul		;cannot fail
-  1915
-  1916 						;add 0.5
-  1917 DF14 A2 6C				ldx		#<fpconst_half
-  1918 DF16 A0 DF				ldy		#>fpconst_half
-  1919 DF18 20 98 DD				jsr		fld1r
-  1920 DF1B 20 66 DA				jsr		fadd
-  1921 					
-  1922 						;stash
-  1923 DF1E 20 B6 DD				jsr		fmove
-  1924 					
-  1925 						;convert exponent adjustment back to float (signed)
-  1926 DF21 A9 00				lda		#0
-  1927 DF23 85 D5				sta		fr0+1
-  1928 DF25 A6 F8				ldx		_fptemp0
-  1929 DF27 10 04				bpl		expadj_positive
-  1930 DF29 38					sec
-  1931 DF2A E5 F8				sbc		_fptemp0
-  1932 DF2C AA					tax
-  1933 DF2D			expadj_positive:
-  1934 DF2D 86 D4				stx		fr0
-  1935 DF2F 20 AA D9				jsr		ifp
-  1936 					
-  1937 						;merge (cannot fail)
-  1938 DF32 06 D4				asl		fr0
-  1939 DF34 06 F8				asl		_fptemp0
-  1940 DF36 66 D4				ror		fr0
-  1941 DF38 20 66 DA				jsr		fadd
-  1942 					
-  1943 						;scale if doing log
-  1944 DF3B 24 F9				bit		_fptemp1
-  1945 DF3D 30 9C				bmi		xit2
-  1946
-  1947 						;divide by log10(e); sadly we must do this to match results instead
-  1948 						;of multiplying by ln(10)
-  1949 DF3F A2 89				ldx		#<fpconst_log10_e
-  1950 DF41 4C 23 DB				jmp		fp_fdiv_fld1r_fpconst
-  1951 				.endp
-  1952
-  1953 				;==========================================================================
-  1954 DF44			.proc fp_tab_lo_1000
-  1955 DF44 00 E8 D0 B8 A0 88 + 	:10 dta <[1000*#]
-  1956 				.endp
-  1957
-  1958 DF4E			.proc fp_tab_hi_1000
-  1959 DF4E 00 03 07 0B 0F 13 + 	:10 dta >[1000*#]
-  1960 				.endp
-  1961
-  1962 				;==========================================================================
-  1963 				; sqrt(10) (required by Turbo Basic XL)
-  1964 				;
-  1965 DF58					fixadr	$df66
-Macro: FIXADR [Source: source/Shared/mathpack.s]
-     2 						.print ($DF66-*),' bytes free before ',$DF66
-     2 				$000E bytes free before $DF66
-     3 DF58					org		$DF66
-Source: source/Shared/mathpack.s
-  1966 DF66			fpconst_sqrt10:
-  1967 DF66 40 03 16 22 77 66			dta		$40, $03, $16, $22, $77, $66	;3.16227766
-  1968
-  1969 				;==========================================================================
-  1970 				; HALF (required by Atari BASIC and Turbo Basic XL)
-  1971 				;
-  1972 DF6C					fixadr	$df6c
-Macro: FIXADR [Source: source/Shared/mathpack.s]
-Source: source/Shared/mathpack.s
-  1973 DF6C			fpconst_half:
-  1974 DF6C 3F 50 00 00 00 00			dta		$3F, $50, $00, $00, $00, $00	;0.5
-  1975 					
-  1976 				;==========================================================================
-  1977 				; log10(x) coefficients (required by Turbo Basic XL)
-  1978 				;
-  1979 				; See Ruckdeschel, Table VI.11 on page 173.
-  1980 				;
-  1981 DF72					fixadr	$df72
-Macro: FIXADR [Source: source/Shared/mathpack.s]
-Source: source/Shared/mathpack.s
-  1982 DF72			fpconst_log10coeff:		;minimax series expansion for log10((z-sqrt(10))/(z+sqrt(10)))
-  1983 DF72 3F 49 15 57 11 08			dta		$3F, $49, $15, $57, $11, $08	;A10 =  0.4915571108
-  1984 DF78 BF 51 70 49 47 08			dta		$BF, $51, $70, $49, $47, $08	;A9  = -0.5170494708
-  1985 DF7E 3F 39 20 57 61 95			dta		$3F, $39, $20, $57, $61, $95	;A8  =  0.3920576195
-  1986 DF84 BF 04 39 63 03 55			dta		$BF, $04, $39, $63, $03, $55	;A7  = -0.0439630355
-  1987 DF8A 3F 10 09 30 12 64			dta		$3F, $10, $09, $30, $12, $64	;A6  =  0.1009301264
-  1988 DF90 3F 09 39 08 04 60			dta		$3F, $09, $39, $08, $04, $60	;A5  =  0.0939080460
-  1989 DF96 3F 12 42 58 47 42			dta		$3F, $12, $42, $58, $47, $42	;A4  =  0.1242584742
-  1990 DF9C 3F 17 37 12 06 08			dta		$3F, $17, $37, $12, $06, $08	;A3  =  0.1737120608
-  1991 DFA2 3F 28 95 29 71 17			dta		$3F, $28, $95, $29, $71, $17	;A2  =  0.2895297117
-  1992 DFA8 3F 86 85 88 96 44			dta		$3F, $86, $85, $88, $96, $44	;A1  =  0.8685889644
-  1993
-  1994 				;==========================================================================
-  1995 				; Arctangent coefficients (required by Atari BASIC and Turbo Basic XL)
-  1996 				;
-  1997 				; The 11 coefficients here form a power series approximation
-  1998 				; f(x^2) ~= atn(x)/x. These are not used by the math pack itself and
-  1999 				; not officially documented, but are stored in the math pack for use
-  2000 				; by Atari BASIC's ATN() function.
-  2001 				;
-  2002 				; See Ruckdeschel, Table V1.10a, page 172.
-  2003 				;
-  2004 DFAE					fixadr	$dfae
-Macro: FIXADR [Source: source/Shared/mathpack.s]
-Source: source/Shared/mathpack.s
-  2005 DFAE			fpconst_atncoef:
-  2006 DFAE 3E 16 05 44 49 22			dta		$3E, $16, $05, $44, $49, $22	;A10 =  0.001605444922
-  2007 DFB4 BE 95 68 38 45 20			dta		$BE, $95, $68, $38, $45, $20	;A9  = -0.009568384520
-  2008 DFBA 3F 02 68 79 94 16			dta		$3F, $02, $68, $79, $94, $16	;A8  =  0.0268799415 61
-  2009 DFC0 BF 04 92 78 90 80			dta		$BF, $04, $92, $78, $90, $80	;A7  = -0.0492789080 30
-  2010 DFC6 3F 07 03 15 20 00			dta		$3F, $07, $03, $15, $20, $00	;A6  =  0.0703152000 33
-  2011 DFCC BF 08 92 29 12 44			dta		$BF, $08, $92, $29, $12, $44	;A5  = -0.0892291243 81
-  2012 DFD2 3F 11 08 40 09 11			dta		$3F, $11, $08, $40, $09, $11	;A4  =  0.1108400911 04
-  2013 DFD8 BF 14 28 31 56 04			dta		$BF, $14, $28, $31, $56, $04	;A3  = -0.1428315603 76
-  2014 DFDE 3F 19 99 98 77 44			dta		$3F, $19, $99, $98, $77, $44	;A2  =  0.1999987744 21
-  2015 DFE4 BF 33 33 33 31 13			dta		$BF, $33, $33, $33, $31, $13	;A1  = -0.3333333112 86
-  2016 DFEA			fpconst_one:
-  2017 DFEA 40 01 00 00 00 00			dta		$40, $01, $00, $00, $00, $00		;1.0 (also an arctan coeff)
-  2018
-  2019 				;==========================================================================
-  2020 				; pi/4 (required by Atari BASIC and Turbo Basic XL ATN())
-  2021 				;
-  2022 DFF0					fixadr	$dff0
-Macro: FIXADR [Source: source/Shared/mathpack.s]
-Source: source/Shared/mathpack.s
-  2023 DFF0			fpconst_pi4:
-  2024 DFF0 3F 78 53 98 16 34			dta		$3F, $78, $53, $98, $16, $34		;0.7853981633[9744830961566084581988]
+  1945 = DED1			.def :log10 = *
+  1946 DED1 38					sec
+  1947 DED2 66 F9				ror		_fptemp1
+  1948 DED4			entry:
+  1949 						;throw error on negative number or zero
+  1950 DED4 A5 D4				lda		fr0
+  1951 DED6 30 02				bmi		err
+  1952 DED8 D0 02				bne		ok
+  1953 DEDA			err:
+  1954 DEDA 38					sec
+  1955 DEDB			xit2:
+  1956 DEDB 60					rts
+  1957 					
+  1958 DEDC			ok:
+  1959 						;stash exponentx2 - 128
+  1960 DEDC 0A					asl
+  1961 DEDD 49 80				eor		#$80
+  1962 DEDF 85 F8				sta		_fptemp0
+  1963 					
+  1964 						;reset exponent so we are in 1 <= z < 100
+  1965 DEE1 A2 40				ldx		#$40
+  1966 DEE3 86 D4				stx		fr0
+  1967 					
+  1968 						;divide by 10 if >=10 (yes, this needs to truncate)
+  1969 DEE5 A5 D5				lda		fr0+1
+  1970 DEE7 C9 10				cmp		#$10
+  1971 DEE9 90 07				bcc		in_range
+  1972
+  1973 DEEB A2 8F				ldx		#<fpconst_ten
+  1974 DEED 20 23 DB				jsr		fp_fdiv_fld1r_fpconst				;cannot fail
+  1975
+  1976 						;adjust final value by +1 to reflect this
+  1977 DEF0 E6 F8				inc		_fptemp0
+  1978
+  1979 DEF2			in_range:
+  1980 						;apply y = (z-sqrt(10))/(z+sqrt(10)) change of variable so we can use a
+  1981 						;faster converging series
+  1982 DEF2 A2 66				ldx		#<fpconst_sqrt10
+  1983 DEF4 A0 DF				ldy		#>fpconst_sqrt10
+  1984 DEF6 20 95 DE				jsr		redrng
+  1985 					
+  1986 						;stash y so we can later multiply it back in
+  1987 DEF9 A2 E6				ldx		#<fpscr
+  1988 DEFB A0 05				ldy		#>fpscr
+  1989 DEFD 20 A7 DD				jsr		fst0r
+  1990 					
+  1991 						;square the value so we compute a series on y^2n
+  1992 DF00 20 B6 DD				jsr		fmove
+  1993 DF03 20 DB DA				jsr		fmul
+  1994 					
+  1995 						;do polynomial expansion (cannot fail)
+  1996 DF06 A2 72				ldx		#<fpconst_log10coeff
+  1997 DF08 A0 DF				ldy		#>fpconst_log10coeff
+  1998 DF0A 20 3E DD				jsr		fp_plyevl_10		;cannot fail
+  1999 					
+  2000 						;multiply back in so we have series on y^(2n+1)
+  2001 DF0D A2 E6				ldx		#<fpscr
+  2002 DF0F A0 05				ldy		#>fpscr
+  2003 DF11 20 D8 DA				jsr		fp_fld1r_fmul		;cannot fail
+  2004
+  2005 						;add 0.5
+  2006 DF14 A2 6C				ldx		#<fpconst_half
+  2007 DF16 A0 DF				ldy		#>fpconst_half
+  2008 DF18 20 98 DD				jsr		fld1r
+  2009 DF1B 20 66 DA				jsr		fadd
+  2010 					
+  2011 						;stash
+  2012 DF1E 20 B6 DD				jsr		fmove
+  2013 					
+  2014 						;convert exponent adjustment back to float (signed)
+  2015 DF21 A9 00				lda		#0
+  2016 DF23 85 D5				sta		fr0+1
+  2017 DF25 A6 F8				ldx		_fptemp0
+  2018 DF27 10 04				bpl		expadj_positive
+  2019 DF29 38					sec
+  2020 DF2A E5 F8				sbc		_fptemp0
+  2021 DF2C AA					tax
+  2022 DF2D			expadj_positive:
+  2023 DF2D 86 D4				stx		fr0
+  2024 DF2F 20 AA D9				jsr		ifp
   2025 					
-  2026 				;==========================================================================
-  2027 DFF6			fp_dectobin_tab:
-  2028 DFF6 FF 05 0B 11 17 1D + 		:10 dta	[6*#-1]
-  2029 					
-  2030 				;==========================================================================
-  2031 				; end of math pack
-  2032 				;
-  2033 E000					ckaddr	$e000
+  2026 						;merge (cannot fail)
+  2027 DF32 06 D4				asl		fr0
+  2028 DF34 06 F8				asl		_fptemp0
+  2029 DF36 66 D4				ror		fr0
+  2030 DF38 20 66 DA				jsr		fadd
+  2031 					
+  2032 						;scale if doing log
+  2033 DF3B 24 F9				bit		_fptemp1
+  2034 DF3D 30 9C				bmi		xit2
+  2035
+  2036 						;divide by log10(e); sadly we must do this to match results instead
+  2037 						;of multiplying by ln(10)
+  2038 DF3F A2 89				ldx		#<fpconst_log10_e
+  2039 DF41 4C 23 DB				jmp		fp_fdiv_fld1r_fpconst
+  2040 				.endp
+  2041
+  2042 				;--------------------------------------------------------------------------
+  2043 DF44			.proc fp_fdiv_init					;$22 bytes
+  2044 					;save off x1 divisor
+  2045 DF44 A2 05			ldx		#5
+  2046 DF46 B5 E0 95 DA CA D0 + 	mva:rne	fr1,x fre,x-
+  2047
+  2048 					;extend working dividend to 6 digit pairs
+  2049 DF4D 8A				txa
+  2050 DF4E 85 EC			sta		frx
+  2051 					
+  2052 					;compute x10 divisor
+  2053 DF50 A0 04			ldy		#4
+  2054 DF52			bitloop:
+  2055 DF52 06 DF			asl		fre+5
+  2056 DF54 26 DE			rol		fre+4
+  2057 DF56 26 DD			rol		fre+3
+  2058 DF58 26 DC			rol		fre+2
+  2059 DF5A 26 DB			rol		fre+1
+  2060 DF5C 2A				rol
+  2061 DF5D 88				dey
+  2062 DF5E D0 F2			bne		bitloop
+  2063
+  2064 DF60 85 DA			sta		fre
+  2065
+  2066 DF62 F8				sed
+  2067
+  2068 DF63 A0 7B			ldy		#$80-5
+  2069 DF65 60				rts
+  2070 				.endp
+  2071
+  2072 				;==========================================================================
+  2073 				; sqrt(10) (required by Turbo Basic XL)
+  2074 				;
+  2075 DF66					fixadr	$df66
+Macro: FIXADR [Source: source/Shared/mathpack.s]
+Source: source/Shared/mathpack.s
+  2076 DF66			fpconst_sqrt10:
+  2077 DF66 40 03 16 22 77 66			dta		$40, $03, $16, $22, $77, $66	;3.16227766
+  2078
+  2079 				;==========================================================================
+  2080 				; HALF (required by Atari BASIC and Turbo Basic XL)
+  2081 				;
+  2082 DF6C					fixadr	$df6c
+Macro: FIXADR [Source: source/Shared/mathpack.s]
+Source: source/Shared/mathpack.s
+  2083 DF6C			fpconst_half:
+  2084 DF6C 3F 50 00 00 00 00			dta		$3F, $50, $00, $00, $00, $00	;0.5
+  2085 					
+  2086 				;==========================================================================
+  2087 				; log10(x) coefficients (required by Turbo Basic XL)
+  2088 				;
+  2089 				; See Ruckdeschel, Table VI.11 on page 173.
+  2090 				;
+  2091 DF72					fixadr	$df72
+Macro: FIXADR [Source: source/Shared/mathpack.s]
+Source: source/Shared/mathpack.s
+  2092 DF72			fpconst_log10coeff:		;minimax series expansion for log10((z-sqrt(10))/(z+sqrt(10)))
+  2093 DF72 3F 49 15 57 11 08			dta		$3F, $49, $15, $57, $11, $08	;A10 =  0.4915571108
+  2094 DF78 BF 51 70 49 47 08			dta		$BF, $51, $70, $49, $47, $08	;A9  = -0.5170494708
+  2095 DF7E 3F 39 20 57 61 95			dta		$3F, $39, $20, $57, $61, $95	;A8  =  0.3920576195
+  2096 DF84 BF 04 39 63 03 55			dta		$BF, $04, $39, $63, $03, $55	;A7  = -0.0439630355
+  2097 DF8A 3F 10 09 30 12 64			dta		$3F, $10, $09, $30, $12, $64	;A6  =  0.1009301264
+  2098 DF90 3F 09 39 08 04 60			dta		$3F, $09, $39, $08, $04, $60	;A5  =  0.0939080460
+  2099 DF96 3F 12 42 58 47 42			dta		$3F, $12, $42, $58, $47, $42	;A4  =  0.1242584742
+  2100 DF9C 3F 17 37 12 06 08			dta		$3F, $17, $37, $12, $06, $08	;A3  =  0.1737120608
+  2101 DFA2 3F 28 95 29 71 17			dta		$3F, $28, $95, $29, $71, $17	;A2  =  0.2895297117
+  2102 DFA8 3F 86 85 88 96 44			dta		$3F, $86, $85, $88, $96, $44	;A1  =  0.8685889644
+  2103
+  2104 				;==========================================================================
+  2105 				; Arctangent coefficients (required by Atari BASIC and Turbo Basic XL)
+  2106 				;
+  2107 				; The 11 coefficients here form a power series approximation
+  2108 				; f(x^2) ~= atn(x)/x. These are not used by the math pack itself and
+  2109 				; not officially documented, but are stored in the math pack for use
+  2110 				; by Atari BASIC's ATN() function.
+  2111 				;
+  2112 				; See Ruckdeschel, Table V1.10a, page 172.
+  2113 				;
+  2114 DFAE					fixadr	$dfae
+Macro: FIXADR [Source: source/Shared/mathpack.s]
+Source: source/Shared/mathpack.s
+  2115 DFAE			fpconst_atncoef:
+  2116 DFAE 3E 16 05 44 49 22			dta		$3E, $16, $05, $44, $49, $22	;A10 =  0.001605444922
+  2117 DFB4 BE 95 68 38 45 20			dta		$BE, $95, $68, $38, $45, $20	;A9  = -0.009568384520
+  2118 DFBA 3F 02 68 79 94 16			dta		$3F, $02, $68, $79, $94, $16	;A8  =  0.0268799415 61
+  2119 DFC0 BF 04 92 78 90 80			dta		$BF, $04, $92, $78, $90, $80	;A7  = -0.0492789080 30
+  2120 DFC6 3F 07 03 15 20 00			dta		$3F, $07, $03, $15, $20, $00	;A6  =  0.0703152000 33
+  2121 DFCC BF 08 92 29 12 44			dta		$BF, $08, $92, $29, $12, $44	;A5  = -0.0892291243 81
+  2122 DFD2 3F 11 08 40 09 11			dta		$3F, $11, $08, $40, $09, $11	;A4  =  0.1108400911 04
+  2123 DFD8 BF 14 28 31 56 04			dta		$BF, $14, $28, $31, $56, $04	;A3  = -0.1428315603 76
+  2124 DFDE 3F 19 99 98 77 44			dta		$3F, $19, $99, $98, $77, $44	;A2  =  0.1999987744 21
+  2125 DFE4 BF 33 33 33 31 13			dta		$BF, $33, $33, $33, $31, $13	;A1  = -0.3333333112 86
+  2126 DFEA			fpconst_one:
+  2127 DFEA 40 01 00 00 00 00			dta		$40, $01, $00, $00, $00, $00		;1.0 (also an arctan coeff)
+  2128
+  2129 				;==========================================================================
+  2130 				; pi/4 (required by Atari BASIC and Turbo Basic XL ATN())
+  2131 				;
+  2132 DFF0					fixadr	$dff0
+Macro: FIXADR [Source: source/Shared/mathpack.s]
+Source: source/Shared/mathpack.s
+  2133 DFF0			fpconst_pi4:
+  2134 DFF0 3F 78 53 98 16 34			dta		$3F, $78, $53, $98, $16, $34		;0.7853981633[9744830961566084581988]
+  2135 					
+  2136 				;==========================================================================
+  2137 DFF6			fp_dectobin_tab:
+  2138 DFF6 FF 05 0B 11 17 1D + 		:10 dta	[6*#-1]
+  2139 					
+  2140 				;==========================================================================
+  2141 				; end of math pack
+  2142 				;
+  2143 E000					ckaddr	$e000
 Macro: CKADDR [Source: source/Shared/mathpack.s]
 Source: source/Shared/mathpack.s
    102

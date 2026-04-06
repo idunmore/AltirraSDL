@@ -737,6 +737,12 @@ void ATDiskEmulator::OnDiskChanged(bool mediaRemoved) {
 	// invalidate a read/write operation if it's currently happening
 	mActiveCommandPhysSector = -1;
 	mFDCStatus = 0xEF;
+
+	// if no command is currently happening and the disk profile specifies
+	// density detection on disk change, turn the motor on so programs can
+	// sense it
+	if (!mActiveCommand && mpDiskInterface->GetDiskImage() && mpProfile->mbDetectDensityOnDiskChange)
+		TurnOnMotor();
 }
 
 void ATDiskEmulator::OnWriteModeChanged() {

@@ -4,6 +4,7 @@
 #include <SDL3/SDL.h>
 #include "gl_funcs.h"
 #include <stdio.h>
+#include "logging.h"
 
 // Define all function pointer globals
 #define GL_FUNC(ret, name, ...) PFN_##name name = nullptr;
@@ -72,7 +73,7 @@ bool GLLoadFunctions() {
 
 #define GL_LOAD(name) do { \
 	name = (PFN_##name)SDL_GL_GetProcAddress(#name); \
-	if (!name) { fprintf(stderr, "[GL] Failed to load: %s\n", #name); ok = false; } \
+	if (!name) { LOG_ERROR("GL", "Failed to load: %s", #name); ok = false; } \
 } while(0)
 
 	GL_LOAD(glEnable);

@@ -18,9 +18,12 @@
 #include <vd2/system/VDString.h>
 #include <vd2/system/text.h>
 #include <vd2/system/registry.h>
+#include <vd2/system/error.h>
+#include <exception>
 #include <at/atcore/media.h>
 #include <at/atio/image.h>
 
+#include "crash_report.h"
 #include "display_sdl3_impl.h"
 #include "display_backend.h"
 #include "display_backend_gl33.h"
@@ -57,6 +60,14 @@
 #include <at/atcore/constants.h>
 #include <algorithm>
 #include <cmath>
+#include "logging.h"
+
+#ifdef __ANDROID__
+#include <android/log.h>
+#include <pthread.h>
+#include <unistd.h>
+#include <fcntl.h>
+#endif
 
 ATSimulator g_sim;
 extern ATUIKeyboardOptions g_kbdOpts;
@@ -67,7 +78,120 @@ static IDisplayBackend *g_pBackend = nullptr;
 static IATJoystickManager *g_pJoystickMgr = nullptr;
 static bool g_running = true;
 static bool g_winActive = true;
+// Android/mobile lifecycle: true while the app is backgrounded or the
+// window is minimized/hidden.  When set, RenderAndPresent() and the
+// simulator tick are both skipped so we do not touch a dead EGL surface
+// and do not burn battery while the user cannot see us.
+static bool g_appSuspended = false;
 ATUIState g_uiState;
+
+// =========================================================================
+// Fatal error reporting
+// =========================================================================
+// Shows a modal message box and logs the failure phase.  SDL_LogError
+// routes to logcat on Android (tag "SDL") and stderr everywhere else, so
+// the next test cycle can diagnose startup failures without any native
+// debugger.  Called from the top-level try/catch in main().
+static void ATReportFatal(const char *phase, const char *message) {
+	// Layer 1: logcat / stderr.  Works even if everything else is broken.
+	SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+		"Altirra: FATAL at phase=%s: %s", phase ? phase : "?", message ? message : "?");
+
+	// Layer 2: persistent crash file.  Read & shown by the next launch via
+	// the ImGui crash viewer.  Best-effort; never throws.
+	ATCrashReportWrite(phase, message);
+
+	// Layer 3: SDL message box.  Works on desktop and (usually) on Android
+	// as long as SDL is up enough to talk to the system.  If SDL video is
+	// the thing that failed, this is a silent no-op, which is why layers
+	// 1 and 2 exist.
+	char buf[1024];
+	SDL_snprintf(buf, sizeof buf,
+		"Altirra failed to start.\n\nPhase: %s\n\n%s",
+		phase ? phase : "?", message ? message : "?");
+	SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,
+		"Altirra failed to start", buf, g_pWindow);
+}
+
+// =========================================================================
+// Android stderr → logcat bridge
+// =========================================================================
+// Android's C runtime does NOT forward stderr (or stdout) to logcat: any
+// fprintf(stderr, ...) call vanishes into the void unless we arrange for
+// it to be read.  The existing logging.h macros (LOG_INFO / LOG_WARN /
+// LOG_ERROR) and many raw fprintf sites across the codebase all write to
+// stderr, so on Android we capture it by dup2'ing stderr onto a pipe and
+// spawning a reader thread that splits on newlines and forwards each line
+// to __android_log_write under the "AltirraSDL" tag.
+//
+// This makes the entire existing diagnostic surface visible in
+//     adb logcat -s AltirraSDL SDL
+// with zero changes to any call site.  Desktop is untouched.
+#ifdef __ANDROID__
+static int s_stderrPipeRead = -1;
+
+static void *ATAndroidStderrReaderThread(void *) {
+	char line[512];
+	size_t pos = 0;
+	for (;;) {
+		ssize_t n = read(s_stderrPipeRead, line + pos, sizeof line - 1 - pos);
+		if (n <= 0) {
+			// EOF or error — drain what we have and stop.
+			if (pos > 0) {
+				line[pos] = 0;
+				__android_log_write(ANDROID_LOG_INFO, "AltirraSDL", line);
+			}
+			return nullptr;
+		}
+		pos += (size_t)n;
+		// Emit complete lines.
+		size_t lineStart = 0;
+		for (size_t i = 0; i < pos; ++i) {
+			if (line[i] == '\n') {
+				line[i] = 0;
+				__android_log_write(ANDROID_LOG_INFO, "AltirraSDL", line + lineStart);
+				lineStart = i + 1;
+			}
+		}
+		// Shift any partial trailing line to the front.
+		if (lineStart > 0 && lineStart < pos) {
+			memmove(line, line + lineStart, pos - lineStart);
+			pos -= lineStart;
+		} else if (lineStart == pos) {
+			pos = 0;
+		} else if (pos >= sizeof line - 1) {
+			// Pathologically long line — flush it and reset.
+			line[sizeof line - 1] = 0;
+			__android_log_write(ANDROID_LOG_INFO, "AltirraSDL", line);
+			pos = 0;
+		}
+	}
+}
+
+static void ATAndroidInstallStderrBridge() {
+	int fds[2];
+	if (pipe(fds) != 0)
+		return;
+	// Disable any buffering on stderr so messages land promptly.
+	setvbuf(stderr, nullptr, _IOLBF, 0);
+	// Redirect both stdout and stderr onto the pipe write end.
+	dup2(fds[1], STDOUT_FILENO);
+	dup2(fds[1], STDERR_FILENO);
+	close(fds[1]);
+	s_stderrPipeRead = fds[0];
+
+	pthread_t tid;
+	pthread_attr_t attr;
+	pthread_attr_init(&attr);
+	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+	pthread_create(&tid, &attr, ATAndroidStderrReaderThread, nullptr);
+	pthread_attr_destroy(&attr);
+
+	__android_log_write(ANDROID_LOG_INFO, "AltirraSDL",
+		"stderr → logcat bridge installed");
+}
+#endif
+
 #ifdef ALTIRRA_MOBILE
 ATMobileUIState g_mobileState;
 #endif
@@ -596,6 +720,69 @@ static void HandleEvents() {
 			g_winActive = true;
 			break;
 
+		// -------- Android / mobile lifecycle --------
+		// On Android SDL3 sends these when the activity is paused/resumed
+		// or the OS is about to kill the process.  While suspended, the
+		// EGL surface may be destroyed — we MUST NOT call into the display
+		// backend (glViewport / SDL_GL_SwapWindow) until we are resumed,
+		// or the app will SIGSEGV.  These also fire on desktop for
+		// minimize/restore, and the same guard is correct there.
+		case SDL_EVENT_WILL_ENTER_BACKGROUND:
+			SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+				"Altirra: WILL_ENTER_BACKGROUND — releasing input");
+			ATInputSDL3_ReleaseAllKeys();
+			ATUIReleaseMouse();
+			ATTouchControls_ReleaseAll();
+			break;
+
+		case SDL_EVENT_DID_ENTER_BACKGROUND:
+			SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+				"Altirra: DID_ENTER_BACKGROUND — suspending render/sim");
+			g_appSuspended = true;
+			break;
+
+		case SDL_EVENT_WILL_ENTER_FOREGROUND:
+			SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+				"Altirra: WILL_ENTER_FOREGROUND");
+			break;
+
+		case SDL_EVENT_DID_ENTER_FOREGROUND:
+			SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+				"Altirra: DID_ENTER_FOREGROUND — resuming");
+			g_appSuspended = false;
+			break;
+
+		case SDL_EVENT_TERMINATING:
+			// Last chance before the OS kills the process.  Flush settings
+			// inside a try/catch (mirrors the normal shutdown path) and
+			// request a clean exit of the main loop.
+			SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+				"Altirra: TERMINATING — flushing settings");
+			try {
+				extern void ATRegistryFlushToDisk();
+				ATRegistryFlushToDisk();
+			} catch (...) {
+				SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+					"Altirra: settings flush failed on terminate");
+			}
+			g_running = false;
+			break;
+
+		case SDL_EVENT_LOW_MEMORY:
+			// No caches to drop yet, but keep the handler so the hook exists
+			// when we add the library/scraper/thumbnail cache later.
+			SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+				"Altirra: LOW_MEMORY");
+			break;
+
+		// NOTE: intentionally not hooking SDL_EVENT_WINDOW_MINIMIZED /
+		// HIDDEN / RESTORED / SHOWN into g_appSuspended.  On desktop,
+		// minimize is already governed by the user's "Pause when
+		// inactive" setting via FOCUS_LOST, and some users rely on
+		// background-run behavior.  On Android, the authoritative EGL-
+		// surface-loss signal is DID_ENTER_BACKGROUND (handled above),
+		// not WINDOW_HIDDEN, so those handlers would only muddle things.
+
 		case SDL_EVENT_WINDOW_FOCUS_LOST:
 			g_winActive = false;
 			// Release pan/zoom drag state to prevent stuck drag
@@ -779,6 +966,14 @@ static void SyncScreenFXToBackend() {
 static int s_diagFrameCount = 0;
 
 static void RenderAndPresent() {
+	// Lifecycle guard: on Android the EGL surface is destroyed while the
+	// app is backgrounded, and any GL/SDL_Renderer call against it will
+	// crash.  On desktop, a minimized window hits the same path harmlessly.
+	// Must also be defensive if the window was never created (very early
+	// error paths).
+	if (g_appSuspended || !g_pWindow || !g_pBackend)
+		return;
+
 	g_pBackend->BeginFrame();
 
 	// Upload frame pixels to the backend
@@ -808,13 +1003,12 @@ static void RenderAndPresent() {
 	bool dbgOpen = ATUIDebuggerIsOpen();
 	bool hasTex = g_pBackend->HasTexture();
 	if (s_diagFrameCount < 5)
-		fprintf(stderr, "[DIAG] RenderAndPresent: debuggerOpen=%d hasTex=%d\n", dbgOpen, hasTex);
+		LOG_INFO("Main", "RenderAndPresent: debuggerOpen=%d hasTex=%d", dbgOpen, hasTex);
 	if (!dbgOpen) {
 		if (hasTex) {
 			g_displayRect = ComputeDisplayRect();
 			if (s_diagFrameCount < 5)
-				fprintf(stderr, "[DIAG] RenderFrame: rect=(%.1f,%.1f,%.1f,%.1f) tex=(%d,%d)\n",
-					g_displayRect.x, g_displayRect.y, g_displayRect.w, g_displayRect.h,
+				LOG_INFO("Main", "RenderFrame: rect=(%.1f,%.1f,%.1f,%.1f) tex=(%d,%d)", g_displayRect.x, g_displayRect.y, g_displayRect.w, g_displayRect.h,
 					g_pBackend->GetTextureWidth(), g_pBackend->GetTextureHeight());
 			g_pBackend->RenderFrame(
 				g_displayRect.x, g_displayRect.y,
@@ -940,8 +1134,7 @@ static void ATApplyFullscreenMode(SDL_Window *window) {
 					&closest)) {
 				SDL_SetWindowFullscreenMode(window, &closest);
 			} else {
-				fprintf(stderr, "[AltirraSDL] No matching fullscreen mode %ux%u@%u Hz, falling back to borderless\n",
-					g_ATOptions.mFullScreenWidth, g_ATOptions.mFullScreenHeight,
+				LOG_INFO("Main", "No matching fullscreen mode %ux%u@%u Hz, falling back to borderless", g_ATOptions.mFullScreenWidth, g_ATOptions.mFullScreenHeight,
 					g_ATOptions.mFullScreenRefreshRate);
 				SDL_SetWindowFullscreenMode(window, NULL);
 			}
@@ -1034,7 +1227,22 @@ static void ATRestoreWindowPlacement(SDL_Window *window) {
 // =========================================================================
 
 int main(int argc, char *argv[]) {
-	fprintf(stderr, "[AltirraSDL] Starting...\n");
+#ifdef __ANDROID__
+	// Must be installed before ANY fprintf(stderr, ...) / LOG_* macro call
+	// or SDL logging call, so every startup diagnostic reaches logcat.
+	ATAndroidInstallStderrBridge();
+#endif
+
+	// Phase tracker for the top-level try/catch below: any uncaught
+	// exception during init is reported with the phase name that was
+	// current when it threw, so logcat / message box show exactly
+	// where we died.  Without this, Android shows a bare "app has
+	// stopped" dialog with no diagnostic information.
+	const char *phase = "startup";
+
+	try {
+
+	SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Altirra: starting...");
 
 	// Check for --test-mode flag (must be before SDL_Init so it's stripped from argv)
 	for (int i = 1; i < argc; ++i) {
@@ -1048,12 +1256,33 @@ int main(int argc, char *argv[]) {
 		}
 	}
 
+	phase = "SDL_Init";
 	if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_EVENTS | SDL_INIT_GAMEPAD)) {
-		fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
+		ATReportFatal(phase, SDL_GetError());
 		return 1;
 	}
 
+#ifdef ALTIRRA_MOBILE
+	// Keep the screen on while the emulator is running.  On Android this
+	// maps to FLAG_KEEP_SCREEN_ON; without it the device auto-locks
+	// during gameplay because touches on the SDL window do not count as
+	// "user interaction" to the power manager.  Desktop is unaffected
+	// (this gate is mobile-only anyway).
+	SDL_DisableScreenSaver();
+#endif
+
 	VDRegistryAppKey::setDefaultKey("AltirraSDL");
+
+	phase = "registry load";
+	{
+		extern VDStringA ATGetConfigDir();
+		SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+			"Altirra: config dir = %s", ATGetConfigDir().c_str());
+	}
+	// If the previous session died, load the persisted crash report so
+	// the viewer can show it on the first frame.  Safe to call before
+	// any UI is up — the actual viewer render happens later.
+	ATCrashReportLoadPrevious();
 
 	// Load persisted settings from ~/.config/altirra/settings.ini
 	extern void ATRegistryLoadFromDisk();
@@ -1062,6 +1291,8 @@ int main(int argc, char *argv[]) {
 	// Capture whether the registry had any data before anything writes to it.
 	// Used later for first-run detection (matches Windows main.cpp:3371).
 	const bool registryHadAnything = VDRegistryAppKey("", false).isReady();
+
+	phase = "window/GL";
 
 	const int kDefaultWidth = 1280;
 	const int kDefaultHeight = 720;
@@ -1084,14 +1315,14 @@ int main(int argc, char *argv[]) {
 			SDL_GL_MakeCurrent(g_pWindow, glContext);
 			if (GLLoadFunctions()) {
 				useGL = true;
-				fprintf(stderr, "[AltirraSDL] OpenGL 3.3 context created successfully\n");
+				LOG_INFO("Main", "OpenGL 3.3 context created successfully");
 			} else {
-				fprintf(stderr, "[AltirraSDL] GL function loading failed, falling back to SDL_Renderer\n");
+				LOG_ERROR("Main", "GL function loading failed, falling back to SDL_Renderer");
 				SDL_GL_DestroyContext(glContext);
 				glContext = nullptr;
 			}
 		} else {
-			fprintf(stderr, "[AltirraSDL] GL context creation failed: %s\n", SDL_GetError());
+			LOG_ERROR("Main", "GL context creation failed: %s", SDL_GetError());
 		}
 	}
 
@@ -1099,7 +1330,7 @@ int main(int argc, char *argv[]) {
 	if (!useGL) {
 		if (g_pWindow) SDL_DestroyWindow(g_pWindow);
 		g_pWindow = SDL_CreateWindow("AltirraSDL", kDefaultWidth, kDefaultHeight, SDL_WINDOW_RESIZABLE);
-		if (!g_pWindow) { fprintf(stderr, "CreateWindow: %s\n", SDL_GetError()); SDL_Quit(); return 1; }
+		if (!g_pWindow) { LOG_INFO("Main", "CreateWindow: %s", SDL_GetError()); SDL_Quit(); return 1; }
 	}
 
 	// Restore saved window size, position, and fullscreen state
@@ -1111,11 +1342,12 @@ int main(int argc, char *argv[]) {
 		SDL_GL_SetSwapInterval(1);  // VSync
 	} else {
 		g_pRenderer = SDL_CreateRenderer(g_pWindow, nullptr);
-		if (!g_pRenderer) { fprintf(stderr, "CreateRenderer: %s\n", SDL_GetError()); SDL_DestroyWindow(g_pWindow); SDL_Quit(); return 1; }
+		if (!g_pRenderer) { LOG_INFO("Main", "CreateRenderer: %s", SDL_GetError()); SDL_DestroyWindow(g_pWindow); SDL_Quit(); return 1; }
 		SDL_SetRenderVSync(g_pRenderer, 1);
 		g_pBackend = new DisplayBackendSDLRenderer(g_pWindow, g_pRenderer);
 	}
 
+	phase = "ImGui init";
 	if (!ATUIInit(g_pWindow, g_pBackend)) {
 		delete g_pBackend; g_pBackend = nullptr;
 		if (g_pRenderer) SDL_DestroyRenderer(g_pRenderer);
@@ -1127,17 +1359,36 @@ int main(int argc, char *argv[]) {
 	// Register ImGui progress handler (replaces Windows ATUIInitProgressDialog)
 	ATUIInitProgressSDL3();
 
-	// Initialize test mode automation (no-op if --test-mode not passed)
+	// Initialize test mode automation (no-op if --test-mode not passed).
+	// Skipped on Android: test mode binds a Unix socket under /tmp which
+	// is not a useful path on Android and just produces confusing log noise.
+#ifndef __ANDROID__
 	if (!ATTestModeInit()) {
-		fprintf(stderr, "[AltirraSDL] Failed to initialize test mode\n");
+		LOG_ERROR("Main", "Failed to initialize test mode");
 		// Non-fatal — continue without test mode
 		g_testModeEnabled = false;
 	}
+#else
+	g_testModeEnabled = false;
+#endif
 
 	// Give the mouse capture system access to the window
 	ATUISetMouseCaptureWindow(g_pWindow);
 
-	g_pDisplay = new VDVideoDisplaySDL3(g_pRenderer, kDefaultWidth, kDefaultHeight);
+	// Use the real backing-store pixel size, not the 1280x720 we asked
+	// the OS for.  On Android SDL3 gives us the actual device resolution
+	// regardless of the requested size, and on hi-DPI desktops the pixel
+	// size differs from the logical size.
+	{
+		int pxW = kDefaultWidth, pxH = kDefaultHeight;
+		SDL_GetWindowSizeInPixels(g_pWindow, &pxW, &pxH);
+		if (pxW <= 0) pxW = kDefaultWidth;
+		if (pxH <= 0) pxH = kDefaultHeight;
+		SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+			"Altirra: display backend = %s, window pixel size = %dx%d",
+			useGL ? "OpenGL 3.3" : "SDL_Renderer", pxW, pxH);
+		g_pDisplay = new VDVideoDisplaySDL3(g_pRenderer, pxW, pxH);
+	}
 
 	// Tell the display whether the GL backend supports screen effects.
 	// This makes GTIA's IsScreenFXPreferred() return true, which enables
@@ -1161,9 +1412,11 @@ int main(int argc, char *argv[]) {
 		ATVFSInstallAtfsHandler();
 	}
 
-	fprintf(stderr, "[AltirraSDL] Initializing simulator...\n");
+	phase = "simulator init";
+	SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Altirra: initializing simulator...");
 	g_sim.Init();
 	g_sim.SetRandomSeed(rand() ^ (rand() << 15));
+	phase = "firmware load";
 	g_sim.LoadROMs();
 
 	g_sim.GetGTIA().SetVideoOutput(g_pDisplay);
@@ -1201,7 +1454,7 @@ int main(int argc, char *argv[]) {
 		if (cs < 1.0f) cs = 1.0f;
 		if (cs > 4.0f) cs = 4.0f;
 		g_mobileState.layoutConfig.contentScale = cs;
-		fprintf(stderr, "[AltirraSDL] Touch controls content scale: %.2f\n", cs);
+		LOG_INFO("Main", "Touch controls content scale: %.2f", cs);
 	}
 #endif
 
@@ -1308,6 +1561,7 @@ int main(int argc, char *argv[]) {
 
 	// Create the native audio device now that settings have been loaded
 	// (SetApi, SetLatency, etc. may have been called during ATLoadSettings).
+	phase = "audio init";
 	g_sim.GetAudioOutput()->InitNativeAudio();
 
 	// Initialize debugger engine (breakpoint manager, event callbacks, debug targets).
@@ -1356,18 +1610,24 @@ int main(int argc, char *argv[]) {
 			bool cmdLineHadAnything = (argc > 1);
 
 			if (!cmdLineHadAnything && !registryHadAnything) {
+#ifndef ALTIRRA_MOBILE
+				// Desktop-only: the setup wizard is a mouse/keyboard dialog
+				// and traps a mobile user on first launch.  The mobile
+				// frontend handles first-run through its own flow.
 				g_uiState.showSetupWizard = true;
+#endif
 			}
 		}
 	}
 
+	phase = "main loop";
 	g_pacer.Init();
 	UpdatePacerRate();
 
 	// Present once immediately so compositors show the window.
 	RenderAndPresent();
 
-	fprintf(stderr, "[AltirraSDL] Entering main loop\n");
+	SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Altirra: entering main loop");
 
 	// Main loop.  Mirrors the Windows idle handler structure:
 	//
@@ -1399,6 +1659,16 @@ int main(int argc, char *argv[]) {
 		// Tick the debugger engine (process queued commands)
 		ATUIDebuggerTick();
 
+		// Android/mobile: while backgrounded, do not advance emulation
+		// and do not render.  Just keep pumping events so we receive the
+		// resume notification.  Longer sleep to stay off the CPU.  Must
+		// be checked BEFORE pauseInactive so we take the cheap path and
+		// avoid even the no-op RenderAndPresent call.
+		if (g_appSuspended) {
+			SDL_Delay(100);
+			continue;
+		}
+
 		// Pause emulation when window loses focus (if enabled).
 		const bool pauseInactive = ATUIGetPauseWhenInactive() && !g_winActive;
 
@@ -1418,8 +1688,7 @@ int main(int argc, char *argv[]) {
 		const bool turbo = g_sim.IsTurboModeEnabled();
 
 		if (s_diagFrameCount < 5)
-			fprintf(stderr, "[DIAG] MainLoop: advance=%d hadFrame=%d running=%d paused=%d\n",
-				(int)result, hadFrame, g_sim.IsRunning(), g_sim.IsPaused());
+			LOG_INFO("Main", "MainLoop: advance=%d hadFrame=%d running=%d paused=%d", (int)result, hadFrame, g_sim.IsRunning(), g_sim.IsPaused());
 
 		if (hadFrame) {
 			// A frame was uploaded — present it and pace.
@@ -1477,7 +1746,7 @@ int main(int argc, char *argv[]) {
 		));
 		ATRegistryFlushToDisk();
 	} catch (...) {
-		fprintf(stderr, "[AltirraSDL] Warning: failed to save settings on exit\n");
+		LOG_ERROR("Main", "failed to save settings on exit");
 	}
 
 	// Detach and destroy joystick manager before simulator shutdown
@@ -1527,6 +1796,18 @@ int main(int argc, char *argv[]) {
 		g_pRenderer = nullptr;
 	}
 	SDL_DestroyWindow(g_pWindow);
+	g_pWindow = nullptr;  // avoid dangling pointer if anything below throws
 	SDL_Quit();
 	return 0;
+
+	} catch (const MyError &e) {
+		ATReportFatal(phase, e.c_str());
+		return 1;
+	} catch (const std::exception &e) {
+		ATReportFatal(phase, e.what());
+		return 1;
+	} catch (...) {
+		ATReportFatal(phase, "unknown exception");
+		return 1;
+	}
 }

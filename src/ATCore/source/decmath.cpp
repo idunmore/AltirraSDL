@@ -119,9 +119,14 @@ ATDecFloatText ATDecFloat::ToString() const {
 
 	char *dst = dt.mBuf.ch;
 
-	if (!mSignExp || !mMantissa[0])
+	if ((mSignExp & 0x7f) == 0 || !mMantissa[0]) {
+		// negative zero is not generally valid, but AFP can produce it,
+		// and it's useful to be able to see when it is improperly appearing
+		if (mSignExp)
+			*dst++ = '-';
+
 		*dst++ = '0';
-	else {
+	} else {
 		int exp = (mSignExp & 0x7f) * 2 - 0x80;
 
 		if (mSignExp & 0x80)

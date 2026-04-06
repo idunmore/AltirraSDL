@@ -21,6 +21,7 @@
 #include "shaders_screenfx.inl"
 #include "shaders_bicubic.inl"
 #include "shaders_bloom.inl"
+#include "logging.h"
 
 // ============================================================================
 // Construction / destruction
@@ -32,8 +33,8 @@ DisplayBackendGL33::DisplayBackendGL33(SDL_Window *window, SDL_GLContext glConte
 {
 	SDL_GL_MakeCurrent(window, glContext);
 
-	fprintf(stderr, "[GL] Renderer: %s\n", glGetString(GL_RENDERER));
-	fprintf(stderr, "[GL] Version:  %s\n", glGetString(GL_VERSION));
+	LOG_INFO("GL", "Renderer: %s", glGetString(GL_RENDERER));
+	LOG_INFO("GL", "Version:  %s", glGetString(GL_VERSION));
 
 	// Create empty VAO for fullscreen triangle draws (GL 3.3 core requires a bound VAO)
 	glGenVertexArrays(1, &mEmptyVAO);
@@ -366,8 +367,7 @@ void DisplayBackendGL33::RenderFrameInner(float dstX, float dstY, float dstW, fl
 	static int s_lastPath = -1;  // -1=uninit, 0=passthrough, 1=screenFX
 	int curPath = (hasEffects || useBicubic || useSharpBilinear) ? 1 : 0;
 	if (curPath != s_lastPath) {
-		fprintf(stderr, "[GL] Render path: %s (effects=%d bicubic=%d sharp=%d gamma=%.2f scanline=%.1f bloom=%d distort=%.2f mask=%d pal=%.2f fbo=%u)\n",
-			curPath ? "ScreenFX" : "Passthrough",
+		LOG_INFO("GL", "Render path: %s (effects=%d bicubic=%d sharp=%d gamma=%.2f scanline=%.1f bloom=%d distort=%.2f mask=%d pal=%.2f fbo=%u)", curPath ? "ScreenFX" : "Passthrough",
 			hasEffects, useBicubic, useSharpBilinear,
 			mScreenFX.mGamma, mScreenFX.mScanlineIntensity,
 			mScreenFX.mbBloomEnabled, mScreenFX.mDistortionX,

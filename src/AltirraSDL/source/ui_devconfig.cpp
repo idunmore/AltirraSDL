@@ -20,6 +20,7 @@
 #include "devicemanager.h"
 #include "ui_main.h"
 #include "ui_devconfig.h"
+#include "logging.h"
 
 // =========================================================================
 // Helpers
@@ -189,7 +190,7 @@ void ATUIRenderDeviceConfig(ATDeviceManager *devMgr) {
 				try {
 					devMgr->ReconfigureDevice(*g_devCfg.pDev, g_devCfg.props);
 				} catch (...) {
-					fprintf(stderr, "[AltirraSDL] Failed to reconfigure device\n");
+					LOG_ERROR("UI", "Failed to reconfigure device");
 				}
 				g_devCfg.Reset();
 			}

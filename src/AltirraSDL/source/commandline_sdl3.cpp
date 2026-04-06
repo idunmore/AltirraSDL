@@ -47,6 +47,7 @@
 #include "uiaccessors.h"
 #include "uikeyboard.h"
 #include "ui_main.h"
+#include "logging.h"
 
 extern ATSimulator g_sim;
 extern ATUIKeyboardOptions g_kbdOpts;
@@ -149,8 +150,7 @@ bool DoLoadDirect(const char *utf8path,
 				break;
 			}
 		} catch (const MyError& e) {
-			fprintf(stderr, "[AltirraSDL] Error loading '%s': %s\n",
-					utf8path, VDTextWToU8(VDStringW(e.wc_str())).c_str());
+			LOG_ERROR("CmdLine", "Error loading '%s': %s", utf8path, VDTextWToU8(VDStringW(e.wc_str())).c_str());
 			return false;
 		}
 
@@ -188,8 +188,7 @@ bool DoLoadDirect(const char *utf8path,
 
 		if (ctx.mLoadType == kATImageType_Cartridge) {
 			// Unknown cart mapper — can't show dialog before main loop
-			fprintf(stderr, "[AltirraSDL] Unknown cartridge mapper for '%s' — "
-					"use --cartmapper to specify\n", utf8path);
+			LOG_INFO("CmdLine", "Unknown cartridge mapper for '%s' — " "use --cartmapper to specify", utf8path);
 			break;
 		}
 
@@ -225,12 +224,12 @@ const char *ConsumeArg(int argc, char **argv, int &i,
 		return nullptr;
 	consumed[i] = true;
 	if (i + 1 >= argc) {
-		fprintf(stderr, "[AltirraSDL] --%s requires an argument\n", name);
+		LOG_INFO("CmdLine", "--%s requires an argument", name);
 		return nullptr;
 	}
 	// Don't consume the next argument if it looks like a switch
 	if (argv[i + 1][0] == '-' && argv[i + 1][1] == '-' && argv[i + 1][2] != '\0') {
-		fprintf(stderr, "[AltirraSDL] --%s requires an argument (got switch %s)\n", name, argv[i + 1]);
+		LOG_INFO("CmdLine", "--%s requires an argument (got switch %s)", name, argv[i + 1]);
 		return nullptr;
 	}
 	consumed[++i] = true;
@@ -290,20 +289,7 @@ bool ATProcessCommandLineSDL3(int argc, char **argv) {
 		// ---- Help ----
 		if (MatchSwitch(sw, "help") || MatchSwitch(sw, "?")) {
 			consumed[i] = true;
-			fprintf(stderr,
-				"Usage: AltirraSDL [options] [image-file ...]\n\n"
-				"Display:  --f  --ntsc --pal --secam --ntsc50 --pal60\n"
-				"          --artifact <mode>  --vsync/--novsync\n"
-				"Hardware: --hardware <mode>  --kernel <name>  --memsize <size>\n"
-				"          --stereo/--nostereo  --basic/--nobasic\n"
-				"Media:    --cart/--disk/--run/--runbas/--tape <file>\n"
-				"          --bootro/--bootrw/--bootvrw/--bootvrwsafe\n"
-				"Devices:  --adddevice/--setdevice/--removedevice <spec>\n"
-				"          --cleardevices  --pclink <mode,path>  --hdpath <path>\n"
-				"Debugger: --debug  --debugcmd <cmd>  --autotest\n"
-				"Other:    --type <text>  --rawkeys  --diskemu <mode>\n\n"
-				"Use Help > Command-Line Help in the menu for full details.\n"
-			);
+			LOG_INFO("CmdLine", "Usage: AltirraSDL [options] [image-file ...]\n\n" "Display:  --f  --ntsc --pal --secam --ntsc50 --pal60\n" "          --artifact <mode>  --vsync/--novsync\n" "Hardware: --hardware <mode>  --kernel <name>  --memsize <size>\n" "          --stereo/--nostereo  --basic/--nobasic\n" "Media:    --cart/--disk/--run/--runbas/--tape <file>\n" "          --bootro/--bootrw/--bootvrw/--bootvrwsafe\n" "Devices:  --adddevice/--setdevice/--removedevice <spec>\n" "          --cleardevices  --pclink <mode,path>  --hdpath <path>\n" "Debugger: --debug  --debugcmd <cmd>  --autotest\n" "Other:    --type <text>  --rawkeys  --diskemu <mode>\n\n" "Use Help > Command-Line Help in the menu for full details.");
 			continue;
 		}
 
@@ -463,7 +449,7 @@ bool ATProcessCommandLineSDL3(int argc, char **argv) {
 			else if (strcasecmp(val, "d500") == 0) base = 0xD500;
 			else if (strcasecmp(val, "d600") == 0) base = 0xD600;
 			else {
-				fprintf(stderr, "[AltirraSDL] Invalid SoundBoard memory base: %s\n", val);
+				LOG_INFO("CmdLine", "Invalid SoundBoard memory base: %s", val);
 				continue;
 			}
 
@@ -524,7 +510,7 @@ bool ATProcessCommandLineSDL3(int argc, char **argv) {
 			else if (strcasecmp(val, "xegs") == 0) g_sim.SetHardwareMode(kATHardwareMode_XEGS);
 			else if (strcasecmp(val, "1400xl") == 0) g_sim.SetHardwareMode(kATHardwareMode_1400XL);
 			else if (strcasecmp(val, "5200") == 0) g_sim.SetHardwareMode(kATHardwareMode_5200);
-			else fprintf(stderr, "[AltirraSDL] Invalid hardware mode: %s\n", val);
+			else LOG_INFO("CmdLine", "Invalid hardware mode: %s", val);
 			continue;
 		}
 
@@ -541,7 +527,7 @@ bool ATProcessCommandLineSDL3(int argc, char **argv) {
 			else if (strcasecmp(val, "llexl") == 0) g_sim.SetKernel(kATFirmwareId_Kernel_LLEXL);
 			else if (strcasecmp(val, "hle") == 0) g_sim.SetKernel(kATFirmwareId_Kernel_LLE);
 			else if (strcasecmp(val, "5200lle") == 0) g_sim.SetKernel(kATFirmwareId_5200_LLE);
-			else fprintf(stderr, "[AltirraSDL] Invalid kernel mode: %s\n", val);
+			else LOG_INFO("CmdLine", "Invalid kernel mode: %s", val);
 			continue;
 		}
 
@@ -550,7 +536,7 @@ bool ATProcessCommandLineSDL3(int argc, char **argv) {
 			VDStringW wval = VDTextU8ToW(VDStringSpanA(val));
 			const auto id = g_sim.GetFirmwareManager()->GetFirmwareByRefString(wval.c_str(), ATIsKernelFirmwareType);
 			if (!id)
-				fprintf(stderr, "[AltirraSDL] No matching kernel for reference: %s\n", val);
+				LOG_INFO("CmdLine", "No matching kernel for reference: %s", val);
 			else
 				g_sim.SetKernel(id);
 			continue;
@@ -560,7 +546,7 @@ bool ATProcessCommandLineSDL3(int argc, char **argv) {
 			const auto id = g_sim.GetFirmwareManager()->GetFirmwareByRefString(wval.c_str(),
 				[](ATFirmwareType type) { return type == kATFirmwareType_Basic; });
 			if (!id)
-				fprintf(stderr, "[AltirraSDL] No matching BASIC for reference: %s\n", val);
+				LOG_INFO("CmdLine", "No matching BASIC for reference: %s", val);
 			else
 				g_sim.SetBasic(id);
 			continue;
@@ -583,7 +569,7 @@ bool ATProcessCommandLineSDL3(int argc, char **argv) {
 			else if (strcasecmp(val, "576K") == 0) g_sim.SetMemoryMode(kATMemoryMode_576K);
 			else if (strcasecmp(val, "576KCOMPY") == 0) g_sim.SetMemoryMode(kATMemoryMode_576K_Compy);
 			else if (strcasecmp(val, "1088K") == 0) g_sim.SetMemoryMode(kATMemoryMode_1088K);
-			else fprintf(stderr, "[AltirraSDL] Invalid memory mode: %s\n", val);
+			else LOG_INFO("CmdLine", "Invalid memory mode: %s", val);
 			continue;
 		}
 
@@ -597,7 +583,7 @@ bool ATProcessCommandLineSDL3(int argc, char **argv) {
 			else if (strcasecmp(val, "1024K") == 0) g_sim.SetAxlonMemoryMode(6);
 			else if (strcasecmp(val, "2048K") == 0) g_sim.SetAxlonMemoryMode(7);
 			else if (strcasecmp(val, "4096K") == 0) g_sim.SetAxlonMemoryMode(7);
-			else fprintf(stderr, "[AltirraSDL] Invalid Axlon memory size: %s\n", val);
+			else LOG_INFO("CmdLine", "Invalid Axlon memory size: %s", val);
 			continue;
 		}
 
@@ -609,7 +595,7 @@ bool ATProcessCommandLineSDL3(int argc, char **argv) {
 			else if (strcmp(val, "3") == 0) g_sim.SetHighMemoryBanks(3);
 			else if (strcmp(val, "15") == 0) g_sim.SetHighMemoryBanks(15);
 			else if (strcmp(val, "63") == 0) g_sim.SetHighMemoryBanks(63);
-			else fprintf(stderr, "[AltirraSDL] Invalid high banks value: %s\n", val);
+			else LOG_INFO("CmdLine", "Invalid high banks value: %s", val);
 			continue;
 		}
 
@@ -620,7 +606,7 @@ bool ATProcessCommandLineSDL3(int argc, char **argv) {
 			else if (strcasecmp(val, "ntschi") == 0) g_sim.GetGTIA().SetArtifactingMode(ATArtifactMode::NTSCHi);
 			else if (strcasecmp(val, "pal") == 0) g_sim.GetGTIA().SetArtifactingMode(ATArtifactMode::PAL);
 			else if (strcasecmp(val, "palhi") == 0) g_sim.GetGTIA().SetArtifactingMode(ATArtifactMode::PALHi);
-			else fprintf(stderr, "[AltirraSDL] Invalid artifact mode: %s\n", val);
+			else LOG_INFO("CmdLine", "Invalid artifact mode: %s", val);
 			continue;
 		}
 
@@ -697,7 +683,7 @@ bool ATProcessCommandLineSDL3(int argc, char **argv) {
 			std::string valStr(val);
 			auto commaPos = valStr.find(',');
 			if (commaPos == std::string::npos) {
-				fprintf(stderr, "[AltirraSDL] Invalid PCLink mount string: %s\n", val);
+				LOG_INFO("CmdLine", "Invalid PCLink mount string: %s", val);
 				continue;
 			}
 
@@ -708,7 +694,7 @@ bool ATProcessCommandLineSDL3(int argc, char **argv) {
 			if (strcasecmp(mode.c_str(), "rw") == 0)
 				write = true;
 			else if (strcasecmp(mode.c_str(), "ro") != 0) {
-				fprintf(stderr, "[AltirraSDL] Invalid PCLink mount mode: %s\n", mode.c_str());
+				LOG_INFO("CmdLine", "Invalid PCLink mount mode: %s", mode.c_str());
 				continue;
 			}
 
@@ -787,7 +773,7 @@ bool ATProcessCommandLineSDL3(int argc, char **argv) {
 		if ((val = ConsumeArg(argc, argv, i, consumed, "cartmapper")) != nullptr) {
 			imageCartMapper = ATGetCartridgeModeForMapper(atoi(val));
 			if (imageCartMapper <= 0 || imageCartMapper >= kATCartridgeModeCount) {
-				fprintf(stderr, "[AltirraSDL] Unsupported or invalid cartridge mapper: %s\n", val);
+				LOG_INFO("CmdLine", "Unsupported or invalid cartridge mapper: %s", val);
 				imageCartMapper = 0;
 			}
 			continue;
@@ -810,7 +796,7 @@ bool ATProcessCommandLineSDL3(int argc, char **argv) {
 		if ((val = ConsumeArg(argc, argv, i, consumed, "diskemu")) != nullptr) {
 			auto result = ATParseEnum<ATDiskEmulationMode>(VDStringSpanA(val));
 			if (!result.mValid) {
-				fprintf(stderr, "[AltirraSDL] Unsupported disk emulation mode: %s\n", val);
+				LOG_INFO("CmdLine", "Unsupported disk emulation mode: %s", val);
 			} else {
 				for (int d = 0; d < 15; ++d)
 					g_sim.GetDiskDrive(d).SetEmulationMode(result.mValue);
@@ -831,7 +817,7 @@ bool ATProcessCommandLineSDL3(int argc, char **argv) {
 		}
 		if ((val = ConsumeArg(argc, argv, i, consumed, "disk")) != nullptr) {
 			if (diskIndex >= 15) {
-				fprintf(stderr, "[AltirraSDL] Warning: --disk index %d exceeds maximum (15 drives), ignoring '%s'\n", diskIndex, val);
+				LOG_WARN("CmdLine", "--disk index %d exceeds maximum (15 drives), ignoring '%s'", diskIndex, val);
 				continue;
 			}
 			if (!haveUnloadedAllImages) {
@@ -905,20 +891,20 @@ bool ATProcessCommandLineSDL3(int argc, char **argv) {
 			const ATDeviceDefinition *def = dm.GetDeviceDefinition(tagA.c_str());
 
 			if (!def || (def->mFlags & kATDeviceDefFlag_Hidden)) {
-				fprintf(stderr, "[AltirraSDL] Unknown device type: %s\n", val);
+				LOG_INFO("CmdLine", "Unknown device type: %s", val);
 			} else if (def->mFlags & kATDeviceDefFlag_Internal) {
 				IATDevice *dev = dm.GetDeviceByTag(tagA.c_str());
 				if (dev) {
 					try { dm.ReconfigureDevice(*dev, pset); }
 					catch (const MyError& e) {
-						fprintf(stderr, "[AltirraSDL] Error configuring device '%s': %s\n", val, e.c_str());
+						LOG_ERROR("CmdLine", "Error configuring device '%s': %s", val, e.c_str());
 					}
 				} else
-					fprintf(stderr, "[AltirraSDL] Missing internal device: %s\n", val);
+					LOG_INFO("CmdLine", "Missing internal device: %s", val);
 			} else {
 				try { dm.AddDevice(def, pset); }
 				catch (const MyError& e) {
-					fprintf(stderr, "[AltirraSDL] Error adding device '%s': %s\n", val, e.c_str());
+					LOG_ERROR("CmdLine", "Error adding device '%s': %s", val, e.c_str());
 				}
 			}
 			continue;
@@ -942,7 +928,7 @@ bool ATProcessCommandLineSDL3(int argc, char **argv) {
 			const ATDeviceDefinition *def = dm.GetDeviceDefinition(tagA.c_str());
 
 			if (!def || (def->mFlags & kATDeviceDefFlag_Hidden)) {
-				fprintf(stderr, "[AltirraSDL] Unknown device type: %s\n", val);
+				LOG_INFO("CmdLine", "Unknown device type: %s", val);
 			} else {
 				try {
 					IATDevice *dev = dm.GetDeviceByTag(tagA.c_str());
@@ -950,7 +936,7 @@ bool ATProcessCommandLineSDL3(int argc, char **argv) {
 						if (dev)
 							dm.ReconfigureDevice(*dev, pset);
 						else
-							fprintf(stderr, "[AltirraSDL] Missing internal device: %s\n", val);
+							LOG_INFO("CmdLine", "Missing internal device: %s", val);
 					} else {
 						if (dev)
 							dm.ReconfigureDevice(*dev, pset);
@@ -958,7 +944,7 @@ bool ATProcessCommandLineSDL3(int argc, char **argv) {
 							dm.AddDevice(def, pset);
 					}
 				} catch (const MyError& e) {
-					fprintf(stderr, "[AltirraSDL] Error with --setdevice '%s': %s\n", val, e.c_str());
+					LOG_ERROR("CmdLine", "Error with --setdevice '%s': %s", val, e.c_str());
 				}
 			}
 			continue;
@@ -978,7 +964,7 @@ bool ATProcessCommandLineSDL3(int argc, char **argv) {
 
 		// Unknown switch — warn but continue (don't abort like Windows)
 		if (arg[0] == '-' && arg[1] == '-' && arg[2] != '\0') {
-			fprintf(stderr, "[AltirraSDL] Unknown command-line switch: %s\n", arg);
+			LOG_INFO("CmdLine", "Unknown command-line switch: %s", arg);
 			consumed[i] = true;
 		}
 	}

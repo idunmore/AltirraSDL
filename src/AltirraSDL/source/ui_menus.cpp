@@ -52,6 +52,7 @@
 #include <algorithm>
 #include <string>
 #include <vector>
+#include "logging.h"
 
 extern ATSimulator g_sim;
 extern ATUIKeyboardOptions g_kbdOpts;
@@ -187,9 +188,9 @@ void ATUIQuickSaveState() {
 	try {
 		vdrefptr<IATSerializable> info;
 		g_sim.CreateSnapshot(~g_pQuickSaveState, ~info);
-		fprintf(stderr, "[AltirraSDL] Quick save state created\n");
+		LOG_INFO("UI", "Quick save state created");
 	} catch (...) {
-		fprintf(stderr, "[AltirraSDL] Quick save failed\n");
+		LOG_ERROR("UI", "Quick save failed");
 	}
 }
 
@@ -199,9 +200,9 @@ void ATUIQuickLoadState() {
 	try {
 		g_sim.ApplySnapshot(*g_pQuickSaveState, nullptr);
 		g_sim.Resume();
-		fprintf(stderr, "[AltirraSDL] Quick load state applied\n");
+		LOG_INFO("UI", "Quick load state applied");
 	} catch (...) {
-		fprintf(stderr, "[AltirraSDL] Quick load failed\n");
+		LOG_ERROR("UI", "Quick load failed");
 	}
 }
 
@@ -1324,9 +1325,9 @@ static void RenderInputMenu(ATSimulator &sim, ATUIState &state) {
 				VDStringA msg;
 				msg = "Quick map: ";
 				msg += VDTextWToU8(pMap->GetName(), -1);
-				fprintf(stderr, "[AltirraSDL] %s\n", msg.c_str());
+				LOG_INFO("UI", "%s", msg.c_str());
 			} else {
-				fprintf(stderr, "[AltirraSDL] Quick maps disabled\n");
+				LOG_INFO("UI", "Quick maps disabled");
 			}
 		}
 	}

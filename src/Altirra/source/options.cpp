@@ -133,9 +133,9 @@ void ATOptionsExchange(VDRegistryKey& key, bool write, ATOptions& opts) {
 			mode = key.getInt("UI: Theme mode", -1);
 			if (mode >= 0 && mode <= 2)
 				opts.mThemeMode = (ATUIThemeMode)mode;
-			else if (key.getValueType("UI: Use dark theme") != VDRegistryKey::kTypeUnknown)
-				opts.mThemeMode = opts.mbDarkTheme ? ATUIThemeMode::Dark : ATUIThemeMode::Light;
-			// else: fresh install — keep default ATUIThemeMode::System
+			else if (key.getValueType("UI: Use dark theme") != VDRegistryKey::kTypeUnknown && opts.mbDarkTheme)
+				opts.mThemeMode = ATUIThemeMode::Dark;
+			// else: no explicit preference — keep default ATUIThemeMode::System
 		}
 	}
 

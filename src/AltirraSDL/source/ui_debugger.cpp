@@ -128,7 +128,7 @@ static void EnsurePaneExists(uint32 id) {
 			} else if (id >= kATUIPaneId_WatchN && id <= kATUIPaneId_WatchN + 3) {
 				ATUIDebuggerEnsureWatchPane(id - kATUIPaneId_WatchN);
 			} else {
-				fprintf(stderr, "[Debugger] ATActivateUIPane(0x%x) — no ImGui pane implemented yet\n", id);
+				LOG_INFO("Debugger", "ATActivateUIPane(0x%x) — no ImGui pane implemented yet", id);
 			}
 			break;
 	}

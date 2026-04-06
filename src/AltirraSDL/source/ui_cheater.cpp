@@ -14,6 +14,7 @@
 #include "ui_main.h"
 #include "simulator.h"
 #include "cheatengine.h"
+#include "logging.h"
 
 extern ATSimulator g_sim;
 
@@ -177,7 +178,7 @@ void ATUIRenderCheater(ATSimulator &sim, ATUIState &state) {
 				s_selectedResult = -1;
 				s_selectedCheat = -1;
 			} catch (const MyError &e) {
-				fprintf(stderr, "[AltirraSDL] Failed to load cheats: %s\n", e.c_str());
+				LOG_ERROR("UI", "Failed to load cheats: %s", e.c_str());
 			}
 		}
 		if (!s_pendingCheatSavePath.empty()) {
@@ -186,7 +187,7 @@ void ATUIRenderCheater(ATSimulator &sim, ATUIState &state) {
 			try {
 				ce->Save(wpath.c_str());
 			} catch (const MyError &e) {
-				fprintf(stderr, "[AltirraSDL] Failed to save cheats: %s\n", e.c_str());
+				LOG_ERROR("UI", "Failed to save cheats: %s", e.c_str());
 			}
 		}
 	}

@@ -36,7 +36,7 @@ std::string TestModeIPC::Init() {
 
 	mConnectEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
 	if (!mConnectEvent) {
-		fprintf(stderr, "[TestMode] CreateEvent failed: %lu\n", GetLastError());
+		LOG_ERROR("TestMode", "CreateEvent failed: %lu", GetLastError());
 		return {};
 	}
 
@@ -52,8 +52,7 @@ std::string TestModeIPC::Init() {
 	);
 
 	if (mListenPipe == INVALID_HANDLE_VALUE) {
-		fprintf(stderr, "[TestMode] CreateNamedPipe(%s) failed: %lu\n",
-			mPipeName.c_str(), GetLastError());
+		LOG_ERROR("TestMode", "CreateNamedPipe(%s) failed: %lu", mPipeName.c_str(), GetLastError());
 		CloseHandle(mConnectEvent);
 		mConnectEvent = nullptr;
 		return {};
@@ -75,7 +74,7 @@ std::string TestModeIPC::Init() {
 			mClientPipe = mListenPipe;
 			mConnectPending = false;
 		} else {
-			fprintf(stderr, "[TestMode] ConnectNamedPipe failed: %lu\n", err);
+			LOG_ERROR("TestMode", "ConnectNamedPipe failed: %lu", err);
 			CloseHandle(mListenPipe);
 			mListenPipe = INVALID_HANDLE_VALUE;
 			CloseHandle(mConnectEvent);
@@ -84,7 +83,7 @@ std::string TestModeIPC::Init() {
 		}
 	}
 
-	fprintf(stderr, "[TestMode] Listening on %s\n", mPipeName.c_str());
+	LOG_INFO("TestMode", "Listening on %s", mPipeName.c_str());
 	return mPipeName;
 }
 
@@ -118,7 +117,7 @@ bool TestModeIPC::TryAccept() {
 	// ConnectNamedPipe completed — client is connected
 	mClientPipe = mListenPipe;
 	mConnectPending = false;
-	fprintf(stderr, "[TestMode] Client connected\n");
+	LOG_INFO("TestMode", "Client connected");
 	return true;
 }
 
@@ -150,7 +149,7 @@ void TestModeIPC::DisconnectClient() {
 			mClientPipe = mListenPipe;
 			mConnectPending = false;
 		} else {
-			fprintf(stderr, "[TestMode] Re-arm ConnectNamedPipe failed: %lu\n", err);
+			LOG_ERROR("TestMode", "Re-arm ConnectNamedPipe failed: %lu", err);
 		}
 	}
 }
@@ -202,6 +201,7 @@ int TestModeIPC::Recv(void *buf, size_t len) {
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
+#include "logging.h"
 
 TestModeIPC::TestModeIPC() {
 }
@@ -218,7 +218,7 @@ std::string TestModeIPC::Init() {
 
 	mListenFd = socket(AF_UNIX, SOCK_STREAM, 0);
 	if (mListenFd < 0) {
-		fprintf(stderr, "[TestMode] socket() failed: %s\n", strerror(errno));
+		LOG_ERROR("TestMode", "socket() failed: %s", strerror(errno));
 		return {};
 	}
 
@@ -228,14 +228,14 @@ std::string TestModeIPC::Init() {
 	strncpy(addr.sun_path, mSockPath.c_str(), sizeof(addr.sun_path) - 1);
 
 	if (bind(mListenFd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-		fprintf(stderr, "[TestMode] bind(%s) failed: %s\n", mSockPath.c_str(), strerror(errno));
+		LOG_ERROR("TestMode", "bind(%s) failed: %s", mSockPath.c_str(), strerror(errno));
 		close(mListenFd);
 		mListenFd = -1;
 		return {};
 	}
 
 	if (listen(mListenFd, 1) < 0) {
-		fprintf(stderr, "[TestMode] listen() failed: %s\n", strerror(errno));
+		LOG_ERROR("TestMode", "listen() failed: %s", strerror(errno));
 		close(mListenFd);
 		mListenFd = -1;
 		unlink(mSockPath.c_str());
@@ -245,7 +245,7 @@ std::string TestModeIPC::Init() {
 	// Non-blocking accept
 	fcntl(mListenFd, F_SETFL, O_NONBLOCK);
 
-	fprintf(stderr, "[TestMode] Listening on %s\n", mSockPath.c_str());
+	LOG_INFO("TestMode", "Listening on %s", mSockPath.c_str());
 	return mSockPath;
 }
 
@@ -265,7 +265,7 @@ bool TestModeIPC::TryAccept() {
 
 	fcntl(fd, F_SETFL, O_NONBLOCK);
 	mClientFd = fd;
-	fprintf(stderr, "[TestMode] Client connected\n");
+	LOG_INFO("TestMode", "Client connected");
 	return true;
 }
 

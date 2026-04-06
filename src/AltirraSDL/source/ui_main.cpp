@@ -175,6 +175,7 @@ void ATUIPollDeferredActions();
 #include "compatengine.h"
 #include "compatdb.h"
 #include "uicompat.h"
+#include "logging.h"
 
 // Pending compat check flag — set after boot, consumed by render loop
 static bool g_compatCheckPending = false;
@@ -665,7 +666,7 @@ void ATUIPollDeferredActions() {
 			g_showToolsResult = true;
 		} catch (...) {
 			VDStringA u8 = VDTextWToU8(a.path);
-			fprintf(stderr, "[AltirraSDL] Deferred action %d failed for: %s\n", a.type, u8.c_str());
+			LOG_ERROR("UI", "Deferred action %d failed for: %s", a.type, u8.c_str());
 		}
 	}
 }
@@ -771,7 +772,7 @@ bool ATUIInit(SDL_Window *window, IDisplayBackend *backend) {
 		// match the larger font
 		ImGuiStyle &style = ImGui::GetStyle();
 		style.ScaleAllSizes(cs);
-		fprintf(stderr, "[AltirraSDL] Mobile DPI scale: %.2f\n", cs);
+		LOG_INFO("UI", "Mobile DPI scale: %.2f", cs);
 	}
 #endif
 
@@ -781,26 +782,26 @@ bool ATUIInit(SDL_Window *window, IDisplayBackend *backend) {
 		s_usingGLBackend = true;
 		auto *glBackend = static_cast<DisplayBackendGL33 *>(backend);
 		if (!ImGui_ImplSDL3_InitForOpenGL(window, glBackend->GetGLContext())) {
-			fprintf(stderr, "[AltirraSDL] ImGui SDL3/OpenGL init failed\n");
+			LOG_ERROR("UI", "ImGui SDL3/OpenGL init failed");
 			return false;
 		}
 		if (!ImGui_ImplOpenGL3_Init("#version 330 core")) {
-			fprintf(stderr, "[AltirraSDL] ImGui OpenGL3 init failed\n");
+			LOG_ERROR("UI", "ImGui OpenGL3 init failed");
 			return false;
 		}
-		fprintf(stderr, "[AltirraSDL] ImGui initialized (OpenGL 3.3, docking enabled)\n");
+		LOG_INFO("UI", "ImGui initialized (OpenGL 3.3, docking enabled)");
 	} else {
 		s_usingGLBackend = false;
 		SDL_Renderer *renderer = backend->GetSDLRenderer();
 		if (!ImGui_ImplSDL3_InitForSDLRenderer(window, renderer)) {
-			fprintf(stderr, "[AltirraSDL] ImGui SDL3 init failed\n");
+			LOG_ERROR("UI", "ImGui SDL3 init failed");
 			return false;
 		}
 		if (!ImGui_ImplSDLRenderer3_Init(renderer)) {
-			fprintf(stderr, "[AltirraSDL] ImGui SDLRenderer3 init failed\n");
+			LOG_ERROR("UI", "ImGui SDLRenderer3 init failed");
 			return false;
 		}
-		fprintf(stderr, "[AltirraSDL] ImGui initialized (SDL_Renderer, docking enabled)\n");
+		LOG_INFO("UI", "ImGui initialized (SDL_Renderer, docking enabled)");
 	}
 
 	return true;
@@ -934,7 +935,7 @@ static SDL_Surface *ReadFramebufferToSurface(IDisplayBackend *backend) {
 static void CopyFrameToClipboard(IDisplayBackend *backend) {
 	SDL_Surface *surface = ReadFramebufferToSurface(backend);
 	if (!surface) {
-		fprintf(stderr, "[AltirraSDL] Copy frame: failed to read pixels: %s\n", SDL_GetError());
+		LOG_ERROR("UI", "Copy frame: failed to read pixels: %s", SDL_GetError());
 		return;
 	}
 
@@ -943,9 +944,9 @@ static void CopyFrameToClipboard(IDisplayBackend *backend) {
 	// with the OLD userdata (old surface), then installs the new callbacks.
 	const char *mimeTypes[] = { "image/bmp" };
 	if (SDL_SetClipboardData(ClipboardDataCallback, ClipboardCleanupCallback, surface, mimeTypes, 1))
-		fprintf(stderr, "[AltirraSDL] Frame copied to clipboard\n");
+		LOG_INFO("UI", "Frame copied to clipboard");
 	else
-		fprintf(stderr, "[AltirraSDL] Failed to copy frame to clipboard: %s\n", SDL_GetError());
+		LOG_ERROR("UI", "Failed to copy frame to clipboard: %s", SDL_GetError());
 }
 
 // =========================================================================
@@ -1477,6 +1478,14 @@ void ATUIRenderFrame(ATSimulator &sim, VDVideoDisplaySDL3 &display,
 	ImGui_ImplSDL3_NewFrame();
 	ImGui::NewFrame();
 
+	// Crash report viewer — no-op if no report is pending.  Rendered
+	// early so it is on top and usable even if something later in the
+	// frame disables parts of the UI.
+	{
+		extern void ATCrashReportRender();
+		ATCrashReportRender();
+	}
+
 	SDL_Window *window = backend->GetWindow();
 
 #ifdef ALTIRRA_MOBILE
@@ -1616,12 +1625,12 @@ void ATUIRenderFrame(ATSimulator &sim, VDVideoDisplaySDL3 &display,
 			SDL_Surface *surface = ReadFramebufferToSurface(backend);
 			if (surface) {
 				if (SDL_SaveBMP(surface, savePath.c_str()))
-					fprintf(stderr, "[AltirraSDL] Frame saved to %s\n", savePath.c_str());
+					LOG_INFO("UI", "Frame saved to %s", savePath.c_str());
 				else
-					fprintf(stderr, "[AltirraSDL] Failed to save frame: %s\n", SDL_GetError());
+					LOG_ERROR("UI", "Failed to save frame: %s", SDL_GetError());
 				SDL_DestroySurface(surface);
 			} else {
-				fprintf(stderr, "[AltirraSDL] Failed to read pixels: %s\n", SDL_GetError());
+				LOG_ERROR("UI", "Failed to read pixels: %s", SDL_GetError());
 			}
 		}
 

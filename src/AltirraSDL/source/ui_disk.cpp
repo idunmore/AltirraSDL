@@ -22,6 +22,7 @@
 #include "diskinterface.h"
 #include "disk.h"
 #include <at/atio/diskimage.h>
+#include "logging.h"
 
 extern ATSimulator g_sim;
 
@@ -198,7 +199,7 @@ static void RenderCreateDiskDialog() {
 				if (fs)
 					fs->Flush();
 			} catch (const MyError& e) {
-				fprintf(stderr, "[AltirraSDL] Format error: %s\n", e.c_str());
+				LOG_ERROR("UI", "Format error: %s", e.c_str());
 			}
 		}
 
@@ -223,9 +224,9 @@ static void DiskMountCallback(void *userdata, const char * const *filelist, int)
 	VDStringW widePath = VDTextU8ToW(filelist[0], -1);
 	try {
 		g_sim.GetDiskInterface(driveIdx).LoadDisk(widePath.c_str());
-		fprintf(stderr, "[AltirraSDL] Mounted D%d: %s\n", driveIdx + 1, filelist[0]);
+		LOG_INFO("UI", "Mounted D%d: %s", driveIdx + 1, filelist[0]);
 	} catch (...) {
-		fprintf(stderr, "[AltirraSDL] Failed to mount D%d: %s\n", driveIdx + 1, filelist[0]);
+		LOG_ERROR("UI", "Failed to mount D%d: %s", driveIdx + 1, filelist[0]);
 	}
 }
 
@@ -236,9 +237,9 @@ static void DiskSaveAsCallback(void *userdata, const char * const *filelist, int
 	VDStringW widePath = VDTextU8ToW(filelist[0], -1);
 	try {
 		g_sim.GetDiskInterface(driveIdx).SaveDiskAs(widePath.c_str(), kATDiskImageFormat_ATR);
-		fprintf(stderr, "[AltirraSDL] Saved D%d as: %s\n", driveIdx + 1, filelist[0]);
+		LOG_INFO("UI", "Saved D%d as: %s", driveIdx + 1, filelist[0]);
 	} catch (...) {
-		fprintf(stderr, "[AltirraSDL] Failed to save D%d: %s\n", driveIdx + 1, filelist[0]);
+		LOG_ERROR("UI", "Failed to save D%d: %s", driveIdx + 1, filelist[0]);
 	}
 }
 
@@ -260,7 +261,7 @@ static void BootSectorSaveCallback(void *userdata, const char * const *filelist,
 		VDFile f(wpath.c_str(), nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kCreateAlways);
 		f.write(sec, sizeof sec);
 	} catch (const MyError& e) {
-		fprintf(stderr, "[AltirraSDL] Extract boot sectors failed: %s\n", e.c_str());
+		LOG_ERROR("UI", "Extract boot sectors failed: %s", e.c_str());
 	}
 }
 
@@ -292,10 +293,9 @@ static void MountFolderCallback(void *userdata, const char * const *filelist, in
 		if (di.GetClientCount() < 2)
 			disk.SetEnabled(true);
 
-		fprintf(stderr, "[AltirraSDL] Mounted folder on D%d: %s (%s)\n",
-			driveIdx + 1, filelist[0], sdfs ? "SDFS" : "DOS2");
+		LOG_INFO("UI", "Mounted folder on D%d: %s (%s)", driveIdx + 1, filelist[0], sdfs ? "SDFS" : "DOS2");
 	} catch (const MyError& e) {
-		fprintf(stderr, "[AltirraSDL] Mount folder failed on D%d: %s\n", driveIdx + 1, e.c_str());
+		LOG_ERROR("UI", "Mount folder failed on D%d: %s", driveIdx + 1, e.c_str());
 	}
 }
 
@@ -358,7 +358,7 @@ static void Reinterleave(ATDiskInterface& diskIf, ATDiskInterleave interleave) {
 
 	if (!img->IsSafeToReinterleave()) {
 		// TODO: confirmation dialog for protected disks
-		fprintf(stderr, "[AltirraSDL] Warning: reinterleaving disk that may not work correctly with reordered sectors\n");
+		LOG_WARN("UI", "reinterleaving disk that may not work correctly with reordered sectors");
 	}
 
 	img->Reinterleave(interleave);
@@ -421,7 +421,7 @@ static void ConvertFilesystem(ATDiskInterface& diskIf, ATDiskFormatFileSystem ff
 		VDStringW origName { VDFileSplitPath(diskIf.GetPath()) };
 		diskIf.LoadDisk(nullptr, origName.c_str(), newImage);
 	} catch (const MyError& e) {
-		fprintf(stderr, "[AltirraSDL] Convert filesystem failed: %s\n", e.c_str());
+		LOG_ERROR("UI", "Convert filesystem failed: %s", e.c_str());
 	}
 }
 
@@ -456,9 +456,9 @@ static void ExpandARCFiles(ATDiskInterface& diskIf) {
 		}
 
 		fs->Flush();
-		fprintf(stderr, "[AltirraSDL] Archives expanded: %u\n", expanded);
+		LOG_INFO("UI", "Archives expanded: %u", expanded);
 	} catch (const MyError& e) {
-		fprintf(stderr, "[AltirraSDL] Expand ARCs failed: %s\n", e.c_str());
+		LOG_ERROR("UI", "Expand ARCs failed: %s", e.c_str());
 	}
 
 	diskIf.OnDiskChanged(true);
@@ -582,7 +582,7 @@ static void RenderDiskDriveContextMenu(int driveIdx, ATDiskInterface& di,
 						di.SetWriteMode(kATMediaWriteMode_RW);
 					di.SaveDisk();
 				} catch (const MyError& e) {
-					fprintf(stderr, "[AltirraSDL] Save disk failed: %s\n", e.c_str());
+					LOG_ERROR("UI", "Save disk failed: %s", e.c_str());
 				}
 			} else {
 				// Not updatable — fall through to Save As (matches Windows)
@@ -714,7 +714,7 @@ static void RenderDiskDriveContextMenu(int driveIdx, ATDiskInterface& di,
 				(void *)(intptr_t)driveIdx, window,
 				kBootSectorFilters, 2, nullptr);
 		} else {
-			fprintf(stderr, "[AltirraSDL] Disk does not have standard DOS boot sectors.\n");
+			LOG_INFO("UI", "Disk does not have standard DOS boot sectors.");
 		}
 	}
 

@@ -1,8 +1,8 @@
 //	AltirraSDL - Tape Control dialog
 //	Mirrors Windows Altirra's Tape Control dialog (IDD_TAPE_CONTROL).
-//	Transport controls (Stop/Pause/Play/SeekStart/SeekEnd/Record) and
-//	position slider.  No turbo or load/unload — those are in the menu
-//	and Configure System > Cassette page respectively.
+//	File menu (New/Load/Save/Save As/Unload), resizable window,
+//	transport controls (Stop/Pause/Play/SeekStart/SeekEnd/Record) and
+//	position slider.  Turbo defaults live in Configure System > Cassette.
 
 #include <stdafx.h>
 #include <SDL3/SDL.h>
@@ -11,11 +11,34 @@
 #include <vd2/system/VDString.h>
 #include <vd2/system/text.h>
 
+#include <SDL3/SDL_dialog.h>
+
 #include "ui_main.h"
 #include "simulator.h"
 #include "cassette.h"
 
 extern ATSimulator g_sim;
+
+// Shared cassette save file filter (mirrors Windows File > Save As).
+static const SDL_DialogFileFilter kTapeCtrlSaveFilters[] = {
+	{ "Cassette Audio (*.wav)", "wav" },
+	{ "Cassette Tape (*.cas)", "cas" },
+};
+
+static const SDL_DialogFileFilter kTapeCtrlLoadFilters[] = {
+	{ "Cassette Images", "cas;wav" },
+	{ "All Files", "*" },
+};
+
+static void TapeCtrlSaveCallback(void *, const char * const *filelist, int) {
+	if (!filelist || !filelist[0]) return;
+	ATUIPushDeferred(kATDeferred_SaveCassette, filelist[0]);
+}
+
+static void TapeCtrlLoadCallback(void *, const char * const *filelist, int) {
+	if (!filelist || !filelist[0]) return;
+	ATUIPushDeferred(kATDeferred_LoadCassette, filelist[0]);
+}
 
 // Format time as M:SS.d or H:MM:SS.d (matching Windows uitapecontrol.cpp)
 static void FormatTapeTime(char *buf, size_t bufSize, float seconds) {
@@ -34,11 +57,49 @@ static void FormatTapeTime(char *buf, size_t bufSize, float seconds) {
 }
 
 void ATUIRenderCassetteControl(ATSimulator &sim, ATUIState &state, SDL_Window *window) {
-	ImGui::SetNextWindowSize(ImVec2(400, 130), ImGuiCond_Appearing);
+	ImGui::SetNextWindowSize(ImVec2(460, 170), ImGuiCond_Appearing);
+	ImGui::SetNextWindowSizeConstraints(ImVec2(360, 150), ImVec2(FLT_MAX, FLT_MAX));
 	ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-	if (!ImGui::Begin("Cassette Tape Control", &state.showCassetteControl, ImGuiWindowFlags_NoSavedSettings)) {
+	const ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_MenuBar;
+	if (!ImGui::Begin("Cassette Tape Control", &state.showCassetteControl, kFlags)) {
 		ImGui::End();
 		return;
+	}
+
+	ATCassetteEmulator& cas = sim.GetCassette();
+	bool loaded = cas.IsLoaded();
+
+	if (ImGui::BeginMenuBar()) {
+		if (ImGui::BeginMenu("File")) {
+			if (ImGui::MenuItem("New"))
+				cas.LoadNew();
+
+			if (ImGui::MenuItem("Load...")) {
+				SDL_ShowOpenFileDialog(TapeCtrlLoadCallback, nullptr, window,
+					kTapeCtrlLoadFilters, 2, nullptr, false);
+			}
+
+			if (ImGui::MenuItem("Save", nullptr, false, loaded)) {
+				// Mirror Windows File > Save: if we have a path, overwrite; otherwise prompt.
+				SDL_ShowSaveFileDialog(TapeCtrlSaveCallback, nullptr, window,
+					kTapeCtrlSaveFilters, 2, nullptr);
+			}
+
+			if (ImGui::MenuItem("Save As...", nullptr, false, loaded)) {
+				SDL_ShowSaveFileDialog(TapeCtrlSaveCallback, nullptr, window,
+					kTapeCtrlSaveFilters, 2, nullptr);
+			}
+
+			ImGui::Separator();
+
+			if (ImGui::MenuItem("Unload", nullptr, false, loaded)) {
+				cas.Unload();
+				loaded = false;
+			}
+
+			ImGui::EndMenu();
+		}
+		ImGui::EndMenuBar();
 	}
 
 	if (ATUICheckEscClose()) {
@@ -46,9 +107,6 @@ void ATUIRenderCassetteControl(ATSimulator &sim, ATUIState &state, SDL_Window *w
 		ImGui::End();
 		return;
 	}
-
-	ATCassetteEmulator& cas = sim.GetCassette();
-	bool loaded = cas.IsLoaded();
 
 	// Status text (matches Windows IDC_PEAK_IMAGE placeholder)
 	if (!loaded) {

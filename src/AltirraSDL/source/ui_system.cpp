@@ -47,6 +47,7 @@
 #include <thread>
 #include <unordered_map>
 #include <vector>
+#include "logging.h"
 
 extern ATSimulator g_sim;
 extern ATUIManager g_ATUIManager;
@@ -1826,8 +1827,7 @@ static void RenderDevicesCategory(ATSimulator &sim) {
 								ATPropertySet pset;
 								devMgr->AddDevice(entry.tag, pset);
 							} catch (...) {
-								fprintf(stderr, "[AltirraSDL] Failed to add device: %s\n",
-									entry.tag);
+								LOG_ERROR("UI", "Failed to add device: %s", entry.tag);
 							}
 						}
 					}

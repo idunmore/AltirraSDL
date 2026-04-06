@@ -4,6 +4,7 @@
 #include "gl_helpers.h"
 #include <stdio.h>
 #include <string.h>
+#include "logging.h"
 
 GLuint GLCompileShader(GLenum type, const char *source) {
 	GLuint shader = glCreateShader(type);
@@ -15,8 +16,7 @@ GLuint GLCompileShader(GLenum type, const char *source) {
 	if (!status) {
 		char log[1024];
 		glGetShaderInfoLog(shader, sizeof(log), nullptr, log);
-		fprintf(stderr, "[GL] Shader compile error (%s):\n%s\n",
-			type == GL_VERTEX_SHADER ? "vertex" : "fragment", log);
+		LOG_ERROR("GL", "Shader compile error (%s):\n%s", type == GL_VERTEX_SHADER ? "vertex" : "fragment", log);
 		glDeleteShader(shader);
 		return 0;
 	}
@@ -33,8 +33,7 @@ GLuint GLCompileShaderMulti(GLenum type, const char *const *sources, int count) 
 	if (!status) {
 		char log[1024];
 		glGetShaderInfoLog(shader, sizeof(log), nullptr, log);
-		fprintf(stderr, "[GL] Shader compile error (%s):\n%s\n",
-			type == GL_VERTEX_SHADER ? "vertex" : "fragment", log);
+		LOG_ERROR("GL", "Shader compile error (%s):\n%s", type == GL_VERTEX_SHADER ? "vertex" : "fragment", log);
 		glDeleteShader(shader);
 		return 0;
 	}
@@ -52,7 +51,7 @@ GLuint GLLinkProgram(GLuint vs, GLuint fs) {
 	if (!status) {
 		char log[1024];
 		glGetProgramInfoLog(program, sizeof(log), nullptr, log);
-		fprintf(stderr, "[GL] Program link error:\n%s\n", log);
+		LOG_ERROR("GL", "Program link error:\n%s", log);
 		glDeleteProgram(program);
 		program = 0;
 	}
@@ -126,8 +125,7 @@ GLuint GLCreateFBO(int w, int h, GLenum internalFormat, GLuint *outTex) {
 
 	GLenum fbStatus = glCheckFramebufferStatus(GL_FRAMEBUFFER);
 	if (fbStatus != GL_FRAMEBUFFER_COMPLETE) {
-		fprintf(stderr, "[GL] FBO incomplete: 0x%04X (internalFormat=0x%04X, %dx%d)\n",
-			fbStatus, internalFormat, w, h);
+		LOG_INFO("GL", "FBO incomplete: 0x%04X (internalFormat=0x%04X, %dx%d)", fbStatus, internalFormat, w, h);
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
 		glDeleteFramebuffers(1, &fbo);
 		glDeleteTextures(1, &tex);

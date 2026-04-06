@@ -3109,6 +3109,7 @@ void ATUIRenderKeyboardShortcuts(ATUIState &state) {
 #include "disk.h"
 #include "diskinterface.h"
 #include "hleprogramloader.h"
+#include "logging.h"
 
 // Local reimplementation of uicompatdb.cpp helper (excluded by ui* regex)
 static void ATCompatAddSourcedRulesForImage(vdvector<ATCompatEDBSourcedAliasRule> &sourcedRules, IATImage *image, const wchar_t *sourceName) {
@@ -3266,7 +3267,7 @@ static void CompatDBProcessPending() {
 			g_compatDB.needsCompile = false;
 			g_compatDB.RefreshTitles();
 		} catch (const MyError &e) {
-			fprintf(stderr, "[AltirraSDL] CompatDB load failed: %s\n", e.c_str());
+			LOG_ERROR("UI", "CompatDB load failed: %s", e.c_str());
 		}
 	}
 
@@ -3277,7 +3278,7 @@ static void CompatDBProcessPending() {
 			g_compatDB.path = wpath;
 			g_compatDB.modified = false;
 		} catch (const MyError &e) {
-			fprintf(stderr, "[AltirraSDL] CompatDB save failed: %s\n", e.c_str());
+			LOG_ERROR("UI", "CompatDB save failed: %s", e.c_str());
 		}
 	}
 
@@ -3293,7 +3294,7 @@ static void CompatDBProcessPending() {
 			g_compatDB.needsCompile = false;
 			ATCompatReloadExtDatabase();
 		} catch (const MyError &e) {
-			fprintf(stderr, "[AltirraSDL] CompatDB compile failed: %s\n", e.c_str());
+			LOG_ERROR("UI", "CompatDB compile failed: %s", e.c_str());
 		}
 	}
 }
@@ -3398,7 +3399,7 @@ void ATUIRenderCompatDB(ATSimulator &sim, ATUIState &state) {
 						ATSaveCompatEDB(g_compatDB.path.c_str(), g_compatDB.edb);
 						g_compatDB.modified = false;
 					} catch (const MyError &e) {
-						fprintf(stderr, "[AltirraSDL] Save failed: %s\n", e.c_str());
+						LOG_ERROR("UI", "Save failed: %s", e.c_str());
 					}
 				}
 			}
@@ -3421,7 +3422,7 @@ void ATUIRenderCompatDB(ATSimulator &sim, ATUIState &state) {
 						g_compatDB.needsCompile = false;
 						ATCompatReloadExtDatabase();
 					} catch (const MyError &e) {
-						fprintf(stderr, "[AltirraSDL] Compile failed: %s\n", e.c_str());
+						LOG_ERROR("UI", "Compile failed: %s", e.c_str());
 					}
 				} else {
 					static const SDL_DialogFileFilter kFilters[] = {
@@ -3828,7 +3829,7 @@ void ATUIRenderCompatDB(ATSimulator &sim, ATUIState &state) {
 					f.close();
 					ATCompatReloadExtDatabase();
 				} catch (const MyError &e) {
-					fprintf(stderr, "[AltirraSDL] Compile failed: %s\n", e.c_str());
+					LOG_ERROR("UI", "Compile failed: %s", e.c_str());
 				}
 			}
 			g_compatDB.Reset();

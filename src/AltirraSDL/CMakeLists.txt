@@ -163,6 +163,7 @@ target_sources(AltirraSDL PRIVATE
     source/touch_layout.cpp
     source/touch_controls.cpp
     source/ui_mobile.cpp
+    source/crash_report.cpp
 
     # Registry persistence (filtered out by ui* regex, so add explicitly)
     ${CMAKE_SOURCE_DIR}/src/Altirra/source/uiregistry.cpp

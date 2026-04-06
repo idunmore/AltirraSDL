@@ -13,6 +13,7 @@
 #include "console.h"
 #include "debugger.h"
 #include "simulator.h"
+#include "logging.h"
 
 extern ATSimulator g_sim;
 extern SDL_Window *g_pWindow;
@@ -127,8 +128,7 @@ void ATImGuiMemoryPaneImpl::OnDebuggerEvent(ATDebugEvent eventId) {
 void ATImGuiMemoryPaneImpl::RebuildView() {
 	mbNeedsRebuild = false;
 
-	fprintf(stderr, "[RebuildView] visRows=%u cols=%u dataSize=%zu\n",
-		mVisibleRows, mColumns, mViewData.size());
+	LOG_INFO("Debugger", "visRows=%u cols=%u dataSize=%zu", mVisibleRows, mColumns, mViewData.size());
 
 	if (!mbStateValid || !mLastState.mpDebugTarget || mLastState.mbRunning)
 		return;
@@ -303,8 +303,7 @@ void ATImGuiMemoryPaneImpl::CommitEdit() {
 	{
 		uint8 readBack = target->DebugReadByte(addr);
 		uint8 wrote = (uint8)(mEditValue & 0xFF);
-		fprintf(stderr, "[CommitEdit] addr=%08X wrote=%02X readback=%02X %s\n",
-			addr, wrote, readBack,
+		LOG_INFO("Debugger", "addr=%08X wrote=%02X readback=%02X %s", addr, wrote, readBack,
 			(readBack == wrote) ? "OK" : "MISMATCH!");
 	}
 

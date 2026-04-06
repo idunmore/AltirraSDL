@@ -20,6 +20,7 @@
 #include <vd2/system/VDString.h>
 #include "joystick_sdl3.h"
 #include "inputmanager.h"
+#include "logging.h"
 
 namespace {
 
@@ -209,15 +210,14 @@ void ATJoystickManagerSDL3Impl::OpenGamepad(SDL_JoystickID id) {
 
 	mControllers.push_back(ctrl);
 
-	fprintf(stderr, "[AltirraSDL] Gamepad connected: %s (unit %d)\n",
-		name ? name : "unknown", ctrl->mUnit);
+	LOG_INFO("Joystick", "Gamepad connected: %s (unit %d)", name ? name : "unknown", ctrl->mUnit);
 }
 
 void ATJoystickManagerSDL3Impl::CloseGamepad(SDL_JoystickID id) {
 	for (auto it = mControllers.begin(); it != mControllers.end(); ++it) {
 		if ((*it)->mInstanceID == id) {
 			auto *ctrl = *it;
-			fprintf(stderr, "[AltirraSDL] Gamepad disconnected: unit %d\n", ctrl->mUnit);
+			LOG_INFO("Joystick", "Gamepad disconnected: unit %d", ctrl->mUnit);
 
 			if (ctrl->mUnit >= 0 && mpInputManager)
 				mpInputManager->UnregisterInputUnit(ctrl->mUnit);
