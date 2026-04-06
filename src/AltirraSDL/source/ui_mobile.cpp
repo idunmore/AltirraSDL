@@ -15,22 +15,144 @@
 #include <vd2/system/file.h>
 #include <vd2/system/filesys.h>
 #include <vd2/system/registry.h>
+#include <vd2/system/error.h>
 #include <at/atcore/media.h>
+#include <at/atio/image.h>
 
 #include "ui_mobile.h"
 #include "ui_main.h"
 #include "touch_controls.h"
+#include "touch_widgets.h"
 #include "simulator.h"
 #include "gtia.h"
+#include "diskinterface.h"
+#include "disk.h"
+#include <at/atio/diskimage.h>
 #include "mediamanager.h"
 #include "firmwaremanager.h"
 #include "uiaccessors.h"
 #include "uitypes.h"
 #include "constants.h"
+#include "display_backend.h"
+#include "android_platform.h"
 #include <at/ataudio/audiooutput.h>
 
 extern ATSimulator g_sim;
 extern VDStringA ATGetConfigDir();
+extern void ATRegistryFlushToDisk();
+extern IDisplayBackend *ATUIGetDisplayBackend();
+
+// -------------------------------------------------------------------------
+// Persistence (registry-backed) for mobile-only UI settings.
+// Desktop settings live in the existing Settings branch; mobile settings
+// get their own namespace so they can't collide.
+// -------------------------------------------------------------------------
+
+namespace {
+
+constexpr const char *kMobileKey = "Mobile";
+
+void LoadMobileConfig(ATMobileUIState &mobileState) {
+	VDRegistryAppKey key(kMobileKey, false);
+	if (!key.isReady())
+		return;
+	int sz = key.getEnumInt("ControlSize", 3, (int)ATTouchControlSize::Medium);
+	mobileState.layoutConfig.controlSize = (ATTouchControlSize)sz;
+	int opacityPct = key.getInt("ControlOpacity", 50);
+	if (opacityPct < 10) opacityPct = 10;
+	if (opacityPct > 100) opacityPct = 100;
+	mobileState.layoutConfig.controlOpacity = opacityPct / 100.0f;
+	mobileState.layoutConfig.hapticEnabled = key.getBool("HapticEnabled", true);
+	mobileState.autoSaveOnSuspend   = key.getBool("AutoSaveOnSuspend", true);
+	mobileState.autoRestoreOnStart  = key.getBool("AutoRestoreOnStart", true);
+	mobileState.fxScanlines         = key.getBool("FxScanlines", false);
+	mobileState.fxBloom             = key.getBool("FxBloom", false);
+	mobileState.fxDistortion        = key.getBool("FxDistortion", false);
+}
+
+void SaveMobileConfig(const ATMobileUIState &mobileState) {
+	{
+		VDRegistryAppKey key(kMobileKey, true);
+		if (!key.isReady())
+			return;
+		key.setInt("ControlSize", (int)mobileState.layoutConfig.controlSize);
+		int pct = (int)(mobileState.layoutConfig.controlOpacity * 100.0f + 0.5f);
+		if (pct < 10) pct = 10;
+		if (pct > 100) pct = 100;
+		key.setInt("ControlOpacity", pct);
+		key.setBool("HapticEnabled", mobileState.layoutConfig.hapticEnabled);
+		key.setBool("AutoSaveOnSuspend",  mobileState.autoSaveOnSuspend);
+		key.setBool("AutoRestoreOnStart", mobileState.autoRestoreOnStart);
+		key.setBool("FxScanlines",  mobileState.fxScanlines);
+		key.setBool("FxBloom",      mobileState.fxBloom);
+		key.setBool("FxDistortion", mobileState.fxDistortion);
+	}
+	// Persist immediately — registry-only writes are lost if the user
+	// swipes the app away from recents before it backgrounds properly.
+	ATRegistryFlushToDisk();
+}
+
+// Path to the quick save-state file under the config dir.
+// Kept as VDStringW because simulator.SaveState takes wchar_t*.
+static VDStringW QuickSaveStatePath() {
+	VDStringA dirU8 = ATGetConfigDir();
+	dirU8 += "/quicksave.atstate2";
+	return VDTextU8ToW(dirU8);
+}
+
+void SaveFileBrowserDir(const VDStringW &dir) {
+	{
+		VDRegistryAppKey key(kMobileKey, true);
+		if (!key.isReady())
+			return;
+		key.setString("FileBrowserDir", dir.c_str());
+	}
+	ATRegistryFlushToDisk();
+}
+
+VDStringW LoadFileBrowserDir() {
+	VDRegistryAppKey key(kMobileKey, false);
+	VDStringW s;
+	if (key.isReady())
+		key.getString("FileBrowserDir", s);
+	return s;
+}
+
+bool IsFirstRunComplete() {
+	VDRegistryAppKey key(kMobileKey, false);
+	if (!key.isReady()) return false;
+	return key.getBool("FirstRunComplete", false);
+}
+
+void SetFirstRunComplete() {
+	{
+		VDRegistryAppKey key(kMobileKey, true);
+		if (!key.isReady()) return;
+		key.setBool("FirstRunComplete", true);
+	}
+	// Flush IMMEDIATELY.  The user may close the app before it ever
+	// gets a proper WILL_ENTER_BACKGROUND event, and without flushing
+	// here the flag would be lost and the wizard would re-appear on
+	// every launch.
+	ATRegistryFlushToDisk();
+}
+
+bool IsPermissionAsked() {
+	VDRegistryAppKey key(kMobileKey, false);
+	if (!key.isReady()) return false;
+	return key.getBool("PermissionAsked", false);
+}
+
+void SetPermissionAsked() {
+	{
+		VDRegistryAppKey key(kMobileKey, true);
+		if (!key.isReady()) return;
+		key.setBool("PermissionAsked", true);
+	}
+	ATRegistryFlushToDisk();
+}
+
+} // namespace
 
 // Firmware scan function from ui_firmware.cpp
 extern void ExecuteFirmwareScan(ATFirmwareManager *fwm, const VDStringW &scanDir);
@@ -65,6 +187,26 @@ static bool s_fileBrowserNeedsRefresh = true;
 static bool s_romFolderMode = false;
 static VDStringW s_romDir;
 static int s_romScanResult = -1;  // -1 = no scan yet, 0+ = number of ROMs found
+
+// Disk-mount browser mode — when >= 0, picking a file in the browser
+// mounts it into the specified drive index instead of booting.
+// -1 means normal Load Game mode.
+static int s_diskMountTargetDrive = -1;
+static bool s_mobileShowAllDrives = false;
+
+// Generic modal info popup — every destructive / long-running action
+// in the mobile UI should give the user explicit feedback.  This is a
+// tiny system: set s_infoModalTitle/Body, the main render pass shows
+// the modal, OK dismisses it.
+static VDStringA s_infoModalTitle;
+static VDStringA s_infoModalBody;
+static bool      s_infoModalOpen = false;
+
+static void ShowInfoModal(const char *title, const char *body) {
+	s_infoModalTitle = title ? title : "";
+	s_infoModalBody  = body ? body : "";
+	s_infoModalOpen  = true;
+}
 
 // Supported file extensions for Atari images
 static bool IsSupportedExtension(const wchar_t *name) {
@@ -152,35 +294,173 @@ static void RefreshFileBrowser(const VDStringW &dir) {
 // -------------------------------------------------------------------------
 
 void ATMobileUI_Init() {
-#ifdef __ANDROID__
-	// SDL_GetUserFolder returns NULL on Android because scoped storage
-	// requires explicit MANAGE_EXTERNAL_STORAGE / SAF permissions we do
-	// not have. Fall back to the public Downloads directory (readable
-	// with READ_EXTERNAL_STORAGE on API<=32, via MediaStore on newer
-	// versions) and finally to the app's private external files dir,
-	// which is always writable without any permission.
-	const char *dl = SDL_GetUserFolder(SDL_FOLDER_DOWNLOADS);
-	if (dl && *dl) {
-		s_fileBrowserDir = VDTextU8ToW(VDStringA(dl));
+	// 1) Restore last-used browser dir from registry, if any.
+	VDStringW saved = LoadFileBrowserDir();
+	if (!saved.empty()) {
+		s_fileBrowserDir = saved;
 	} else {
-		const char *ext = SDL_GetAndroidExternalStoragePath();
-		if (ext && *ext)
-			s_fileBrowserDir = VDTextU8ToW(VDStringA(ext));
-		else
-			s_fileBrowserDir = VDTextU8ToW(ATGetConfigDir());
-	}
+#ifdef __ANDROID__
+		// Prefer the public Downloads dir via Environment — this is the
+		// same path users see when they drop files onto the phone via
+		// ADB, Files app, or a file manager.  Chain through
+		// SDL_GetUserFolder as an API-33+ fallback (SAF URIs), then
+		// the app-private external dir, then config.
+		const char *dl = ATAndroid_GetPublicDownloadsDir();
+		if (dl && *dl) {
+			s_fileBrowserDir = VDTextU8ToW(VDStringA(dl));
+		} else {
+			const char *dl2 = SDL_GetUserFolder(SDL_FOLDER_DOWNLOADS);
+			if (dl2 && *dl2) {
+				s_fileBrowserDir = VDTextU8ToW(VDStringA(dl2));
+			} else {
+				const char *ext = SDL_GetAndroidExternalStoragePath();
+				if (ext && *ext)
+					s_fileBrowserDir = VDTextU8ToW(VDStringA(ext));
+				else
+					s_fileBrowserDir = VDTextU8ToW(ATGetConfigDir());
+			}
+		}
 #else
-	const char *home = SDL_GetUserFolder(SDL_FOLDER_HOME);
-	if (home)
-		s_fileBrowserDir = VDTextU8ToW(VDStringA(home));
-	else
-		s_fileBrowserDir = L"/";
+		const char *home = SDL_GetUserFolder(SDL_FOLDER_HOME);
+		if (home)
+			s_fileBrowserDir = VDTextU8ToW(VDStringA(home));
+		else
+			s_fileBrowserDir = L"/";
 #endif
+	}
 	s_fileBrowserNeedsRefresh = true;
 }
 
 bool ATMobileUI_IsFirstRun() {
+	return !IsFirstRunComplete();
+}
+
+// Load persisted mobile config into a state object.  Exposed for
+// main_sdl3.cpp to call right after creating g_mobileState so the
+// settings are in place before the first layout computation.
+void ATMobileUI_LoadConfig(ATMobileUIState &mobileState) {
+	LoadMobileConfig(mobileState);
+}
+
+// Save persisted mobile config.  Called from the Settings panel on
+// change and on explicit shutdown.
+void ATMobileUI_SaveConfig(const ATMobileUIState &mobileState) {
+	SaveMobileConfig(mobileState);
+}
+
+// Push the three visual-effect toggles into the GTIA's
+// ATArtifactingParams + scanlines flag.  Safe to call on any
+// display backend — if the backend doesn't support GPU screen FX,
+// the params are still stored but SyncScreenFXToBackend in
+// main_sdl3.cpp skips the push (see main_sdl3.cpp:975).  Scanlines
+// work in both the CPU and GL paths.
+void ATMobileUI_ApplyVisualEffects(const ATMobileUIState &mobileState) {
+	ATGTIAEmulator &gtia = g_sim.GetGTIA();
+
+	// Scanlines toggle: GPU-accelerated in GL, CPU fallback otherwise.
+	gtia.SetScanlinesEnabled(mobileState.fxScanlines);
+
+	// Read current params, tweak the three fields we care about,
+	// leave everything else at the user's/default values.
+	ATArtifactingParams params = gtia.GetArtifactingParams();
+
+	params.mbEnableBloom = mobileState.fxBloom;
+
+	if (mobileState.fxDistortion) {
+		// Gentle CRT distortion — matches the desktop "slight curve"
+		// preset without being distracting on a phone.
+		if (params.mDistortionViewAngleX < 1.0f) {
+			ATArtifactingParams def = ATArtifactingParams::GetDefault();
+			params.mDistortionViewAngleX = 70.0f;
+			params.mDistortionYRatio     = 0.35f;
+			(void)def;
+		}
+	} else {
+		params.mDistortionViewAngleX = 0.0f;
+		params.mDistortionYRatio     = 0.0f;
+	}
+
+	gtia.SetArtifactingParams(params);
+}
+
+// Force the file browser to re-enumerate next frame.  Used after
+// returning from the Android Settings app so any newly-granted
+// "All files access" permission is reflected immediately.
+void ATMobileUI_InvalidateFileBrowser() {
+	s_fileBrowserNeedsRefresh = true;
+}
+
+// -------------------------------------------------------------------------
+// Suspend save-state
+//
+// Android can terminate a backgrounded app at any time.  To make the
+// emulator feel like a native console handheld (flip open, keep
+// playing), we snapshot the simulator to disk whenever the app goes
+// to background or is about to terminate, and restore it on next
+// launch.  Both halves of the feature are user-toggleable under the
+// mobile Settings panel.
+// -------------------------------------------------------------------------
+
+void ATMobileUI_SaveSuspendState(ATSimulator &sim,
+	const ATMobileUIState &mobileState)
+{
+	if (!mobileState.autoSaveOnSuspend)
+		return;
+	if (!mobileState.gameLoaded) {
+		// Nothing worth saving — remove any stale file so a later
+		// restore doesn't load a session from a different game.
+		ATMobileUI_ClearSuspendState();
+		return;
+	}
+	VDStringW path = QuickSaveStatePath();
+	try {
+		sim.SaveState(path.c_str());
+	} catch (const MyError &e) {
+		// Non-fatal — just log.  We don't want suspend to fail because
+		// a save-state write had a disk error.
+		VDStringA u8 = VDTextWToU8(path);
+		fprintf(stderr, "[mobile] SaveState(%s) failed: %s\n",
+			u8.c_str(), e.c_str());
+	} catch (...) {
+		fprintf(stderr, "[mobile] SaveState threw unknown exception\n");
+	}
+}
+
+bool ATMobileUI_RestoreSuspendState(ATSimulator &sim,
+	ATMobileUIState &mobileState)
+{
+	if (!mobileState.autoRestoreOnStart)
+		return false;
+	VDStringW path = QuickSaveStatePath();
+	if (!VDDoesPathExist(path.c_str()))
+		return false;
+
+	try {
+		ATImageLoadContext ctx{};
+		if (sim.Load(path.c_str(), kATMediaWriteMode_RO, &ctx)) {
+			// Match Windows behaviour: a save-state load suppresses
+			// the cold reset that Load() would otherwise perform.
+			sim.Resume();
+			mobileState.gameLoaded = true;
+			return true;
+		}
+	} catch (const MyError &e) {
+		VDStringA u8 = VDTextWToU8(path);
+		fprintf(stderr, "[mobile] LoadState(%s) failed: %s\n",
+			u8.c_str(), e.c_str());
+		// Corrupt snapshot — remove it so we don't keep crashing.
+		ATMobileUI_ClearSuspendState();
+	} catch (...) {
+		fprintf(stderr, "[mobile] LoadState threw unknown exception\n");
+		ATMobileUI_ClearSuspendState();
+	}
 	return false;
+}
+
+void ATMobileUI_ClearSuspendState() {
+	VDStringW path = QuickSaveStatePath();
+	if (VDDoesPathExist(path.c_str()))
+		VDRemoveFile(path.c_str());
 }
 
 // -------------------------------------------------------------------------
@@ -231,15 +511,25 @@ static void RenderHamburgerMenu(ATSimulator &sim, ATUIState &uiState,
 		ImVec2(0, 0), io.DisplaySize,
 		IM_COL32(0, 0, 0, 128));
 
-	// Menu panel (slides from right)
-	ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - menuW, 0));
-	ImGui::SetNextWindowSize(ImVec2(menuW, io.DisplaySize.y));
+	// Menu panel (slides from right), inset inside safe area so the
+	// title bar isn't eaten by the status bar and the last item isn't
+	// hidden by the nav bar.
+	float insetT = (float)mobileState.layout.insets.top;
+	float insetB = (float)mobileState.layout.insets.bottom;
+	float insetR = (float)mobileState.layout.insets.right;
+	ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - insetR - menuW, insetT));
+	ImGui::SetNextWindowSize(ImVec2(menuW, io.DisplaySize.y - insetT - insetB));
 
 	ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar
 		| ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove
 		| ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings;
 
 	if (ImGui::Begin("##MobileMenu", nullptr, flags)) {
+		// Install touch-drag scrolling for the hamburger panel so a
+		// short phone or landscape orientation can still reach all
+		// the menu items.
+		ATTouchDragScroll();
+
 		// Title bar with close button
 		ImGui::SetCursorPosY(ImGui::GetCursorPosY() + dp(8.0f));
 		ImGui::Text("Altirra");
@@ -267,10 +557,9 @@ static void RenderHamburgerMenu(ATSimulator &sim, ATUIState &uiState,
 		}
 		ImGui::Spacing();
 
-		// Disk Drives
+		// Disk Drives — mobile-friendly full-screen manager
 		if (ImGui::Button("Disk Drives", btnSize)) {
-			ATMobileUI_CloseMenu(sim, mobileState);
-			uiState.showDiskManager = true;
+			mobileState.currentScreen = ATMobileUIScreen::DiskManager;
 		}
 		ImGui::Spacing();
 
@@ -322,18 +611,17 @@ static void RenderHamburgerMenu(ATSimulator &sim, ATUIState &uiState,
 		ImGui::Separator();
 		ImGui::Spacing();
 
-		// About
+		// About — mobile-friendly full-screen panel
 		if (ImGui::Button("About", btnSize)) {
-			ATMobileUI_CloseMenu(sim, mobileState);
-			uiState.showAboutDialog = true;
+			mobileState.currentScreen = ATMobileUIScreen::About;
 		}
 	}
 	ImGui::End();
 
-	// Tap outside menu to close
+	// Tap outside menu panel to close
 	if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
 		ImVec2 mousePos = ImGui::GetMousePos();
-		if (mousePos.x < io.DisplaySize.x - menuW)
+		if (mousePos.x < io.DisplaySize.x - insetR - menuW)
 			ATMobileUI_CloseMenu(sim, mobileState);
 	}
 }
@@ -343,6 +631,11 @@ static void RenderHamburgerMenu(ATSimulator &sim, ATUIState &uiState,
 // -------------------------------------------------------------------------
 
 static void NavigateUp() {
+	// Never leave the filesystem tree.  If we're at "/" there's nothing
+	// to do and calling this would corrupt s_fileBrowserDir.
+	if (s_fileBrowserDir.empty() || s_fileBrowserDir == L"/")
+		return;
+
 	VDStringW parent = s_fileBrowserDir;
 	while (!parent.empty() && parent.back() == L'/')
 		parent.pop_back();
@@ -354,20 +647,54 @@ static void NavigateUp() {
 				parent.resize(1);  // keep root "/"
 			s_fileBrowserDir = parent;
 			s_fileBrowserNeedsRefresh = true;
+			SaveFileBrowserDir(s_fileBrowserDir);
 			return;
 		}
 	}
+	// No '/' found — we were at something weird like "relative".
+	// Fall back to the public Downloads dir so the user can recover.
+	s_fileBrowserDir = L"/";
+	s_fileBrowserNeedsRefresh = true;
+	SaveFileBrowserDir(s_fileBrowserDir);
+}
+
+// Jump to a well-known directory.  Used by the shortcut buttons so a
+// user who has navigated into an empty/dead folder can always get back
+// to somewhere useful.
+static void JumpToDirectory(const char *u8path) {
+	s_fileBrowserDir = VDTextU8ToW(VDStringA(u8path));
+	s_fileBrowserNeedsRefresh = true;
+	SaveFileBrowserDir(s_fileBrowserDir);
 }
 
 static void RenderFileBrowser(ATSimulator &sim, ATUIState &uiState,
 	ATMobileUIState &mobileState, SDL_Window *window)
 {
+#ifdef __ANDROID__
+	// Lazy permission request — only fires the pre-API-30 runtime
+	// dialog.  On API 30+ this is a no-op because we rely on
+	// MANAGE_EXTERNAL_STORAGE, which requires a Settings page visit,
+	// handled via a dedicated banner below.
+	if (!IsPermissionAsked()) {
+		ATAndroid_RequestStoragePermission();
+		SetPermissionAsked();
+	}
+#endif
 	if (s_fileBrowserNeedsRefresh)
 		RefreshFileBrowser(s_fileBrowserDir);
 
 	ImGuiIO &io = ImGui::GetIO();
-	ImGui::SetNextWindowPos(ImVec2(0, 0));
-	ImGui::SetNextWindowSize(io.DisplaySize);
+
+	// Inset inside the safe area so the header and list don't clash
+	// with the Android status bar or gesture nav.
+	float insetT = (float)mobileState.layout.insets.top;
+	float insetB = (float)mobileState.layout.insets.bottom;
+	float insetL = (float)mobileState.layout.insets.left;
+	float insetR = (float)mobileState.layout.insets.right;
+	ImGui::SetNextWindowPos(ImVec2(insetL, insetT));
+	ImGui::SetNextWindowSize(ImVec2(
+		io.DisplaySize.x - insetL - insetR,
+		io.DisplaySize.y - insetT - insetB));
 
 	ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar
 		| ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove
@@ -379,7 +706,11 @@ static void RenderFileBrowser(ATSimulator &sim, ATUIState &uiState,
 		ImVec2 backBtnSize(dp(48.0f), headerH);
 
 		if (ImGui::Button("<", backBtnSize)) {
-			if (s_romFolderMode) {
+			if (s_diskMountTargetDrive >= 0) {
+				// Cancelled disk mount — return to the disk manager.
+				s_diskMountTargetDrive = -1;
+				mobileState.currentScreen = ATMobileUIScreen::DiskManager;
+			} else if (s_romFolderMode) {
 				s_romFolderMode = false;
 				mobileState.currentScreen = ATMobileUIScreen::Settings;
 			} else {
@@ -388,7 +719,17 @@ static void RenderFileBrowser(ATSimulator &sim, ATUIState &uiState,
 		}
 		ImGui::SameLine();
 
-		const char *title = s_romFolderMode ? "Select ROM Folder" : "Load Game";
+		const char *title;
+		if (s_diskMountTargetDrive >= 0) {
+			static char mountTitle[32];
+			snprintf(mountTitle, sizeof(mountTitle),
+				"Mount into D%d:", s_diskMountTargetDrive + 1);
+			title = mountTitle;
+		} else if (s_romFolderMode) {
+			title = "Select Firmware Folder";
+		} else {
+			title = "Load Game";
+		}
 		ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (headerH - ImGui::GetTextLineHeight()) * 0.5f);
 		ImGui::Text("%s", title);
 
@@ -397,6 +738,75 @@ static void RenderFileBrowser(ATSimulator &sim, ATUIState &uiState,
 		// Current directory
 		VDStringA dirU8 = VDTextWToU8(s_fileBrowserDir);
 		ImGui::TextWrapped("%s", dirU8.c_str());
+
+#ifdef __ANDROID__
+		// Storage permission banner — if the user hasn't granted
+		// "All files access" yet, show a prominent prompt explaining
+		// the situation and offering a button that jumps straight to
+		// the system Settings page.  This is the ONLY way to read
+		// arbitrary .xex/.atr files outside the app-private directory
+		// on Android 11+ (scoped storage) without going through SAF.
+		if (!ATAndroid_HasStoragePermission()) {
+			ImGui::PushStyleColor(ImGuiCol_ChildBg,
+				ImVec4(0.30f, 0.12f, 0.12f, 0.85f));
+			ImGui::BeginChild("PermBanner",
+				ImVec2(0, dp(160.0f)), ImGuiChildFlags_Border);
+			ImGui::Spacing();
+			ImGui::TextColored(ImVec4(1, 1, 1, 1),
+				"Storage access required");
+			ImGui::TextWrapped(
+				"To see ROM and disk image files in /sdcard/Download "
+				"and other user folders, Altirra needs the system "
+				"\"All files access\" permission.  This is a special "
+				"permission you grant from Android Settings.");
+			ImGui::Spacing();
+			if (ImGui::Button("Open Settings to Grant Access",
+				ImVec2(-1, dp(48.0f))))
+			{
+				ATAndroid_OpenManageStorageSettings();
+				ShowInfoModal("Grant Access",
+					"Find \"Altirra\" in the \"All files access\" "
+					"list in Settings and enable it, then return "
+					"to the app and the file list will refresh.");
+			}
+			ImGui::EndChild();
+			ImGui::PopStyleColor();
+			ImGui::Spacing();
+		}
+#endif
+
+		// Quick-access shortcut bar — lets the user jump to common
+		// locations from anywhere in the tree, so an accidental climb
+		// into a filtered-empty folder is never a dead end.
+		{
+			float shortcutH = dp(40.0f);
+			if (ImGui::Button("Downloads", ImVec2(dp(120.0f), shortcutH))) {
+#ifdef __ANDROID__
+				const char *dl = ATAndroid_GetPublicDownloadsDir();
+				if (dl && *dl)
+					JumpToDirectory(dl);
+				else
+					JumpToDirectory("/storage/emulated/0/Download");
+#else
+				const char *home = SDL_GetUserFolder(SDL_FOLDER_DOWNLOADS);
+				if (home && *home) JumpToDirectory(home);
+#endif
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("Storage", ImVec2(dp(100.0f), shortcutH))) {
+#ifdef __ANDROID__
+				JumpToDirectory("/storage/emulated/0");
+#else
+				const char *home = SDL_GetUserFolder(SDL_FOLDER_HOME);
+				if (home && *home) JumpToDirectory(home);
+				else JumpToDirectory("/");
+#endif
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("/", ImVec2(dp(50.0f), shortcutH))) {
+				JumpToDirectory("/");
+			}
+		}
 
 		// Navigation row: Up + (in ROM mode) "Select This Folder" button
 		float rowBtnH = dp(48.0f);
@@ -419,17 +829,53 @@ static void RenderFileBrowser(ATSimulator &sim, ATUIState &uiState,
 				// Reload ROMs after scan so new firmware is active
 				g_sim.LoadROMs();
 
-				// Return to settings
+				// Return to settings and show an info popup so the
+				// user gets explicit feedback about the scan result.
 				s_romFolderMode = false;
 				mobileState.currentScreen = ATMobileUIScreen::Settings;
+
+				VDStringA dirU8 = VDTextWToU8(s_romDir);
+				char msg[1024];
+				if (s_romScanResult > 0) {
+					snprintf(msg, sizeof(msg),
+						"Found %d ROM file%s in:\n\n%s\n\n"
+						"These firmware images are now available.",
+						s_romScanResult,
+						s_romScanResult == 1 ? "" : "s",
+						dirU8.c_str());
+					ShowInfoModal("ROMs Imported", msg);
+				} else {
+					snprintf(msg, sizeof(msg),
+						"No recognized Atari ROM files were found in:\n\n%s\n\n"
+						"Altirra identifies firmware by content hash, so\n"
+						"unmodified ROMs are detected automatically.\n"
+						"The built-in replacement kernel is still available.",
+						dirU8.c_str());
+					ShowInfoModal("No ROMs Found", msg);
+				}
 			}
 		}
 
 		ImGui::Separator();
 
 		// File/directory list
+		// Touch scrolling: ImGui's default Selectable + child-scroll
+		// interaction swallows the first press and highlights the row,
+		// then a drag doesn't scroll because the child window only
+		// scrolls when dragged in empty space.  We do two things:
+		//   1) Manually scroll the list when the user drags anywhere
+		//      inside the child, matching finger delta to scroll delta.
+		//   2) Only treat a Selectable's "click" as an activation if
+		//      the total drag distance stayed below a small threshold.
+		// This gives natural touch-scroll behaviour while still letting
+		// a tap select an item.
 		float itemH = dp(56.0f);
 		ImGui::BeginChild("FileList", ImVec2(0, 0), ImGuiChildFlags_None);
+
+		// Install touch drag-scroll for this child window.  Shared
+		// helper from touch_widgets.cpp — identical behaviour across
+		// every scrollable surface in the mobile UI.
+		ATTouchDragScroll();
 
 		for (size_t i = 0; i < s_fileBrowserEntries.size(); i++) {
 			const FileBrowserEntry &entry = s_fileBrowserEntries[i];
@@ -442,13 +888,41 @@ static void RenderFileBrowser(ATSimulator &sim, ATUIState &uiState,
 				snprintf(label, sizeof(label), "      %s", nameU8.c_str());
 
 			ImGui::PushID((int)i);
-			if (ImGui::Selectable(label, (int)i == mobileState.selectedFileIdx,
-				0, ImVec2(0, itemH)))
-			{
+			bool activated = ImGui::Selectable(label,
+				(int)i == mobileState.selectedFileIdx,
+				ImGuiSelectableFlags_AllowOverlap, ImVec2(0, itemH));
+
+			// Suppress the activation if the finger moved — that was
+			// a scroll drag, not a tap.
+			if (activated && ATTouchIsDraggingBeyondSlop())
+				activated = false;
+
+			if (activated) {
 				if (entry.isDirectory) {
 					s_fileBrowserDir = entry.fullPath;
 					s_fileBrowserNeedsRefresh = true;
+					SaveFileBrowserDir(s_fileBrowserDir);
 					mobileState.selectedFileIdx = -1;
+				} else if (s_diskMountTargetDrive >= 0) {
+					// Mount-into-drive path (from the mobile disk
+					// manager).  Load the image into the target
+					// drive and route back to the disk manager with
+					// a status popup.
+					int drive = s_diskMountTargetDrive;
+					s_diskMountTargetDrive = -1;
+					try {
+						sim.GetDiskInterface(drive)
+							.LoadDisk(entry.fullPath.c_str());
+						VDStringA u8 = VDTextWToU8(entry.fullPath);
+						char msg[1024];
+						snprintf(msg, sizeof(msg),
+							"Mounted into D%d:\n\n%s",
+							drive + 1, u8.c_str());
+						ShowInfoModal("Disk Mounted", msg);
+					} catch (const MyError &e) {
+						ShowInfoModal("Mount Failed", e.c_str());
+					}
+					mobileState.currentScreen = ATMobileUIScreen::DiskManager;
 				} else if (!s_romFolderMode) {
 					mobileState.selectedFileIdx = (int)i;
 					VDStringA pathU8 = VDTextWToU8(VDStringW(entry.fullPath));
@@ -474,8 +948,15 @@ static void RenderSettings(ATSimulator &sim, ATUIState &uiState,
 	ATMobileUIState &mobileState, SDL_Window *window)
 {
 	ImGuiIO &io = ImGui::GetIO();
-	ImGui::SetNextWindowPos(ImVec2(0, 0));
-	ImGui::SetNextWindowSize(io.DisplaySize);
+
+	float insetT = (float)mobileState.layout.insets.top;
+	float insetB = (float)mobileState.layout.insets.bottom;
+	float insetL = (float)mobileState.layout.insets.left;
+	float insetR = (float)mobileState.layout.insets.right;
+	ImGui::SetNextWindowPos(ImVec2(insetL, insetT));
+	ImGui::SetNextWindowSize(ImVec2(
+		io.DisplaySize.x - insetL - insetR,
+		io.DisplaySize.y - insetT - insetB));
 
 	ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar
 		| ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove
@@ -494,16 +975,45 @@ static void RenderSettings(ATSimulator &sim, ATUIState &uiState,
 		ImGui::Spacing();
 
 		ImGui::BeginChild("SettingsScroll", ImVec2(0, 0), ImGuiChildFlags_None);
+		ATTouchDragScroll();
 
-		// ---- SYSTEM ----
-		ImGui::SeparatorText("System");
+		// ---- MACHINE ----
+		ATTouchSection("Machine");
+
+		// Hardware type.  All four modes work with the built-in HLE
+		// kernel — no user-supplied ROMs required.  Changing the
+		// mode triggers a cold reset inside the simulator.
+		{
+			static const struct {
+				const char *label;
+				ATHardwareMode mode;
+			} kHw[] = {
+				{ "400/800",    kATHardwareMode_800    },
+				{ "600/800XL",  kATHardwareMode_800XL  },
+				{ "130XE",      kATHardwareMode_130XE  },
+				{ "5200",       kATHardwareMode_5200   },
+			};
+			constexpr int kNumHw = (int)(sizeof(kHw) / sizeof(kHw[0]));
+
+			ATHardwareMode curMode = sim.GetHardwareMode();
+			int curIdx = 1; // default 800XL
+			for (int i = 0; i < kNumHw; ++i)
+				if (kHw[i].mode == curMode) { curIdx = i; break; }
+
+			static const char *labels[kNumHw] = {
+				kHw[0].label, kHw[1].label, kHw[2].label, kHw[3].label,
+			};
+			if (ATTouchSegmented("Hardware", &curIdx, labels, kNumHw)) {
+				sim.SetHardwareMode(kHw[curIdx].mode);
+				sim.ColdReset();
+			}
+		}
 
 		// Video Standard — PAL / NTSC
 		{
 			int current = (sim.GetVideoStandard() == kATVideoStandard_PAL) ? 0 : 1;
-			const char *items[] = { "PAL", "NTSC" };
-			ImGui::SetNextItemWidth(-1);
-			if (ImGui::Combo("Video Standard", &current, items, 2))
+			static const char *items[] = { "PAL", "NTSC" };
+			if (ATTouchSegmented("Video Standard", &current, items, 2))
 				sim.SetVideoStandard(current == 0 ? kATVideoStandard_PAL : kATVideoStandard_NTSC);
 		}
 
@@ -513,71 +1023,209 @@ static void RenderSettings(ATSimulator &sim, ATUIState &uiState,
 				const char *label;
 				ATMemoryMode mode;
 			} kMemModes[] = {
-				{ "16K", kATMemoryMode_16K },
-				{ "48K", kATMemoryMode_48K },
-				{ "64K", kATMemoryMode_64K },
-				{ "128K", kATMemoryMode_128K },
-				{ "320K (Compy Shop)", kATMemoryMode_320K },
+				{ "16K",   kATMemoryMode_16K   },
+				{ "48K",   kATMemoryMode_48K   },
+				{ "64K",   kATMemoryMode_64K   },
+				{ "128K",  kATMemoryMode_128K  },
+				{ "320K",  kATMemoryMode_320K  },
 				{ "1088K", kATMemoryMode_1088K },
 			};
-
 			ATMemoryMode curMode = sim.GetMemoryMode();
 			int curIdx = 4; // default 320K
 			int count = (int)(sizeof(kMemModes)/sizeof(kMemModes[0]));
 			for (int i = 0; i < count; i++) {
 				if (kMemModes[i].mode == curMode) { curIdx = i; break; }
 			}
-
-			const char *labels[16];
-			for (int i = 0; i < count; i++) labels[i] = kMemModes[i].label;
-
-			ImGui::SetNextItemWidth(-1);
-			if (ImGui::Combo("Memory Size", &curIdx, labels, count))
+			static const char *labels[6] = {
+				kMemModes[0].label, kMemModes[1].label, kMemModes[2].label,
+				kMemModes[3].label, kMemModes[4].label, kMemModes[5].label,
+			};
+			if (ATTouchSegmented("Memory Size", &curIdx, labels, count))
 				sim.SetMemoryMode(kMemModes[curIdx].mode);
 		}
 
 		// BASIC toggle
 		{
 			bool basicEnabled = sim.IsBASICEnabled();
-			if (ImGui::Checkbox("BASIC Enabled", &basicEnabled))
+			if (ATTouchToggle("BASIC Enabled", &basicEnabled))
 				sim.SetBASICEnabled(basicEnabled);
 		}
 
 		// SIO Patch toggle
 		{
 			bool sioEnabled = sim.IsSIOPatchEnabled();
-			if (ImGui::Checkbox("SIO Patch", &sioEnabled))
+			if (ATTouchToggle("SIO Patch", &sioEnabled))
 				sim.SetSIOPatchEnabled(sioEnabled);
 		}
 
-		ImGui::Spacing();
+		// ---- RANDOMIZATION ----
+		//
+		// POKEY's random-number generator is tied to the cycle at
+		// which the game reads the RANDOM register, so two runs of
+		// the same game can produce identical RNG streams if boot
+		// timing is deterministic.  Altirra's defaults already jitter
+		// the boot cycle a bit (mbRandomizeLaunchDelay = true), but
+		// we expose both toggles so users can force it off (for
+		// speedrun consistency) or enable the stronger "randomize
+		// memory on EXE load" option.
+		ATTouchSection("Randomization");
+
+		{
+			bool randomLaunch = sim.IsRandomProgramLaunchDelayEnabled();
+			if (ATTouchToggle("Randomize launch delay", &randomLaunch))
+				sim.SetRandomProgramLaunchDelayEnabled(randomLaunch);
+		}
+		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.65f, 0.70f, 0.78f, 1));
+		ImGui::TextWrapped(
+			"Delays program boot by a random number of cycles so "
+			"POKEY's RNG seed varies between runs.  Default: on.");
+		ImGui::PopStyleColor();
+
+		{
+			bool randomFill = sim.IsRandomFillEXEEnabled();
+			if (ATTouchToggle("Randomize memory on EXE load", &randomFill))
+				sim.SetRandomFillEXEEnabled(randomFill);
+		}
+		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.65f, 0.70f, 0.78f, 1));
+		ImGui::TextWrapped(
+			"Fills uninitialised RAM with random bytes before a .xex "
+			"program loads.  Helps flush out games that relied on "
+			"specific power-on RAM patterns.  Default: off.");
+		ImGui::PopStyleColor();
 
 		// ---- CONTROLS ----
-		ImGui::SeparatorText("Controls");
+		ATTouchSection("Controls");
 
 		// Control size
 		{
 			int sz = (int)mobileState.layoutConfig.controlSize;
-			const char *sizes[] = { "Small", "Medium", "Large" };
-			ImGui::SetNextItemWidth(-1);
-			if (ImGui::Combo("Control Size", &sz, sizes, 3))
+			static const char *sizes[] = { "Small", "Medium", "Large" };
+			if (ATTouchSegmented("Control Size", &sz, sizes, 3)) {
 				mobileState.layoutConfig.controlSize = (ATTouchControlSize)sz;
+				SaveMobileConfig(mobileState);
+			}
 		}
 
-		// Control opacity — fix format to show 10%-100%
+		// Control opacity — 10%-100%
 		{
 			int pct = (int)(mobileState.layoutConfig.controlOpacity * 100.0f + 0.5f);
-			if (ImGui::SliderInt("Opacity", &pct, 10, 100, "%d%%"))
+			if (ATTouchSlider("Opacity", &pct, 10, 100, "%d%%")) {
 				mobileState.layoutConfig.controlOpacity = pct / 100.0f;
+				SaveMobileConfig(mobileState);
+			}
 		}
 
 		// Haptic feedback
-		ImGui::Checkbox("Haptic Feedback", &mobileState.layoutConfig.hapticEnabled);
+		if (ATTouchToggle("Haptic Feedback", &mobileState.layoutConfig.hapticEnabled)) {
+			SaveMobileConfig(mobileState);
+			ATTouchControls_SetHapticEnabled(mobileState.layoutConfig.hapticEnabled);
+		}
+
+		// ---- SAVE STATE ----
+		ATTouchSection("Save State");
+
+		if (ATTouchToggle("Auto-save on exit / background",
+			&mobileState.autoSaveOnSuspend))
+		{
+			SaveMobileConfig(mobileState);
+		}
+		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.65f, 0.70f, 0.78f, 1));
+		ImGui::TextWrapped(
+			"Snapshots the emulator whenever the app goes to "
+			"background or is closed, so a swipe-away or an "
+			"incoming call never loses progress.");
+		ImGui::PopStyleColor();
+
+		if (ATTouchToggle("Restore on startup",
+			&mobileState.autoRestoreOnStart))
+		{
+			SaveMobileConfig(mobileState);
+		}
+		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.65f, 0.70f, 0.78f, 1));
+		ImGui::TextWrapped(
+			"On launch, resume exactly where you left off "
+			"(requires Auto-save above).");
+		ImGui::PopStyleColor();
 
 		ImGui::Spacing();
 
+		// Manual save / load buttons — always available so the user
+		// can checkpoint a run independently of the auto-save setting.
+		float halfW = (ImGui::GetContentRegionAvail().x - dp(8.0f)) * 0.5f;
+		if (ImGui::Button("Save State Now", ImVec2(halfW, dp(56.0f)))) {
+			try {
+				VDStringW path = QuickSaveStatePath();
+				sim.SaveState(path.c_str());
+				ShowInfoModal("Saved", "Emulator state saved.");
+			} catch (const MyError &e) {
+				ShowInfoModal("Save Failed", e.c_str());
+			}
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Load State Now", ImVec2(halfW, dp(56.0f)))) {
+			VDStringW path = QuickSaveStatePath();
+			if (!VDDoesPathExist(path.c_str())) {
+				ShowInfoModal("No State", "No saved state available to load.");
+			} else {
+				try {
+					ATImageLoadContext ctx{};
+					if (sim.Load(path.c_str(), kATMediaWriteMode_RO, &ctx)) {
+						sim.Resume();
+						mobileState.gameLoaded = true;
+						ShowInfoModal("Loaded", "Emulator state restored.");
+					}
+				} catch (const MyError &e) {
+					ShowInfoModal("Load Failed", e.c_str());
+				}
+			}
+		}
+
+		// ---- VISUAL EFFECTS ----
+		ATTouchSection("Visual Effects");
+
+		// Warn the user up front if the current display backend can't
+		// actually render GPU-based effects.  Scanlines still work in
+		// software so they're never greyed-out.
+		{
+			IDisplayBackend *backend = ATUIGetDisplayBackend();
+			bool hwSupport = backend && backend->SupportsScreenFX();
+			if (!hwSupport) {
+				ImGui::PushStyleColor(ImGuiCol_Text,
+					ImVec4(0.70f, 0.72f, 0.78f, 1));
+				ImGui::TextWrapped(
+					"Bloom and CRT distortion need the OpenGL display "
+					"backend.  The SDL_Renderer fallback (currently "
+					"active on this device) will accept the toggles "
+					"but silently ignore those two — scanlines still "
+					"work either way.");
+				ImGui::PopStyleColor();
+				ImGui::Spacing();
+			}
+		}
+
+		if (ATTouchToggle("Scanlines", &mobileState.fxScanlines)) {
+			SaveMobileConfig(mobileState);
+			try {
+				ATMobileUI_ApplyVisualEffects(mobileState);
+			} catch (...) { /* best-effort, never crash the UI */ }
+		}
+
+		if (ATTouchToggle("Bloom", &mobileState.fxBloom)) {
+			SaveMobileConfig(mobileState);
+			try {
+				ATMobileUI_ApplyVisualEffects(mobileState);
+			} catch (...) {}
+		}
+
+		if (ATTouchToggle("CRT Distortion", &mobileState.fxDistortion)) {
+			SaveMobileConfig(mobileState);
+			try {
+				ATMobileUI_ApplyVisualEffects(mobileState);
+			} catch (...) {}
+		}
+
 		// ---- DISPLAY ----
-		ImGui::SeparatorText("Display");
+		ATTouchSection("Display");
 
 		// Filter mode
 		{
@@ -589,9 +1237,8 @@ static void RenderSettings(ATSimulator &sim, ATUIState &uiState,
 			case kATDisplayFilterMode_SharpBilinear:idx = 2; break;
 			default: idx = 1; break;
 			}
-			const char *filters[] = { "Sharp (Nearest)", "Bilinear", "Sharp Bilinear" };
-			ImGui::SetNextItemWidth(-1);
-			if (ImGui::Combo("Filter Mode", &idx, filters, 3)) {
+			static const char *filters[] = { "Sharp", "Bilinear", "Sharp Bi" };
+			if (ATTouchSegmented("Filter Mode", &idx, filters, 3)) {
 				static const ATDisplayFilterMode kModes[] = {
 					kATDisplayFilterMode_Point,
 					kATDisplayFilterMode_Bilinear,
@@ -601,10 +1248,8 @@ static void RenderSettings(ATSimulator &sim, ATUIState &uiState,
 			}
 		}
 
-		ImGui::Spacing();
-
 		// ---- FIRMWARE ----
-		ImGui::SeparatorText("Firmware");
+		ATTouchSection("Firmware");
 
 		{
 			if (!s_romDir.empty()) {
@@ -617,7 +1262,8 @@ static void RenderSettings(ATSimulator &sim, ATUIState &uiState,
 			if (s_romScanResult >= 0)
 				ImGui::Text("Status: %d ROMs found", s_romScanResult);
 
-			if (ImGui::Button("Select ROM Folder", ImVec2(-1, dp(48.0f)))) {
+			ImGui::Spacing();
+			if (ImGui::Button("Select Firmware Folder", ImVec2(-1, dp(56.0f)))) {
 				// Switch to file browser in ROM folder selection mode
 				s_romFolderMode = true;
 				s_fileBrowserNeedsRefresh = true;
@@ -625,9 +1271,527 @@ static void RenderSettings(ATSimulator &sim, ATUIState &uiState,
 			}
 		}
 
+		// Bottom padding so the last row isn't flush against the nav bar
+		ImGui::Dummy(ImVec2(0, dp(32.0f)));
+
 		ImGui::EndChild();
 	}
 	ImGui::End();
+}
+
+// -------------------------------------------------------------------------
+// Mobile Disk Drive Manager — full-screen touch-first replacement for
+// the desktop ATUIRenderDiskManager dialog.  Large 96dp rows per
+// drive with clear Mount/Eject buttons, shows D1:-D4: by default and
+// reveals D5:-D15: behind a disclosure.
+// -------------------------------------------------------------------------
+
+static const char *BasenameU8(const char *path) {
+	const char *p = strrchr(path, '/');
+	return p ? p + 1 : path;
+}
+
+static void RenderMobileDiskRow(ATSimulator &sim, int driveIdx,
+	ATMobileUIState &mobileState)
+{
+	ATDiskInterface &di = sim.GetDiskInterface(driveIdx);
+	bool loaded = di.IsDiskLoaded();
+	bool dirty  = loaded && di.IsDirty();
+
+	ImGui::PushID(driveIdx);
+
+	// Row background for visual separation
+	float rowH = dp(96.0f);
+	ImVec2 cursor = ImGui::GetCursorScreenPos();
+	float availW = ImGui::GetContentRegionAvail().x;
+	ImDrawList *dl = ImGui::GetWindowDrawList();
+	dl->AddRectFilled(
+		cursor, ImVec2(cursor.x + availW, cursor.y + rowH),
+		IM_COL32(30, 35, 50, 200), dp(10.0f));
+
+	// --- Left column: drive label + filename ---
+	float leftPad  = dp(16.0f);
+	float rightPad = dp(16.0f);
+	ImGui::SetCursorScreenPos(ImVec2(cursor.x + leftPad, cursor.y + dp(12.0f)));
+	ImGui::SetWindowFontScale(1.25f);
+	ImU32 labelCol = dirty
+		? IM_COL32(255, 200, 80, 255)
+		: IM_COL32(255, 255, 255, 255);
+	ImGui::PushStyleColor(ImGuiCol_Text, labelCol);
+	ImGui::Text("D%d:", driveIdx + 1);
+	ImGui::PopStyleColor();
+	ImGui::SetWindowFontScale(1.0f);
+
+	// Filename / status, one line below the drive label.
+	ImGui::SetCursorScreenPos(ImVec2(cursor.x + leftPad, cursor.y + dp(46.0f)));
+	if (loaded) {
+		const wchar_t *path = di.GetPath();
+		if (path && *path) {
+			VDStringA u8 = VDTextWToU8(VDStringW(path));
+			ImGui::PushStyleColor(ImGuiCol_Text,
+				ImVec4(0.80f, 0.85f, 0.92f, 1.0f));
+			ImGui::Text("%s", BasenameU8(u8.c_str()));
+			ImGui::PopStyleColor();
+		} else {
+			ImGui::PushStyleColor(ImGuiCol_Text,
+				ImVec4(0.60f, 0.65f, 0.75f, 1.0f));
+			ImGui::TextUnformatted("(loaded)");
+			ImGui::PopStyleColor();
+		}
+
+		// Show "(modified)" tag if dirty
+		if (dirty) {
+			ImGui::SetCursorScreenPos(ImVec2(cursor.x + leftPad, cursor.y + dp(68.0f)));
+			ImGui::PushStyleColor(ImGuiCol_Text,
+				ImVec4(1.0f, 0.78f, 0.30f, 1.0f));
+			ImGui::TextUnformatted("modified");
+			ImGui::PopStyleColor();
+		}
+	} else {
+		ImGui::PushStyleColor(ImGuiCol_Text,
+			ImVec4(0.55f, 0.60f, 0.70f, 1.0f));
+		ImGui::TextUnformatted("(empty)");
+		ImGui::PopStyleColor();
+	}
+
+	// --- Right column: Mount + Eject buttons ---
+	float btnW = dp(100.0f);
+	float btnH = dp(56.0f);
+	float btnGap = dp(8.0f);
+	float btnY = cursor.y + (rowH - btnH) * 0.5f;
+	float ejectX = cursor.x + availW - rightPad - btnW;
+	float mountX = ejectX - btnGap - btnW;
+
+	ImGui::SetCursorScreenPos(ImVec2(mountX, btnY));
+	if (ImGui::Button("Mount", ImVec2(btnW, btnH))) {
+		s_diskMountTargetDrive = driveIdx;
+		s_romFolderMode = false;
+		mobileState.currentScreen = ATMobileUIScreen::FileBrowser;
+		s_fileBrowserNeedsRefresh = true;
+	}
+
+	ImGui::SetCursorScreenPos(ImVec2(ejectX, btnY));
+	ImGui::BeginDisabled(!loaded);
+	if (ImGui::Button("Eject", ImVec2(btnW, btnH))) {
+		try {
+			di.UnloadDisk();
+		} catch (const MyError &e) {
+			ShowInfoModal("Eject Failed", e.c_str());
+		}
+	}
+	ImGui::EndDisabled();
+
+	// Advance the cursor past the row for the next iteration
+	ImGui::SetCursorScreenPos(ImVec2(cursor.x, cursor.y + rowH + dp(8.0f)));
+	ImGui::PopID();
+}
+
+static void RenderMobileDiskManager(ATSimulator &sim, ATUIState &uiState,
+	ATMobileUIState &mobileState, SDL_Window *window)
+{
+	ImGuiIO &io = ImGui::GetIO();
+
+	// Full-screen dark background
+	ImGui::GetBackgroundDrawList()->AddRectFilled(
+		ImVec2(0, 0), io.DisplaySize, IM_COL32(18, 20, 28, 255));
+
+	float insetT = (float)mobileState.layout.insets.top;
+	float insetB = (float)mobileState.layout.insets.bottom;
+	float insetL = (float)mobileState.layout.insets.left;
+	float insetR = (float)mobileState.layout.insets.right;
+
+	ImGui::SetNextWindowPos(ImVec2(insetL, insetT));
+	ImGui::SetNextWindowSize(ImVec2(
+		io.DisplaySize.x - insetL - insetR,
+		io.DisplaySize.y - insetT - insetB));
+
+	ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar
+		| ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove
+		| ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings
+		| ImGuiWindowFlags_NoBackground;
+
+	if (ImGui::Begin("##MobileDiskMgr", nullptr, flags)) {
+		// Header
+		float headerH = dp(48.0f);
+		if (ImGui::Button("<", ImVec2(dp(48.0f), headerH)))
+			mobileState.currentScreen = ATMobileUIScreen::HamburgerMenu;
+		ImGui::SameLine();
+		ImGui::SetCursorPosY(
+			ImGui::GetCursorPosY() + (headerH - ImGui::GetTextLineHeight()) * 0.5f);
+		ImGui::SetWindowFontScale(1.15f);
+		ImGui::TextColored(ImVec4(1, 1, 1, 1), "Disk Drives");
+		ImGui::SetWindowFontScale(1.0f);
+
+		ImGui::Separator();
+		ImGui::Spacing();
+
+		// Scrollable list of drives
+		float reserveFooter = dp(140.0f);
+		ImGui::BeginChild("DriveList",
+			ImVec2(0, ImGui::GetContentRegionAvail().y - reserveFooter),
+			ImGuiChildFlags_None);
+		ATTouchDragScroll();
+
+		// Default: D1:-D4: (the 99% case)
+		int visibleDrives = s_mobileShowAllDrives ? 15 : 4;
+		for (int i = 0; i < visibleDrives; ++i)
+			RenderMobileDiskRow(sim, i, mobileState);
+
+		// Show/hide additional drives
+		ImGui::Spacing();
+		if (ImGui::Button(
+			s_mobileShowAllDrives ? "Hide drives D5:-D15:" : "Show drives D5:-D15:",
+			ImVec2(-1, dp(48.0f))))
+		{
+			s_mobileShowAllDrives = !s_mobileShowAllDrives;
+		}
+
+		ImGui::EndChild();
+
+		// Footer: global emulation-level segmented control
+		ImGui::Spacing();
+		ATTouchSection("Emulation Level");
+
+		// Match the desktop ui_disk.cpp ordering but collapse to the
+		// handful of options a mobile user actually cares about.
+		static const ATDiskEmulationMode kMobileEmuValues[] = {
+			kATDiskEmulationMode_Generic,
+			kATDiskEmulationMode_FastestPossible,
+			kATDiskEmulationMode_810,
+			kATDiskEmulationMode_1050,
+			kATDiskEmulationMode_Happy1050,
+		};
+		static const char *kMobileEmuLabels[] = {
+			"Generic", "Fast", "810", "1050", "Happy",
+		};
+		constexpr int kNumMobileEmu =
+			sizeof(kMobileEmuValues) / sizeof(kMobileEmuValues[0]);
+
+		ATDiskEmulationMode curEmu = sim.GetDiskDrive(0).GetEmulationMode();
+		int emuIdx = 0;
+		for (int i = 0; i < kNumMobileEmu; ++i)
+			if (kMobileEmuValues[i] == curEmu) { emuIdx = i; break; }
+
+		if (ATTouchSegmented("Drive type", &emuIdx,
+			kMobileEmuLabels, kNumMobileEmu))
+		{
+			for (int i = 0; i < 15; ++i)
+				sim.GetDiskDrive(i).SetEmulationMode(kMobileEmuValues[emuIdx]);
+		}
+	}
+	ImGui::End();
+}
+
+// -------------------------------------------------------------------------
+// Mobile About panel — full-screen replacement for the desktop
+// `About AltirraSDL` dialog (which is sized 420×220 px and looks
+// tiny on a phone).  Centered title/subtitle, scrollable credits,
+// and a big Close button that returns to the hamburger menu.
+// -------------------------------------------------------------------------
+
+static void RenderMobileAbout(ATSimulator &sim, ATUIState &uiState,
+	ATMobileUIState &mobileState, SDL_Window *window)
+{
+	ImGuiIO &io = ImGui::GetIO();
+
+	// Full-screen dark background
+	ImGui::GetBackgroundDrawList()->AddRectFilled(
+		ImVec2(0, 0), io.DisplaySize, IM_COL32(20, 22, 30, 255));
+
+	float insetT = (float)mobileState.layout.insets.top;
+	float insetB = (float)mobileState.layout.insets.bottom;
+	float insetL = (float)mobileState.layout.insets.left;
+	float insetR = (float)mobileState.layout.insets.right;
+
+	ImGui::SetNextWindowPos(ImVec2(insetL, insetT));
+	ImGui::SetNextWindowSize(ImVec2(
+		io.DisplaySize.x - insetL - insetR,
+		io.DisplaySize.y - insetT - insetB));
+
+	ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar
+		| ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove
+		| ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings
+		| ImGuiWindowFlags_NoBackground;
+
+	if (ImGui::Begin("##MobileAbout", nullptr, flags)) {
+		float w = ImGui::GetContentRegionAvail().x;
+
+		ImGui::Dummy(ImVec2(0, dp(24.0f)));
+
+		// Large Altirra title
+		{
+			const char *title = "Altirra";
+			ImGui::SetWindowFontScale(2.2f);
+			float tw = ImGui::CalcTextSize(title).x;
+			ImGui::SetCursorPosX((w - tw) * 0.5f);
+			ImGui::TextColored(ImVec4(1, 1, 1, 1), "%s", title);
+			ImGui::SetWindowFontScale(1.0f);
+		}
+
+		ImGui::Dummy(ImVec2(0, dp(4.0f)));
+
+		// Subtitle
+		{
+			const char *sub = "Atari 800/XL/5200 Emulator";
+			float tw = ImGui::CalcTextSize(sub).x;
+			ImGui::SetCursorPosX((w - tw) * 0.5f);
+			ImGui::TextColored(ImVec4(0.75f, 0.80f, 0.90f, 1), "%s", sub);
+		}
+
+		ImGui::Dummy(ImVec2(0, dp(6.0f)));
+
+		// SDL3 / ImGui frontend identifier
+		{
+			const char *sub2 = "SDL3 + Dear ImGui cross-platform frontend";
+			float tw = ImGui::CalcTextSize(sub2).x;
+			ImGui::SetCursorPosX((w - tw) * 0.5f);
+			ImGui::TextColored(ImVec4(0.60f, 0.65f, 0.75f, 1), "%s", sub2);
+		}
+
+		ImGui::Dummy(ImVec2(0, dp(24.0f)));
+		ImGui::Separator();
+		ImGui::Dummy(ImVec2(0, dp(16.0f)));
+
+		// Credits block — scrollable child so long text doesn't push
+		// the Close button off-screen on small phones.
+		float closeH = dp(56.0f);
+		float bottomReserve = closeH + dp(24.0f);
+		ImGui::BeginChild("AboutCredits",
+			ImVec2(0, ImGui::GetContentRegionAvail().y - bottomReserve),
+			ImGuiChildFlags_None);
+		ATTouchDragScroll();
+
+		ImGui::PushTextWrapPos(w - dp(16.0f));
+		ImGui::TextColored(ImVec4(0.85f, 0.88f, 0.94f, 1),
+			"Altirra is an Atari 800/800XL/5200 emulator authored by "
+			"Avery Lee.  This Android build uses the AltirraSDL "
+			"cross-platform frontend, which replaces the original Win32 "
+			"UI with SDL3 + Dear ImGui for portability.");
+		ImGui::Dummy(ImVec2(0, dp(12.0f)));
+
+		ImGui::TextColored(ImVec4(0.85f, 0.88f, 0.94f, 1),
+			"The emulation core is cycle-accurate and identical across "
+			"platforms — only the UI, display, audio and input layers "
+			"are platform-specific.");
+		ImGui::Dummy(ImVec2(0, dp(12.0f)));
+
+		ImGui::TextColored(ImVec4(0.85f, 0.88f, 0.94f, 1),
+			"Original Altirra Copyright (C) Avery Lee.\n"
+			"Licensed under GNU GPL v2 or later.");
+		ImGui::Dummy(ImVec2(0, dp(12.0f)));
+
+		ImGui::TextColored(ImVec4(0.85f, 0.88f, 0.94f, 1),
+			"Third-party components:\n"
+			"  - SDL3  (zlib license)\n"
+			"  - Dear ImGui  (MIT license)\n"
+			"  - Roboto font  (Apache 2.0)\n"
+			"  - Fira Mono font  (SIL Open Font License)");
+		ImGui::PopTextWrapPos();
+
+		ImGui::EndChild();
+
+		// Close button pinned to the bottom
+		ImGui::PushStyleColor(ImGuiCol_Button,
+			ImVec4(0.25f, 0.55f, 0.90f, 1.0f));
+		ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+			ImVec4(0.30f, 0.62f, 0.95f, 1.0f));
+		ImGui::PushStyleColor(ImGuiCol_ButtonActive,
+			ImVec4(0.20f, 0.48f, 0.85f, 1.0f));
+		if (ImGui::Button("Close", ImVec2(-1, closeH)))
+			mobileState.currentScreen = ATMobileUIScreen::HamburgerMenu;
+		ImGui::PopStyleColor(3);
+	}
+	ImGui::End();
+}
+
+// -------------------------------------------------------------------------
+// First-run welcome wizard
+// -------------------------------------------------------------------------
+
+static void RenderFirstRunWizard(ATSimulator &sim, ATUIState &uiState,
+	ATMobileUIState &mobileState, SDL_Window *window)
+{
+	ImGuiIO &io = ImGui::GetIO();
+
+	// Full-screen dark background
+	ImGui::GetBackgroundDrawList()->AddRectFilled(
+		ImVec2(0, 0), io.DisplaySize, IM_COL32(20, 22, 30, 255));
+
+	// Inset window inside safe area so the title doesn't disappear
+	// under the status bar and the skip button doesn't hide behind
+	// the nav bar.
+	float insetT = (float)mobileState.layout.insets.top;
+	float insetB = (float)mobileState.layout.insets.bottom;
+	float insetL = (float)mobileState.layout.insets.left;
+	float insetR = (float)mobileState.layout.insets.right;
+	ImGui::SetNextWindowPos(ImVec2(insetL, insetT));
+	ImGui::SetNextWindowSize(ImVec2(
+		io.DisplaySize.x - insetL - insetR,
+		io.DisplaySize.y - insetT - insetB));
+
+	ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar
+		| ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove
+		| ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings
+		| ImGuiWindowFlags_NoBackground;
+
+	if (ImGui::Begin("##FirstRun", nullptr, flags)) {
+		float w = ImGui::GetContentRegionAvail().x;
+		float h = ImGui::GetContentRegionAvail().y;
+
+		// Center content vertically
+		float contentH = dp(360.0f);
+		float topPad = (h - contentH) * 0.5f;
+		if (topPad < dp(40.0f)) topPad = dp(40.0f);
+		ImGui::Dummy(ImVec2(0, topPad));
+
+		// Title
+		{
+			const char *title = "Altirra";
+			ImGui::SetWindowFontScale(2.0f);
+			float tw = ImGui::CalcTextSize(title).x;
+			ImGui::SetCursorPosX((w - tw) * 0.5f);
+			ImGui::TextColored(ImVec4(1, 1, 1, 1), "%s", title);
+			ImGui::SetWindowFontScale(1.0f);
+		}
+
+		ImGui::Spacing();
+
+		// Subtitle
+		{
+			const char *sub = "Atari 800/XL/5200 Emulator";
+			ImVec2 ts = ImGui::CalcTextSize(sub);
+			ImGui::SetCursorPosX((w - ts.x) * 0.5f);
+			ImGui::TextColored(ImVec4(0.75f, 0.75f, 0.82f, 1), "%s", sub);
+		}
+
+		ImGui::Dummy(ImVec2(0, dp(24.0f)));
+
+		// Body text
+		{
+			const char *body =
+				"To get started, select a folder containing Atari ROM firmware,\n"
+				"or skip and use the built-in replacement kernel.";
+			float wrapW = w * 0.85f;
+			float bodyX = (w - wrapW) * 0.5f;
+			ImGui::SetCursorPosX(bodyX);
+			ImGui::PushTextWrapPos(bodyX + wrapW);
+			ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.90f, 1), "%s", body);
+			ImGui::PopTextWrapPos();
+		}
+
+		ImGui::Dummy(ImVec2(0, dp(32.0f)));
+
+		// Action buttons — centered, stacked
+		float btnW = dp(260.0f);
+		float btnH = dp(56.0f);
+
+		ImGui::SetCursorPosX((w - btnW) * 0.5f);
+		ImGui::PushStyleColor(ImGuiCol_Button,
+			ImVec4(0.25f, 0.55f, 0.90f, 1));
+		ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+			ImVec4(0.30f, 0.60f, 0.95f, 1));
+		ImGui::PushStyleColor(ImGuiCol_ButtonActive,
+			ImVec4(0.20f, 0.50f, 0.85f, 1));
+		if (ImGui::Button("Select ROM Folder", ImVec2(btnW, btnH))) {
+			s_romFolderMode = true;
+			s_fileBrowserNeedsRefresh = true;
+			mobileState.currentScreen = ATMobileUIScreen::FileBrowser;
+			SetFirstRunComplete();
+		}
+		ImGui::PopStyleColor(3);
+
+		ImGui::Dummy(ImVec2(0, dp(12.0f)));
+
+		ImGui::SetCursorPosX((w - btnW) * 0.5f);
+		// Note: avoid Unicode dashes — ImGui's default font doesn't ship
+		// the U+2014 em-dash glyph, so it renders as a fallback '?'.
+		if (ImGui::Button("Skip - Use Built-in Kernel", ImVec2(btnW, btnH))) {
+			mobileState.currentScreen = ATMobileUIScreen::None;
+			SetFirstRunComplete();
+		}
+	}
+	ImGui::End();
+}
+
+// Compact "Load Game" prompt shown near the top of the screen when
+// no game is loaded.  Intentionally small and clean so the Atari
+// display (which is showing the AltirraOS boot screen behind it)
+// stays visible.  Replaces the earlier centered card which was too
+// big and blocked the background.
+//
+// Design:
+//   - Positioned just below the top bar (console keys), centered
+//     horizontally.  Visible without covering the display area.
+//   - Solid opaque pill with an accent-tinted button.
+//   - No separate title — the button label and a compact subtitle
+//     carry the message.
+//   - Single ImGui window with an opaque WindowBg (no ForegroundDraw
+//     overlay, which would cover the button text).
+static void RenderLoadGamePrompt(ATSimulator &sim, ATUIState &uiState,
+	ATMobileUIState &mobileState)
+{
+	ImGuiIO &io = ImGui::GetIO();
+
+	// Pill dimensions
+	float btnW  = dp(220.0f);
+	float btnH  = dp(52.0f);
+	float padX  = dp(18.0f);
+	float padY  = dp(14.0f);
+	float pillW = btnW + padX * 2;
+	float pillH = btnH + padY * 2 + dp(20.0f);  // + room for subtitle
+
+	// Anchor just below the top bar so the Atari display beneath is
+	// visible.  The top bar is always reserved 56dp below the safe
+	// inset, so place the pill 16dp below that.
+	float insetT = (float)mobileState.layout.insets.top;
+	float topBarH = dp(56.0f);
+	float pillX = (io.DisplaySize.x - pillW) * 0.5f;
+	float pillY = insetT + topBarH + dp(16.0f);
+
+	// Opaque dark pill with accent outline.  Drawing via WindowBg
+	// avoids the earlier bug where a ForegroundDrawList overlay was
+	// covering the button text.
+	ImGui::SetNextWindowPos(ImVec2(pillX, pillY));
+	ImGui::SetNextWindowSize(ImVec2(pillW, pillH));
+
+	ImGuiStyle &style = ImGui::GetStyle();
+	float prevRounding = style.WindowRounding;
+	float prevBorder   = style.WindowBorderSize;
+	style.WindowRounding   = dp(16.0f);
+	style.WindowBorderSize = dp(2.0f);
+
+	ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.08f, 0.10f, 0.15f, 0.96f));
+	ImGui::PushStyleColor(ImGuiCol_Border,    ImVec4(0.27f, 0.51f, 0.82f, 1.0f));
+	ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.25f, 0.55f, 0.90f, 1.0f));
+	ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.62f, 0.95f, 1.0f));
+	ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.20f, 0.48f, 0.85f, 1.0f));
+
+	ImGui::Begin("##LoadPrompt", nullptr,
+		ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize
+		| ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings
+		| ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+
+	// Primary action button
+	ImGui::SetCursorPos(ImVec2(padX, padY));
+	if (ImGui::Button("Load Game", ImVec2(btnW, btnH))) {
+		s_romFolderMode = false;
+		mobileState.currentScreen = ATMobileUIScreen::FileBrowser;
+		s_fileBrowserNeedsRefresh = true;
+	}
+
+	// Compact hint under the button
+	{
+		const char *hintAscii = "or tap the menu icon for more options";
+		float tw = ImGui::CalcTextSize(hintAscii).x;
+		ImGui::SetCursorPosX((pillW - tw) * 0.5f);
+		ImGui::TextColored(ImVec4(0.70f, 0.75f, 0.82f, 1), "%s", hintAscii);
+	}
+
+	ImGui::End();
+
+	ImGui::PopStyleColor(5);
+	style.WindowRounding   = prevRounding;
+	style.WindowBorderSize = prevBorder;
 }
 
 // -------------------------------------------------------------------------
@@ -643,12 +1807,38 @@ void ATMobileUI_Render(ATSimulator &sim, ATUIState &uiState,
 	int w, h;
 	SDL_GetWindowSize(window, &w, &h);
 
-	// Update layout if screen size or config changed
+	// Query Android safe-area insets (status bar, nav bar, cutout).
+	// Zero on desktop.  Cached — only re-queried when the window was
+	// resized (insets cache is invalidated from main_sdl3.cpp).
+#ifdef __ANDROID__
+	ATSafeInsets androidInsets = ATAndroid_GetSafeInsets();
+	ATTouchLayoutInsets insets;
+	insets.top    = androidInsets.top;
+	insets.bottom = androidInsets.bottom;
+	insets.left   = androidInsets.left;
+	insets.right  = androidInsets.right;
+#else
+	ATTouchLayoutInsets insets;
+#endif
+
+	// Update layout if screen size, config, or insets changed
 	if (w != mobileState.layout.screenW || h != mobileState.layout.screenH
 		|| mobileState.layoutConfig.controlSize != mobileState.layout.lastControlSize
-		|| mobileState.layoutConfig.contentScale != mobileState.layout.lastContentScale)
+		|| mobileState.layoutConfig.contentScale != mobileState.layout.lastContentScale
+		|| insets.top    != mobileState.layout.lastInsets.top
+		|| insets.bottom != mobileState.layout.lastInsets.bottom
+		|| insets.left   != mobileState.layout.lastInsets.left
+		|| insets.right  != mobileState.layout.lastInsets.right)
 	{
-		ATTouchLayout_Update(mobileState.layout, w, h, mobileState.layoutConfig);
+		ATTouchLayout_Update(mobileState.layout, w, h, mobileState.layoutConfig, insets);
+	}
+
+	// First run: show welcome wizard on top of everything until the user
+	// picks ROMs or skips.  The wizard sets the flag itself.
+	if (mobileState.currentScreen == ATMobileUIScreen::None
+		&& !IsFirstRunComplete())
+	{
+		mobileState.currentScreen = ATMobileUIScreen::FirstRunWizard;
 	}
 
 	// Check for menu button tap
@@ -660,27 +1850,9 @@ void ATMobileUI_Render(ATSimulator &sim, ATUIState &uiState,
 		// Render touch controls overlay
 		ATTouchControls_Render(mobileState.layout, mobileState.layoutConfig);
 
-		// If no game loaded, show centered "Load Game" button
-		if (!mobileState.gameLoaded) {
-			ImGuiIO &io = ImGui::GetIO();
-			ImVec2 center = io.DisplaySize;
-			center.x *= 0.5f;
-			center.y *= 0.5f;
-			ImVec2 btnSize(dp(200.0f), dp(56.0f));
-			ImGui::SetNextWindowPos(center, 0, ImVec2(0.5f, 0.5f));
-			ImGui::SetNextWindowSize(ImVec2(btnSize.x + dp(40.0f), btnSize.y + dp(40.0f)));
-			ImGui::Begin("##LoadPrompt", nullptr,
-				ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize
-				| ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings
-				| ImGuiWindowFlags_NoBackground);
-			if (ImGui::Button("Load Game", btnSize)) {
-				ATMobileUI_OpenMenu(sim, mobileState);
-				s_romFolderMode = false;
-				mobileState.currentScreen = ATMobileUIScreen::FileBrowser;
-				s_fileBrowserNeedsRefresh = true;
-			}
-			ImGui::End();
-		}
+		// If no game loaded, show a styled centered "Load Game" button
+		if (!mobileState.gameLoaded)
+			RenderLoadGamePrompt(sim, uiState, mobileState);
 		break;
 
 	case ATMobileUIScreen::HamburgerMenu:
@@ -696,8 +1868,53 @@ void ATMobileUI_Render(ATSimulator &sim, ATUIState &uiState,
 		break;
 
 	case ATMobileUIScreen::FirstRunWizard:
-		// TODO: Phase 2 — first-boot firmware wizard
+		RenderFirstRunWizard(sim, uiState, mobileState, window);
 		break;
+
+	case ATMobileUIScreen::About:
+		RenderMobileAbout(sim, uiState, mobileState, window);
+		break;
+
+	case ATMobileUIScreen::DiskManager:
+		RenderMobileDiskManager(sim, uiState, mobileState, window);
+		break;
+	}
+
+	// Global info popup — rendered on top of whatever screen is
+	// active.  Used by actions that need explicit feedback (ROM
+	// scan, save-state load, errors).
+	if (s_infoModalOpen) {
+		ImGui::OpenPopup("##InfoModal");
+		s_infoModalOpen = false;
+	}
+
+	// Center modal on viewport every appearance
+	ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(),
+		ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+	ImGui::SetNextWindowSize(ImVec2(dp(380.0f), 0), ImGuiCond_Appearing);
+	if (ImGui::BeginPopupModal("##InfoModal", nullptr,
+		ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings))
+	{
+		if (!s_infoModalTitle.empty()) {
+			ImGui::SetWindowFontScale(1.15f);
+			ImGui::TextColored(ImVec4(1, 1, 1, 1), "%s", s_infoModalTitle.c_str());
+			ImGui::SetWindowFontScale(1.0f);
+			ImGui::Separator();
+			ImGui::Spacing();
+		}
+		ImGui::PushTextWrapPos(dp(360.0f));
+		ImGui::TextUnformatted(s_infoModalBody.c_str());
+		ImGui::PopTextWrapPos();
+		ImGui::Spacing();
+		ImGui::Separator();
+		ImGui::Spacing();
+		float okW = dp(120.0f);
+		float avail = ImGui::GetContentRegionAvail().x;
+		if (avail > okW)
+			ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail - okW) * 0.5f);
+		if (ImGui::Button("OK", ImVec2(okW, dp(44.0f))))
+			ImGui::CloseCurrentPopup();
+		ImGui::EndPopup();
 	}
 }
 
@@ -725,6 +1942,14 @@ void ATMobileUI_OpenFileBrowser(ATMobileUIState &mobileState) {
 	s_romFolderMode = false;
 	mobileState.currentScreen = ATMobileUIScreen::FileBrowser;
 	s_fileBrowserNeedsRefresh = true;
+#ifdef __ANDROID__
+	// Lazy permission request — only the first time the user actually
+	// needs storage access.
+	if (!IsPermissionAsked()) {
+		ATAndroid_RequestStoragePermission();
+		SetPermissionAsked();
+	}
+#endif
 }
 
 void ATMobileUI_OpenSettings(ATMobileUIState &mobileState) {

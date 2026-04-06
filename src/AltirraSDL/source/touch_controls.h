@@ -29,3 +29,8 @@ void ATTouchControls_Render(const ATTouchLayout &layout, const ATTouchLayoutConf
 
 // Returns true if any touch control is currently active (finger down)
 bool ATTouchControls_IsActive();
+
+// Enable/disable haptic feedback pulses on button taps and direction
+// changes.  When on, every actionable touch triggers an Android
+// Vibrator pulse (via ATAndroid_Vibrate).  Default: on.
+void ATTouchControls_SetHapticEnabled(bool enabled);

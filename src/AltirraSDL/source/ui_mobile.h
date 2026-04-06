@@ -12,11 +12,13 @@ class ATSimulator;
 struct SDL_Window;
 
 enum class ATMobileUIScreen {
-	None,           // Normal emulation (controls visible)
-	HamburgerMenu,  // Slide-in menu panel
-	FileBrowser,    // Full-screen file browser
-	Settings,       // Full-screen settings panel
-	FirstRunWizard  // First-boot firmware setup
+	None,            // Normal emulation (controls visible)
+	HamburgerMenu,   // Slide-in menu panel
+	FileBrowser,     // Full-screen file browser
+	Settings,        // Full-screen settings panel
+	FirstRunWizard,  // First-boot firmware setup
+	About,           // Full-screen About panel
+	DiskManager      // Full-screen Disk Drive manager
 };
 
 struct ATMobileUIState {
@@ -42,12 +44,67 @@ struct ATMobileUIState {
 	// Top bar auto-hide timer (seconds of inactivity)
 	float topBarTimer = 0.0f;
 	bool topBarVisible = true;
+
+	// --- Auto save-state ---
+	// When enabled, the emulator snapshots its state whenever the
+	// app is backgrounded (SDL_EVENT_WILL_ENTER_BACKGROUND /
+	// TERMINATING).  When enabled, the snapshot is automatically
+	// reloaded at startup so the user resumes exactly where they
+	// left off — important because Android will kill backgrounded
+	// apps at any time (low memory, incoming call, swipe away).
+	bool autoSaveOnSuspend = true;
+	bool autoRestoreOnStart = true;
+
+	// --- Visual effects (CRT look) ---
+	// Scanlines work in both SDL_Renderer and GL backends (CPU path).
+	// Bloom and distortion require the GL display backend; they are
+	// silently no-op on the SDL_Renderer fallback.  The toggles stay
+	// exposed regardless so the user can enable them ahead of a
+	// future GL build without losing their preference.
+	bool fxScanlines = false;
+	bool fxBloom     = false;
+	bool fxDistortion = false;
 };
 
 // Initialize mobile UI (call once at startup, after ImGui init)
 void ATMobileUI_Init();
 
-// Check if this is a first run (no firmware configured)
+// Load/save mobile-only settings (control size, opacity, haptic)
+// from the persistent registry under the "Mobile" key.
+void ATMobileUI_LoadConfig(ATMobileUIState &mobileState);
+void ATMobileUI_SaveConfig(const ATMobileUIState &mobileState);
+
+// Push the user's visual-effects toggles (scanlines / bloom /
+// distortion) into the GTIA.  Safe on every backend — effects
+// that the backend doesn't support are silently no-op.  Call on
+// startup after settings load, and whenever a toggle changes.
+void ATMobileUI_ApplyVisualEffects(const ATMobileUIState &mobileState);
+
+// Force the mobile file browser to re-enumerate its current
+// directory on the next render pass.  Called from the SDL3 event
+// loop when the app returns from background (user may have
+// granted storage access in the Settings app while we were gone).
+void ATMobileUI_InvalidateFileBrowser();
+
+// Auto save-state hooks — called from the SDL3 event loop in
+// response to Android lifecycle events.  Safe no-ops if the feature
+// is disabled in the user's settings, or if no game is loaded.
+//
+// SaveSuspendState: writes the current emulator state to a
+//   well-known file under the config dir.  Called from
+//   SDL_EVENT_WILL_ENTER_BACKGROUND and SDL_EVENT_TERMINATING.
+// RestoreSuspendStateIfAny: at startup, loads the file if present
+//   and restores the emulator to the previous state.  Returns true
+//   if a state was restored.  The file is kept so a subsequent
+//   crash can still recover.
+void ATMobileUI_SaveSuspendState(class ATSimulator &sim,
+	const ATMobileUIState &mobileState);
+bool ATMobileUI_RestoreSuspendState(class ATSimulator &sim,
+	ATMobileUIState &mobileState);
+void ATMobileUI_ClearSuspendState();
+
+// Check if this is a first run (no firmware configured or wizard
+// not yet completed).  True until ATMobileUI_FinishFirstRun is called.
 bool ATMobileUI_IsFirstRun();
 
 // Main render entry point — call from ATUIRenderFrame() when ALTIRRA_MOBILE
