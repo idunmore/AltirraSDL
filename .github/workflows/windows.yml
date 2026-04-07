@@ -51,6 +51,17 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Install zip (for package.sh)
+        shell: bash
+        run: |
+          # Git Bash on windows-latest does not ship with the `zip`
+          # command.  scripts/build/package.sh prefers zip and falls
+          # back to tar.gz, but our workflow expects a .zip artifact.
+          # Chocolatey is preinstalled on windows-latest.
+          choco install zip -y --no-progress
+          which zip
+          zip --version | head -3
+
       - name: Show toolchain versions
         shell: bash
         run: |

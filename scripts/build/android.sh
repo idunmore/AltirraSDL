@@ -235,21 +235,24 @@ if [ ! -d "$ANDROID_DIR/SDL3" ] || [ ! -L "$ANDROID_DIR/app/src/main/java/org/li
 fi
 ok "SDL3 ready"
 
-# Ensure Gradle wrapper exists — download if needed
-if [ ! -f "$ANDROID_DIR/gradlew" ]; then
-    info "Gradle wrapper not found — downloading..."
+# Gradle wrapper setup.
+#
+# We ALWAYS (re)write gradle-wrapper.properties so that bumping
+# GRADLE_VER below actually takes effect on subsequent runs even when
+# the android/gradle/ directory was restored from a CI cache.  The
+# wrapper jar and gradlew launcher are only fetched/generated when
+# missing — those are version-agnostic.
+#
+# 9.3.1 is the minimum required by the Android Gradle Plugin version
+# pinned in android/app/build.gradle (AGP's version-check plugin
+# refuses to apply on anything older).
+GRADLE_VER="9.3.1"
+WRAPPER_DIR="$ANDROID_DIR/gradle/wrapper"
+mkdir -p "$WRAPPER_DIR"
 
-    # 9.3.1 is the minimum required by the Android Gradle Plugin version
-    # pinned in android/app/build.gradle (AGP's version-check plugin
-    # refuses to apply on anything older).
-    GRADLE_VER="9.3.1"
-    WRAPPER_DIR="$ANDROID_DIR/gradle/wrapper"
-    mkdir -p "$WRAPPER_DIR"
-
-    # Download the wrapper jar and properties directly (no system Gradle needed)
-    WRAPPER_JAR_URL="https://services.gradle.org/distributions/gradle-${GRADLE_VER}-bin.zip"
-
-    cat > "$WRAPPER_DIR/gradle-wrapper.properties" <<PROPS
+# Always rewrite the .properties file so a GRADLE_VER bump propagates
+# even when a stale wrapper jar is restored from cache.
+cat > "$WRAPPER_DIR/gradle-wrapper.properties" <<PROPS
 distributionBase=GRADLE_USER_HOME
 distributionPath=wrapper/dists
 distributionUrl=https\\://services.gradle.org/distributions/gradle-${GRADLE_VER}-bin.zip
@@ -258,15 +261,27 @@ zipStoreBase=GRADLE_USER_HOME
 zipStorePath=wrapper/dists
 PROPS
 
-    # Download the wrapper jar from Gradle's GitHub releases
-    WRAPPER_JAR="$WRAPPER_DIR/gradle-wrapper.jar"
-    if [ ! -f "$WRAPPER_JAR" ]; then
-        WRAPPER_JAR_REMOTE="https://raw.githubusercontent.com/gradle/gradle/v${GRADLE_VER}/gradle/wrapper/gradle-wrapper.jar"
-        if command -v curl &>/dev/null; then
-            curl -fsSL -o "$WRAPPER_JAR" "$WRAPPER_JAR_REMOTE" 2>/dev/null || true
-        elif command -v wget &>/dev/null; then
-            wget -q -O "$WRAPPER_JAR" "$WRAPPER_JAR_REMOTE" 2>/dev/null || true
-        fi
+# Track which version the cached wrapper jar was downloaded for, so a
+# version bump invalidates it.  Stored next to the jar; missing or
+# mismatched stamp ⇒ re-download.
+WRAPPER_JAR="$WRAPPER_DIR/gradle-wrapper.jar"
+WRAPPER_STAMP="$WRAPPER_DIR/.gradle-version-stamp"
+NEED_JAR_DL=0
+if [ ! -f "$WRAPPER_JAR" ] || [ ! -s "$WRAPPER_JAR" ]; then
+    NEED_JAR_DL=1
+elif [ ! -f "$WRAPPER_STAMP" ] || [ "$(cat "$WRAPPER_STAMP" 2>/dev/null)" != "$GRADLE_VER" ]; then
+    info "Cached wrapper jar is for a different Gradle version — refreshing"
+    rm -f "$WRAPPER_JAR"
+    NEED_JAR_DL=1
+fi
+
+if [ "$NEED_JAR_DL" = "1" ]; then
+    info "Fetching gradle-wrapper.jar for Gradle ${GRADLE_VER}..."
+    WRAPPER_JAR_REMOTE="https://raw.githubusercontent.com/gradle/gradle/v${GRADLE_VER}/gradle/wrapper/gradle-wrapper.jar"
+    if command -v curl &>/dev/null; then
+        curl -fsSL -o "$WRAPPER_JAR" "$WRAPPER_JAR_REMOTE" 2>/dev/null || true
+    elif command -v wget &>/dev/null; then
+        wget -q -O "$WRAPPER_JAR" "$WRAPPER_JAR_REMOTE" 2>/dev/null || true
     fi
 
     if [ ! -f "$WRAPPER_JAR" ] || [ ! -s "$WRAPPER_JAR" ]; then
@@ -281,10 +296,13 @@ Install Gradle (e.g. 'brew install gradle' / 'sdk install gradle') and retry,
 or download gradlew manually from an Android project template."
         fi
     fi
+    echo "$GRADLE_VER" > "$WRAPPER_STAMP"
+fi
 
-    # Create gradlew launcher script
-    if [ ! -f "$ANDROID_DIR/gradlew" ]; then
-        cat > "$ANDROID_DIR/gradlew" <<'GRADLEW'
+# Create gradlew launcher script if missing.  This script is
+# version-agnostic — it just classpath-loads gradle-wrapper.jar.
+if [ ! -f "$ANDROID_DIR/gradlew" ]; then
+    cat > "$ANDROID_DIR/gradlew" <<'GRADLEW'
 #!/bin/sh
 # Gradle wrapper launcher — downloads Gradle on first run.
 # See gradle/wrapper/gradle-wrapper.properties for the version.
@@ -304,11 +322,10 @@ exec "$JAVACMD" \
     org.gradle.wrapper.GradleWrapperMain \
     "$@"
 GRADLEW
-        chmod +x "$ANDROID_DIR/gradlew"
-    fi
-
-    ok "Gradle wrapper ready"
+    chmod +x "$ANDROID_DIR/gradlew"
 fi
+
+ok "Gradle wrapper ready (v${GRADLE_VER})"
 
 # =========================================================================
 # Step 5: Build

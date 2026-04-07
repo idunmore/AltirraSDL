@@ -62,7 +62,7 @@ jobs:
             ~/.gradle/wrapper
             android/SDL3
             android/app/.cxx
-          key: android-${{ runner.os }}-${{ hashFiles('android/app/build.gradle', 'android/build.gradle', 'android/gradle/wrapper/gradle-wrapper.properties', 'android/setup_sdl3.sh', 'CMakeLists.txt', 'src/AltirraSDL/CMakeLists.txt') }}
+          key: android-${{ runner.os }}-${{ hashFiles('android/app/build.gradle', 'android/build.gradle', 'android/setup_sdl3.sh', 'scripts/build/android.sh', 'CMakeLists.txt', 'src/AltirraSDL/CMakeLists.txt') }}
           restore-keys: |
             android-${{ runner.os }}-
 
