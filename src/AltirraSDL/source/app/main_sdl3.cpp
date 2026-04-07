@@ -515,10 +515,21 @@ static void HandleEvents() {
 			break;
 
 		case SDL_EVENT_GAMEPAD_REMOVED:
-			// RescanForDevices only adds new gamepads.  For removal,
-			// the SDL3-specific manager exposes CloseGamepad().
-			if (g_pJoystickMgr)
-				static_cast<ATJoystickManagerSDL3 *>(g_pJoystickMgr)->CloseGamepad(ev.gdevice.which);
+		case SDL_EVENT_JOYSTICK_REMOVED:
+			// RescanForDevices only adds new devices.  For removal,
+			// the SDL3-specific manager exposes CloseGamepad(), which
+			// despite its historical name handles both gamepads and
+			// raw-HID joysticks. Devices without an SDL gamepad mapping
+			// only fire JOYSTICK_REMOVED; mapped gamepads fire both.
+			// Use the correct union member for each event type to keep
+			// strict-aliasing rules happy.
+			if (g_pJoystickMgr) {
+				const SDL_JoystickID which =
+					(ev.type == SDL_EVENT_GAMEPAD_REMOVED)
+						? ev.gdevice.which
+						: ev.jdevice.which;
+				static_cast<ATJoystickManagerSDL3 *>(g_pJoystickMgr)->CloseGamepad(which);
+			}
 			break;
 
 		case SDL_EVENT_DROP_BEGIN:

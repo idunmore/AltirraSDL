@@ -1,11 +1,28 @@
 //	Altirra SDL3 frontend - joystick/gamepad support
 //
-//	Implements IATJoystickManager using SDL3's gamepad API.  This is the
-//	SDL3 equivalent of the Windows XInput/DirectInput implementation in
-//	src/Altirra/source/joystick.cpp.
+//	Implements IATJoystickManager using SDL3's gamepad AND raw joystick
+//	APIs.  This is the SDL3 equivalent of the Windows XInput/DirectInput
+//	implementation in src/Altirra/source/joystick.cpp.
+//
+//	Two device classes are handled:
+//
+//	  * SDL3 Gamepads — devices that SDL recognises via its
+//	    gamecontrollerdb mapping (Xbox, PlayStation, MFi, most modern
+//	    USB gamepads).  Opened via SDL_OpenGamepad; buttons and axes
+//	    are remapped into XInput order so the Windows default input maps
+//	    work unchanged.
+//
+//	  * Raw SDL3 Joysticks — generic HID joysticks with no mapping in
+//	    gamecontrollerdb (retro USB Atari-style joysticks, cheap arcade
+//	    sticks, no-name HID devices).  Opened via SDL_OpenJoystick;
+//	    buttons 0..N map directly to kATInputCode_JoyButton0+N, axes 0/1
+//	    become left stick X/Y, axes 2/3 become right stick X/Y, and the
+//	    first hat drives the d-pad axis-button bits.  This mirrors what
+//	    the Windows DirectInput path does for devices that are not
+//	    XInput-capable (joystick.cpp:761-onwards).
 //
 //	The simulator calls Poll() once per VBlank via AnticOnVBlank().
-//	Poll() reads the current state of all connected gamepads and reports
+//	Poll() reads the current state of all connected devices and reports
 //	button/axis changes to ATInputManager, which then routes them through
 //	the input mapping system to emulated Atari controllers.
 //
@@ -81,7 +98,14 @@ static uint32 ConvertAnalogToDirectionMask(sint32 x, sint32 y, sint32 deadZone) 
 // =========================================================================
 
 struct ATControllerSDL3 {
+	// Exactly one of mpGamepad / mpJoystick is non-null for an open device.
 	SDL_Gamepad *mpGamepad = nullptr;
+	SDL_Joystick *mpJoystick = nullptr;	// raw-HID fallback (non-mapped devices)
+	bool mbIsGamepad = false;
+	int mNumButtons = 0;	// raw-joystick path only
+	int mNumAxes = 0;		// raw-joystick path only
+	int mNumHats = 0;		// raw-joystick path only
+
 	SDL_JoystickID mInstanceID = 0;
 	int mUnit = -1;			// ATInputManager unit ID
 	ATInputUnitIdentifier mId {};
@@ -92,6 +116,20 @@ struct ATControllerSDL3 {
 	sint32 mLastAxisVals[6] {};
 	sint32 mLastDeadAxisVals[6] {};
 };
+
+// Format an SDL GUID as a 32-character hex string for diagnostic logging.
+// SDL's own SDL_GUIDToString would suffice but takes a user-provided buffer;
+// returning a VDStringA keeps call sites clean.
+static VDStringA FormatGuid(const SDL_GUID& guid) {
+	VDStringA s;
+	s.reserve(32);
+	static const char kHex[] = "0123456789abcdef";
+	for (int i = 0; i < 16; ++i) {
+		s += kHex[(guid.data[i] >> 4) & 0xF];
+		s += kHex[guid.data[i] & 0xF];
+	}
+	return s;
+}
 
 // =========================================================================
 // ATJoystickManagerSDL3Impl
@@ -118,10 +156,20 @@ public:
 	void CloseGamepad(SDL_JoystickID id) override;
 
 private:
+	void OpenDevice(SDL_JoystickID id);
 	void OpenGamepad(SDL_JoystickID id);
+	void OpenRawJoystick(SDL_JoystickID id);
+	void LogDeviceSummary(SDL_JoystickID id, const char *openedAs);
+	void LogEnumerationStartup();
 	ATControllerSDL3 *FindController(SDL_JoystickID id);
 
 	void PollController(ATControllerSDL3& ctrl, bool& activity);
+	void ReadGamepadState(ATControllerSDL3& ctrl,
+		uint32& buttonStates, uint32& axisButtonStates,
+		sint32 axisVals[6], sint32 deadVals[6]);
+	void ReadRawJoystickState(ATControllerSDL3& ctrl,
+		uint32& buttonStates, uint32& axisButtonStates,
+		sint32 axisVals[6], sint32 deadVals[6]);
 	void ConvertStick(sint32 dst[2], sint32 x, sint32 y);
 
 	ATInputManager *mpInputManager = nullptr;
@@ -148,22 +196,74 @@ bool ATJoystickManagerSDL3Impl::Init(void *, ATInputManager *inputMan) {
 	mTransforms.mTriggerDigitalDeadZone = (sint32)(0.20f * 65536);
 	mTransforms.mTriggerAnalogPower = 1.0f;
 
+	// Enumerate all joysticks SDL can see and log full details for each,
+	// then open them (gamepads via the mapped API, others as raw HID).
+	// This is the single source of diagnostic truth for input-device
+	// problems on any platform (Windows, macOS, Linux, Android).
+	LogEnumerationStartup();
 	RescanForDevices();
 
-	// Diagnostic: log how many gamepads SDL3 actually saw at startup.
-	// On macOS, a missing .app bundle / NSGameControllerUsageDescription
-	// causes GameController.framework to silently report zero devices,
-	// and this line is the first place a user can confirm that.
-	LOG_INFO("Joystick", "SDL3 gamepad enumeration: %u device(s) detected at startup",
+	LOG_INFO("Joystick",
+		"SDL3 device enumeration complete: %u device(s) open (gamepads + raw joysticks)",
 		(unsigned)mControllers.size());
 	if (mControllers.empty()) {
-		LOG_INFO("Joystick",
-			"  (No gamepads found.  On macOS this usually means the binary is "
-			"not running from a signed .app bundle with "
-			"NSGameControllerUsageDescription in Info.plist.)");
+		LOG_WARN("Joystick",
+			"No input devices were opened. If you expected a joystick or "
+			"gamepad to work, check the per-device log lines above: each "
+			"joystick SDL can see is listed with its name, GUID, VID/PID, "
+			"and whether SDL classifies it as a gamepad. If the device is "
+			"present but shows as a raw joystick on a platform where it "
+			"used to work as a gamepad, SDL may be missing a "
+			"gamecontrollerdb mapping for it. If the device is completely "
+			"absent, the OS has not surfaced it to SDL (on macOS: check "
+			"that the binary is running from a signed .app bundle; on "
+			"Linux: check /dev/input permissions; on Windows: check that "
+			"the HID driver is installed).");
 	}
 
 	return true;
+}
+
+void ATJoystickManagerSDL3Impl::LogEnumerationStartup() {
+	// One-shot diagnostic dump — runs once at Init() time. Identifies
+	// the SDL build, the host platform, and every joystick SDL can see
+	// before we try to open any of them. This is the first line of
+	// defense when a user reports "my joystick doesn't work".
+	const int sdlVer = SDL_GetVersion();
+	const char *platform = SDL_GetPlatform();
+	LOG_INFO("Joystick", "SDL version %d.%d.%d on platform '%s'",
+		SDL_VERSIONNUM_MAJOR(sdlVer),
+		SDL_VERSIONNUM_MINOR(sdlVer),
+		SDL_VERSIONNUM_MICRO(sdlVer),
+		platform ? platform : "unknown");
+
+	int count = 0;
+	SDL_JoystickID *ids = SDL_GetJoysticks(&count);
+	LOG_INFO("Joystick", "SDL_GetJoysticks reports %d joystick(s) visible to SDL", count);
+
+	if (!ids || count == 0) {
+		if (ids) SDL_free(ids);
+		return;
+	}
+
+	for (int i = 0; i < count; ++i) {
+		const SDL_JoystickID id = ids[i];
+		const char *name = SDL_GetJoystickNameForID(id);
+		const SDL_GUID guid = SDL_GetJoystickGUIDForID(id);
+		const Uint16 vid = SDL_GetJoystickVendorForID(id);
+		const Uint16 pid = SDL_GetJoystickProductForID(id);
+		const bool isGamepad = SDL_IsGamepad(id);
+
+		LOG_INFO("Joystick",
+			"  [%d] instance=%u name='%s' vid=0x%04x pid=0x%04x guid=%s gamepad=%s",
+			i, (unsigned)id,
+			name ? name : "(null)",
+			(unsigned)vid, (unsigned)pid,
+			FormatGuid(guid).c_str(),
+			isGamepad ? "yes" : "no (will be opened as raw HID joystick)");
+	}
+
+	SDL_free(ids);
 }
 
 void ATJoystickManagerSDL3Impl::Shutdown() {
@@ -172,6 +272,8 @@ void ATJoystickManagerSDL3Impl::Shutdown() {
 			mpInputManager->UnregisterInputUnit(ctrl->mUnit);
 		if (ctrl->mpGamepad)
 			SDL_CloseGamepad(ctrl->mpGamepad);
+		if (ctrl->mpJoystick)
+			SDL_CloseJoystick(ctrl->mpJoystick);
 		delete ctrl;
 	}
 	mControllers.clear();
@@ -179,32 +281,41 @@ void ATJoystickManagerSDL3Impl::Shutdown() {
 }
 
 void ATJoystickManagerSDL3Impl::RescanForDevices() {
-	// Check for newly connected gamepads
+	// Enumerate EVERY joystick SDL can see — not just the ones it
+	// classifies as gamepads — so that generic HID joysticks (retro
+	// USB Atari-style pads, arcade sticks, no-name devices) can still
+	// be used. OpenDevice() dispatches to the appropriate path.
 	int count = 0;
-	SDL_JoystickID *ids = SDL_GetGamepads(&count);
+	SDL_JoystickID *ids = SDL_GetJoysticks(&count);
 	if (!ids)
 		return;
 
-	// Mark existing controllers
-	for (auto *ctrl : mControllers)
-		ctrl->mUnit |= 0; // no-op, just iterate
-
-	// Open any gamepads we don't already track
 	for (int i = 0; i < count; ++i) {
 		if (!FindController(ids[i]))
-			OpenGamepad(ids[i]);
+			OpenDevice(ids[i]);
 	}
 
 	SDL_free(ids);
 }
 
+void ATJoystickManagerSDL3Impl::OpenDevice(SDL_JoystickID id) {
+	if (SDL_IsGamepad(id))
+		OpenGamepad(id);
+	else
+		OpenRawJoystick(id);
+}
+
 void ATJoystickManagerSDL3Impl::OpenGamepad(SDL_JoystickID id) {
 	SDL_Gamepad *gp = SDL_OpenGamepad(id);
-	if (!gp)
+	if (!gp) {
+		LOG_WARN("Joystick", "SDL_OpenGamepad(%u) failed: %s",
+			(unsigned)id, SDL_GetError());
 		return;
+	}
 
 	auto *ctrl = new ATControllerSDL3();
 	ctrl->mpGamepad = gp;
+	ctrl->mbIsGamepad = true;
 	ctrl->mInstanceID = id;
 
 	// Build a stable identifier from the joystick GUID
@@ -224,19 +335,74 @@ void ATJoystickManagerSDL3Impl::OpenGamepad(SDL_JoystickID id) {
 
 	mControllers.push_back(ctrl);
 
-	LOG_INFO("Joystick", "Gamepad connected: %s (unit %d)", name ? name : "unknown", ctrl->mUnit);
+	const Uint16 vid = SDL_GetJoystickVendorForID(id);
+	const Uint16 pid = SDL_GetJoystickProductForID(id);
+	LOG_INFO("Joystick",
+		"Gamepad opened: name='%s' unit=%d instance=%u vid=0x%04x pid=0x%04x guid=%s",
+		name ? name : "unknown",
+		ctrl->mUnit, (unsigned)id,
+		(unsigned)vid, (unsigned)pid,
+		FormatGuid(guid).c_str());
+}
+
+void ATJoystickManagerSDL3Impl::OpenRawJoystick(SDL_JoystickID id) {
+	SDL_Joystick *j = SDL_OpenJoystick(id);
+	if (!j) {
+		LOG_WARN("Joystick", "SDL_OpenJoystick(%u) failed: %s",
+			(unsigned)id, SDL_GetError());
+		return;
+	}
+
+	auto *ctrl = new ATControllerSDL3();
+	ctrl->mpJoystick = j;
+	ctrl->mbIsGamepad = false;
+	ctrl->mInstanceID = id;
+	ctrl->mNumButtons = SDL_GetNumJoystickButtons(j);
+	ctrl->mNumAxes = SDL_GetNumJoystickAxes(j);
+	ctrl->mNumHats = SDL_GetNumJoystickHats(j);
+
+	SDL_GUID guid = SDL_GetJoystickGUIDForID(id);
+	static_assert(sizeof(guid.data) >= sizeof(ctrl->mId.buf), "GUID too small");
+	memcpy(ctrl->mId.buf, guid.data, sizeof(ctrl->mId.buf));
+
+	const char *name = SDL_GetJoystickNameForID(id);
+	VDStringW wname;
+	if (name)
+		wname.sprintf(L"SDL Joystick: %hs", name);
+	else
+		wname = L"SDL Joystick";
+
+	ctrl->mUnit = mpInputManager->RegisterInputUnit(ctrl->mId, wname.c_str(), nullptr);
+
+	mControllers.push_back(ctrl);
+
+	const Uint16 vid = SDL_GetJoystickVendorForID(id);
+	const Uint16 pid = SDL_GetJoystickProductForID(id);
+	LOG_INFO("Joystick",
+		"Raw joystick opened: name='%s' unit=%d instance=%u buttons=%d axes=%d hats=%d "
+		"vid=0x%04x pid=0x%04x guid=%s",
+		name ? name : "unknown",
+		ctrl->mUnit, (unsigned)id,
+		ctrl->mNumButtons, ctrl->mNumAxes, ctrl->mNumHats,
+		(unsigned)vid, (unsigned)pid,
+		FormatGuid(guid).c_str());
 }
 
 void ATJoystickManagerSDL3Impl::CloseGamepad(SDL_JoystickID id) {
+	// Name is historical — this handles both gamepads and raw joysticks,
+	// dispatched by the SDL_EVENT_{GAMEPAD,JOYSTICK}_REMOVED events.
 	for (auto it = mControllers.begin(); it != mControllers.end(); ++it) {
 		if ((*it)->mInstanceID == id) {
 			auto *ctrl = *it;
-			LOG_INFO("Joystick", "Gamepad disconnected: unit %d", ctrl->mUnit);
+			LOG_INFO("Joystick", "Device disconnected: unit %d (%s)",
+				ctrl->mUnit, ctrl->mbIsGamepad ? "gamepad" : "raw joystick");
 
 			if (ctrl->mUnit >= 0 && mpInputManager)
 				mpInputManager->UnregisterInputUnit(ctrl->mUnit);
 			if (ctrl->mpGamepad)
 				SDL_CloseGamepad(ctrl->mpGamepad);
+			if (ctrl->mpJoystick)
+				SDL_CloseJoystick(ctrl->mpJoystick);
 			delete ctrl;
 			mControllers.erase(it);
 			return;
@@ -267,106 +433,22 @@ IATJoystickManager::PollResult ATJoystickManagerSDL3Impl::Poll() {
 }
 
 void ATJoystickManagerSDL3Impl::PollController(ATControllerSDL3& ctrl, bool& activity) {
-	if (!ctrl.mpGamepad || ctrl.mUnit < 0)
+	if (ctrl.mUnit < 0)
+		return;
+	if (ctrl.mbIsGamepad && !ctrl.mpGamepad)
+		return;
+	if (!ctrl.mbIsGamepad && !ctrl.mpJoystick)
 		return;
 
-	// --- Read button state ---
-	// Map SDL3 buttons to XInput-order button bits
 	uint32 buttonStates = 0;
-	for (int i = 0; i < kNumMappedButtons; ++i) {
-		if (SDL_GetGamepadButton(ctrl.mpGamepad, (SDL_GamepadButton)i))
-			buttonStates |= (1 << kSDLButtonToAltirra[i]);
-	}
-
-	// --- Read axis values ---
-	// SDL3 thumbstick range: -32768 to 32767
-	// Altirra axis range: -65536 to 65536 (XInput multiplies by 2)
+	uint32 axisButtonStates = 0;
 	sint32 axisVals[6] {};
 	sint32 deadVals[6] {};
 
-	sint32 lx = SDL_GetGamepadAxis(ctrl.mpGamepad, SDL_GAMEPAD_AXIS_LEFTX);
-	sint32 ly = SDL_GetGamepadAxis(ctrl.mpGamepad, SDL_GAMEPAD_AXIS_LEFTY);
-	sint32 rx = SDL_GetGamepadAxis(ctrl.mpGamepad, SDL_GAMEPAD_AXIS_RIGHTX);
-	sint32 ry = SDL_GetGamepadAxis(ctrl.mpGamepad, SDL_GAMEPAD_AXIS_RIGHTY);
-
-	axisVals[0] = lx * 2;		// left stick X
-	axisVals[1] = ly * 2;		// left stick Y (SDL3 Y+ = down, same as XInput after negate)
-	axisVals[3] = rx * 2;		// right stick X
-	axisVals[4] = ry * 2;		// right stick Y
-
-	// Apply deadzone to sticks
-	ConvertStick(deadVals, lx * 2, ly * 2);
-	ConvertStick(deadVals + 3, rx * 2, ry * 2);
-
-	// Note: SDL3 Y-axis is already "down = positive" which matches what
-	// Altirra expects after XInput's negate. But XInput negates Y (line 481-483
-	// in joystick.cpp), and Altirra's input mapping expects that. Let's match:
-	// XInput: axisVals[1] = sThumbLY * -2 (invert Y so up = negative)
-	// SDL3: LEFTY is already positive-down, so we DON'T negate.
-	// But wait — XInput's sThumbLY is positive-up, so *-2 makes it positive-down.
-	// SDL3's LEFTY is positive-down already. So both end up positive-down.
-	// The deadified values also need the same treatment.
-	// XInput code: mDeadifiedAxisVals[1] = -mDeadifiedAxisVals[1] (line 485)
-	// That's because ConvertStick output matches the raw sign, and the raw was
-	// positive-up, so negating makes it positive-down.
-	// For SDL3 the raw is already positive-down, so we don't negate deadified.
-
-	// Triggers: SDL3 range 0-32767, Altirra expects 0-65536
-	for (int i = 0; i < 2; ++i) {
-		SDL_GamepadAxis trigAxis = i ? SDL_GAMEPAD_AXIS_RIGHT_TRIGGER : SDL_GAMEPAD_AXIS_LEFT_TRIGGER;
-		sint32 rawVal = SDL_GetGamepadAxis(ctrl.mpGamepad, trigAxis);
-		float fVal = (float)rawVal / 32767.0f;
-		sint32 axisVal = (sint32)(fVal * 65536.0f);
-		sint32 adjVal = 0;
-
-		float trigThreshold = (float)mTransforms.mTriggerAnalogDeadZone / 65536.0f;
-		if (fVal > trigThreshold) {
-			float deadVal = (fVal - trigThreshold) / (1.0f - trigThreshold);
-			adjVal = (sint32)(65536.0f * powf(deadVal, mTransforms.mTriggerAnalogPower));
-		}
-
-		if (i) {
-			axisVals[5] = axisVal;
-			deadVals[5] = adjVal;
-		} else {
-			axisVals[2] = axisVal;
-			deadVals[2] = adjVal;
-		}
-	}
-
-	// --- Compute axis buttons (digital from analog) ---
-	// Matches joystick.cpp line 511-530
-	//
-	// ConvertAnalogToDirectionMask expects positive-up Y (Windows convention).
-	// SDL3 Y-axis is positive-down, so we negate Y here.
-	uint32 axisButtonStates = 0;
-	axisButtonStates |= ConvertAnalogToDirectionMask(lx * 2, -ly * 2,
-		mTransforms.mStickDigitalDeadZone / 2);
-
-	// Left trigger pressed = bit 5
-	// SDL3 triggers range 0-32767; threshold is in 0-65536 space, so >> 1
-	if (SDL_GetGamepadAxis(ctrl.mpGamepad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER) >
-		(mTransforms.mTriggerDigitalDeadZone >> 1))
-		axisButtonStates |= (1 << 5);
-
-	// Right stick = bits 6-9 (negate Y for same reason)
-	axisButtonStates |= ConvertAnalogToDirectionMask(rx * 2, -ry * 2,
-		mTransforms.mStickDigitalDeadZone / 2) << 6;
-
-	// Right trigger pressed = bit 11
-	if (SDL_GetGamepadAxis(ctrl.mpGamepad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) >
-		(mTransforms.mTriggerDigitalDeadZone >> 1))
-		axisButtonStates |= (1 << 11);
-
-	// D-pad as axis buttons: bits 12-15 (left, right, up, down)
-	if (SDL_GetGamepadButton(ctrl.mpGamepad, SDL_GAMEPAD_BUTTON_DPAD_LEFT))
-		axisButtonStates |= (1 << 12);
-	if (SDL_GetGamepadButton(ctrl.mpGamepad, SDL_GAMEPAD_BUTTON_DPAD_RIGHT))
-		axisButtonStates |= (1 << 13);
-	if (SDL_GetGamepadButton(ctrl.mpGamepad, SDL_GAMEPAD_BUTTON_DPAD_UP))
-		axisButtonStates |= (1 << 14);
-	if (SDL_GetGamepadButton(ctrl.mpGamepad, SDL_GAMEPAD_BUTTON_DPAD_DOWN))
-		axisButtonStates |= (1 << 15);
+	if (ctrl.mbIsGamepad)
+		ReadGamepadState(ctrl, buttonStates, axisButtonStates, axisVals, deadVals);
+	else
+		ReadRawJoystickState(ctrl, buttonStates, axisButtonStates, axisVals, deadVals);
 
 	// --- Report changes to ATInputManager ---
 
@@ -409,6 +491,143 @@ void ATJoystickManagerSDL3Impl::PollController(ATControllerSDL3& ctrl, bool& act
 	memcpy(ctrl.mLastDeadAxisVals, deadVals, sizeof(deadVals));
 }
 
+void ATJoystickManagerSDL3Impl::ReadGamepadState(ATControllerSDL3& ctrl,
+	uint32& buttonStates, uint32& axisButtonStates,
+	sint32 axisVals[6], sint32 deadVals[6])
+{
+	// --- Read button state ---
+	// Map SDL3 buttons to XInput-order button bits
+	for (int i = 0; i < kNumMappedButtons; ++i) {
+		if (SDL_GetGamepadButton(ctrl.mpGamepad, (SDL_GamepadButton)i))
+			buttonStates |= (1 << kSDLButtonToAltirra[i]);
+	}
+
+	// --- Read axis values ---
+	// SDL3 thumbstick range: -32768 to 32767
+	// Altirra axis range: -65536 to 65536 (XInput multiplies by 2)
+	sint32 lx = SDL_GetGamepadAxis(ctrl.mpGamepad, SDL_GAMEPAD_AXIS_LEFTX);
+	sint32 ly = SDL_GetGamepadAxis(ctrl.mpGamepad, SDL_GAMEPAD_AXIS_LEFTY);
+	sint32 rx = SDL_GetGamepadAxis(ctrl.mpGamepad, SDL_GAMEPAD_AXIS_RIGHTX);
+	sint32 ry = SDL_GetGamepadAxis(ctrl.mpGamepad, SDL_GAMEPAD_AXIS_RIGHTY);
+
+	axisVals[0] = lx * 2;		// left stick X
+	axisVals[1] = ly * 2;		// left stick Y
+	axisVals[3] = rx * 2;		// right stick X
+	axisVals[4] = ry * 2;		// right stick Y
+
+	// Apply deadzone to sticks
+	ConvertStick(deadVals, lx * 2, ly * 2);
+	ConvertStick(deadVals + 3, rx * 2, ry * 2);
+
+	// Triggers: SDL3 range 0-32767, Altirra expects 0-65536
+	for (int i = 0; i < 2; ++i) {
+		SDL_GamepadAxis trigAxis = i ? SDL_GAMEPAD_AXIS_RIGHT_TRIGGER : SDL_GAMEPAD_AXIS_LEFT_TRIGGER;
+		sint32 rawVal = SDL_GetGamepadAxis(ctrl.mpGamepad, trigAxis);
+		float fVal = (float)rawVal / 32767.0f;
+		sint32 axisVal = (sint32)(fVal * 65536.0f);
+		sint32 adjVal = 0;
+
+		float trigThreshold = (float)mTransforms.mTriggerAnalogDeadZone / 65536.0f;
+		if (fVal > trigThreshold) {
+			float deadVal = (fVal - trigThreshold) / (1.0f - trigThreshold);
+			adjVal = (sint32)(65536.0f * powf(deadVal, mTransforms.mTriggerAnalogPower));
+		}
+
+		if (i) {
+			axisVals[5] = axisVal;
+			deadVals[5] = adjVal;
+		} else {
+			axisVals[2] = axisVal;
+			deadVals[2] = adjVal;
+		}
+	}
+
+	// --- Compute axis buttons (digital from analog) ---
+	// ConvertAnalogToDirectionMask expects positive-up Y (Windows convention).
+	// SDL3 Y-axis is positive-down, so we negate Y here.
+	axisButtonStates |= ConvertAnalogToDirectionMask(lx * 2, -ly * 2,
+		mTransforms.mStickDigitalDeadZone / 2);
+
+	// Left trigger pressed = bit 5 (SDL3 triggers are 0-32767, threshold is in 0-65536 space)
+	if (SDL_GetGamepadAxis(ctrl.mpGamepad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER) >
+		(mTransforms.mTriggerDigitalDeadZone >> 1))
+		axisButtonStates |= (1 << 5);
+
+	// Right stick = bits 6-9
+	axisButtonStates |= ConvertAnalogToDirectionMask(rx * 2, -ry * 2,
+		mTransforms.mStickDigitalDeadZone / 2) << 6;
+
+	// Right trigger pressed = bit 11
+	if (SDL_GetGamepadAxis(ctrl.mpGamepad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) >
+		(mTransforms.mTriggerDigitalDeadZone >> 1))
+		axisButtonStates |= (1 << 11);
+
+	// D-pad as axis buttons: bits 12-15
+	if (SDL_GetGamepadButton(ctrl.mpGamepad, SDL_GAMEPAD_BUTTON_DPAD_LEFT))
+		axisButtonStates |= (1 << 12);
+	if (SDL_GetGamepadButton(ctrl.mpGamepad, SDL_GAMEPAD_BUTTON_DPAD_RIGHT))
+		axisButtonStates |= (1 << 13);
+	if (SDL_GetGamepadButton(ctrl.mpGamepad, SDL_GAMEPAD_BUTTON_DPAD_UP))
+		axisButtonStates |= (1 << 14);
+	if (SDL_GetGamepadButton(ctrl.mpGamepad, SDL_GAMEPAD_BUTTON_DPAD_DOWN))
+		axisButtonStates |= (1 << 15);
+}
+
+void ATJoystickManagerSDL3Impl::ReadRawJoystickState(ATControllerSDL3& ctrl,
+	uint32& buttonStates, uint32& axisButtonStates,
+	sint32 axisVals[6], sint32 deadVals[6])
+{
+	// --- Buttons 0..10 ---
+	// Raw HID joysticks report buttons in device-defined order; we pass
+	// them through unchanged. Any input-map preset that matches on
+	// JoyButton0..JoyButton10 will pick them up regardless of label.
+	const int nb = ctrl.mNumButtons < 11 ? ctrl.mNumButtons : 11;
+	for (int i = 0; i < nb; ++i) {
+		if (SDL_GetJoystickButton(ctrl.mpJoystick, i))
+			buttonStates |= (1 << i);
+	}
+
+	// --- Axes ---
+	// First two axes become "left stick", next two become "right stick".
+	// SDL3 joystick axes are in the range -32768..32767; Altirra expects
+	// -65536..65536, so we multiply by 2 to match the Gamepad path.
+	sint32 lx = 0, ly = 0, rx = 0, ry = 0;
+	if (ctrl.mNumAxes >= 1)
+		lx = SDL_GetJoystickAxis(ctrl.mpJoystick, 0);
+	if (ctrl.mNumAxes >= 2)
+		ly = SDL_GetJoystickAxis(ctrl.mpJoystick, 1);
+	if (ctrl.mNumAxes >= 3)
+		rx = SDL_GetJoystickAxis(ctrl.mpJoystick, 2);
+	if (ctrl.mNumAxes >= 4)
+		ry = SDL_GetJoystickAxis(ctrl.mpJoystick, 3);
+
+	axisVals[0] = lx * 2;
+	axisVals[1] = ly * 2;
+	axisVals[3] = rx * 2;
+	axisVals[4] = ry * 2;
+
+	ConvertStick(deadVals, lx * 2, ly * 2);
+	ConvertStick(deadVals + 3, rx * 2, ry * 2);
+
+	// Left stick digital direction — bits 0..3
+	axisButtonStates |= ConvertAnalogToDirectionMask(lx * 2, -ly * 2,
+		mTransforms.mStickDigitalDeadZone / 2);
+
+	// Right stick digital direction — bits 6..9
+	axisButtonStates |= ConvertAnalogToDirectionMask(rx * 2, -ry * 2,
+		mTransforms.mStickDigitalDeadZone / 2) << 6;
+
+	// --- Hat → d-pad axis-button bits 12..15 ---
+	// Use the first hat only; the Windows DirectInput path does the same.
+	if (ctrl.mNumHats > 0) {
+		const Uint8 hat = SDL_GetJoystickHat(ctrl.mpJoystick, 0);
+		if (hat & SDL_HAT_LEFT)  axisButtonStates |= (1 << 12);
+		if (hat & SDL_HAT_RIGHT) axisButtonStates |= (1 << 13);
+		if (hat & SDL_HAT_UP)    axisButtonStates |= (1 << 14);
+		if (hat & SDL_HAT_DOWN)  axisButtonStates |= (1 << 15);
+	}
+}
+
 void ATJoystickManagerSDL3Impl::ConvertStick(sint32 dst[2], sint32 x, sint32 y) {
 	// Matches ATControllerXInput::ConvertStick — apply analog deadzone
 	float fx = (float)x;
@@ -437,23 +656,31 @@ void ATJoystickManagerSDL3Impl::ConvertStick(sint32 dst[2], sint32 x, sint32 y) 
 }
 
 bool ATJoystickManagerSDL3Impl::PollForCapture(int& unit, uint32& inputCode, uint32& inputCode2) {
+	// Read the current state of every open device (gamepad or raw
+	// joystick) using the same helpers as Poll(), then find the first
+	// button/axis-button that transitioned low→high this call. This
+	// powers the "press something to bind" UI mode.
 	for (auto *ctrl : mControllers) {
-		if (!ctrl->mpGamepad || ctrl->mUnit < 0)
+		if (ctrl->mUnit < 0)
+			continue;
+		if (ctrl->mbIsGamepad && !ctrl->mpGamepad)
+			continue;
+		if (!ctrl->mbIsGamepad && !ctrl->mpJoystick)
 			continue;
 
-		// Check buttons
 		uint32 buttonStates = 0;
-		for (int i = 0; i < kNumMappedButtons; ++i) {
-			if (SDL_GetGamepadButton(ctrl->mpGamepad, (SDL_GamepadButton)i))
-				buttonStates |= (1 << kSDLButtonToAltirra[i]);
-		}
+		uint32 axisButtonStates = 0;
+		sint32 axisVals[6] {};
+		sint32 deadVals[6] {};
+		if (ctrl->mbIsGamepad)
+			ReadGamepadState(*ctrl, buttonStates, axisButtonStates, axisVals, deadVals);
+		else
+			ReadRawJoystickState(*ctrl, buttonStates, axisButtonStates, axisVals, deadVals);
 
-		uint32 newButtons = buttonStates & ~ctrl->mLastButtons;
+		const uint32 newButtons = buttonStates & ~ctrl->mLastButtons;
 		ctrl->mLastButtons = buttonStates;
-
 		if (newButtons) {
 			unit = ctrl->mUnit;
-			// Find lowest set bit
 			for (int i = 0; i < 11; ++i) {
 				if (newButtons & (1 << i)) {
 					inputCode = kATInputCode_JoyButton0 + i;
@@ -463,27 +690,8 @@ bool ATJoystickManagerSDL3Impl::PollForCapture(int& unit, uint32& inputCode, uin
 			}
 		}
 
-		// Check axis buttons (sticks/dpad)
-		// Simplified: check if any new digital direction appeared
-		uint32 axisButtonStates = 0;
-		sint32 lx = SDL_GetGamepadAxis(ctrl->mpGamepad, SDL_GAMEPAD_AXIS_LEFTX) * 2;
-		sint32 ly = SDL_GetGamepadAxis(ctrl->mpGamepad, SDL_GAMEPAD_AXIS_LEFTY) * 2;
-		axisButtonStates |= ConvertAnalogToDirectionMask(lx, -ly,
-			mTransforms.mStickDigitalDeadZone / 2);
-
-		sint32 rx2 = SDL_GetGamepadAxis(ctrl->mpGamepad, SDL_GAMEPAD_AXIS_RIGHTX) * 2;
-		sint32 ry2 = SDL_GetGamepadAxis(ctrl->mpGamepad, SDL_GAMEPAD_AXIS_RIGHTY) * 2;
-		axisButtonStates |= ConvertAnalogToDirectionMask(rx2, -ry2,
-			mTransforms.mStickDigitalDeadZone / 2) << 6;
-
-		if (SDL_GetGamepadButton(ctrl->mpGamepad, SDL_GAMEPAD_BUTTON_DPAD_LEFT))  axisButtonStates |= (1 << 12);
-		if (SDL_GetGamepadButton(ctrl->mpGamepad, SDL_GAMEPAD_BUTTON_DPAD_RIGHT)) axisButtonStates |= (1 << 13);
-		if (SDL_GetGamepadButton(ctrl->mpGamepad, SDL_GAMEPAD_BUTTON_DPAD_UP))    axisButtonStates |= (1 << 14);
-		if (SDL_GetGamepadButton(ctrl->mpGamepad, SDL_GAMEPAD_BUTTON_DPAD_DOWN))  axisButtonStates |= (1 << 15);
-
-		uint32 newAxisButtons = axisButtonStates & ~ctrl->mLastAxisButtons;
+		const uint32 newAxisButtons = axisButtonStates & ~ctrl->mLastAxisButtons;
 		ctrl->mLastAxisButtons = axisButtonStates;
-
 		if (newAxisButtons) {
 			unit = ctrl->mUnit;
 			for (int i = 0; i < 16; ++i) {
@@ -503,7 +711,11 @@ const ATJoystickState *ATJoystickManagerSDL3Impl::PollForCapture(uint32& n) {
 	mCaptureStates.clear();
 
 	for (auto *ctrl : mControllers) {
-		if (!ctrl->mpGamepad || ctrl->mUnit < 0)
+		if (ctrl->mUnit < 0)
+			continue;
+		if (ctrl->mbIsGamepad && !ctrl->mpGamepad)
+			continue;
+		if (!ctrl->mbIsGamepad && !ctrl->mpJoystick)
 			continue;
 
 		ATJoystickState state {};
