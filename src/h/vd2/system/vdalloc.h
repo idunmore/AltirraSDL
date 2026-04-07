@@ -214,7 +214,15 @@ class vddeleterholder<T> : public T {};
 
 template<class T>
 struct vddefaultdelete {
-	static void operator()(T* p) { delete p; }
+	// Note: this was originally `static void operator()(T*)`, which is a
+	// C++23 feature (P1169). GCC < 13 (e.g. the GCC 12 shipped with
+	// Raspberry Pi OS Bookworm) rejects it outright, and older Clang
+	// versions do likewise. A non-static const call operator is valid in
+	// every C++ standard since C++98 and is codegen-identical here because
+	// the deleter is empty and stored with [[no_unique_address]] inside
+	// vduniqueptr, so there is no size or performance cost. Matches the
+	// signature of std::default_delete.
+	void operator()(T* p) const { delete p; }
 };
 
 template<typename T, class Deleter = vddefaultdelete<T>> class vduniqueptr {

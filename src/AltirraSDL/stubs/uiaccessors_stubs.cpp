@@ -184,7 +184,13 @@ static ATFrameRateMode s_frameRateMode = kATFrameRateMode_Hardware;
 ATFrameRateMode ATUIGetFrameRateMode() { return s_frameRateMode; }
 void ATUISetFrameRateMode(ATFrameRateMode mode) { s_frameRateMode = mode; }
 
-static bool s_vsyncAdaptive = false;
+// Default ON in the SDL3 build: locks the frame pacer to the display refresh
+// when it is within 2% of the target NTSC/PAL rate, eliminating the periodic
+// ~12s scroll hitch caused by 60.000 Hz vs 59.9227 Hz beat.  See
+// main_pacer.cpp:160-168 for the lock logic.  Windows defaults this off
+// because the Windows engine has its own clock recovery; SDL3 needs the lock
+// to avoid visible stutter on standard 60 Hz displays.
+static bool s_vsyncAdaptive = true;
 bool ATUIGetFrameRateVSyncAdaptive() { return s_vsyncAdaptive; }
 void ATUISetFrameRateVSyncAdaptive(bool v) { s_vsyncAdaptive = v; }
 
