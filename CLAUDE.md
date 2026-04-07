@@ -325,6 +325,24 @@ authoritative source — the existing codebase, a hardware reference
 manual, or a verified test.  If two sources disagree, test on real
 hardware or use the value from the battle-tested Windows implementation.
 
+### Don't hand-roll masks, lists, or flags that Windows expresses as a single constant
+
+When the SDL3 build replicates a Windows code path that uses a canonical
+"all of these" constant (a category mask, a feature-flag set, an enum
+OR'd into a bitfield), reuse the same constant rather than enumerating
+the individual bits.  Hand-rolled lists silently drift as soon as a new
+bit is added to the Windows side: the new bit is defined, the Windows
+path picks it up automatically, and the SDL3 path keeps working on the
+old subset with no compiler error to flag the omission.
+
+**Rule:** If Windows expresses a set as an "all" constant (optionally
+with a small number of explicit exclusions), the SDL3 equivalent must
+use the same expression.  Do not open-code the member list.  This
+applies to settings categories, input flags, device capability masks,
+and any similar "everything that's registered" set.  The only exception
+is when a strict subset is intentional — in which case leave a comment
+explaining which bits are excluded and why.
+
 ### Keep UI representation and behaviour in sync
 
 When the UI displays information to the user (shortcut hints, status

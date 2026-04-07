@@ -1096,7 +1096,9 @@ uint32 ATVorbisUpdateCRC_ARM64_CRC32(uint32 crc, const void *src, size_t len) {
 		);
 	};
 
-	const auto partialUpdate = [](uint32 crc, const void *src, size_t len) VD_CPU_TARGET_LAMBDA("crc") -> uint32 {
+	// ARM64: GCC requires '+' prefix on target-attribute extensions ("+crc"),
+	// while Clang accepts both. See note in src/system/source/zip.cpp.
+	const auto partialUpdate = [](uint32 crc, const void *src, size_t len) VD_CPU_TARGET_LAMBDA("+crc") -> uint32 {
 		if (len & 8) {
 			uint64x1_t v64 = vreinterpret_u64_u8(vrbit_u8(vld1_u8((const uint8_t *)src)));
 

@@ -145,17 +145,6 @@ void FramePacer::WaitForNextFrame() {
 		//   lateFrames == 0 AND audio underflows == 0
 		//     → everything is healthy; crackling is elsewhere (e.g.
 		//       user-space audio server bug).
-		const double maxMs = (double)maxElapsedTicks * 1000.0 / (double)perfFreq;
-		const double targetMs = targetSecsPerFrame * 1000.0;
-		LOG_INFO("Pace",
-			"fps=%.1f late=%u/%u maxFrame=%.1fms target=%.2fms errAcc=%+.1fms",
-			(double)measuredFPS,
-			lateFrameCount,
-			frameCount,
-			maxMs,
-			targetMs,
-			(double)errorAccum * 1000.0 / (double)perfFreq);
-
 		frameCount = 0;
 		lateFrameCount = 0;
 		maxElapsedTicks = 0;

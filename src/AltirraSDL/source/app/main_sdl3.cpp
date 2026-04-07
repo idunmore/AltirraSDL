@@ -1184,21 +1184,13 @@ int main(int argc, char *argv[]) {
 	// calls ATLoadSettings() internally with the profile's settings,
 	// replacing the direct ATLoadSettings() call we had before.
 	ATLoadDefaultProfiles();
+	// Match Windows main.cpp:3947 — load every registered category except
+	// FullScreen (window placement is handled separately).  Using the
+	// _All mask ensures Devices, MountedImages, and NVRAM round-trip across
+	// restarts, and any future category added to settings.cpp is picked up
+	// automatically.
 	ATSettingsLoadLastProfile((ATSettingsCategory)(
-		kATSettingsCategory_Hardware
-		| kATSettingsCategory_Firmware
-		| kATSettingsCategory_Acceleration
-		| kATSettingsCategory_Debugging
-		| kATSettingsCategory_View
-		| kATSettingsCategory_Color
-		| kATSettingsCategory_Sound
-		| kATSettingsCategory_Boot
-		| kATSettingsCategory_Environment
-		| kATSettingsCategory_Speed
-		| kATSettingsCategory_StartupConfig
-		| kATSettingsCategory_FullScreen
-		| kATSettingsCategory_Input
-		| kATSettingsCategory_InputMaps
+		kATSettingsCategory_All & ~kATSettingsCategory_FullScreen
 	));
 
 #ifdef ALTIRRA_MOBILE
@@ -1604,9 +1596,6 @@ int main(int argc, char *argv[]) {
 			SDL_GL_SetSwapInterval(turbo ? 0 : 1);
 		}
 
-		if (s_diagFrameCount < 5)
-			LOG_INFO("Main", "MainLoop: advance=%d hadFrame=%d running=%d paused=%d", (int)result, hadFrame, g_sim.IsRunning(), g_sim.IsPaused());
-
 		bool didRender = false;
 		if (hadFrame) {
 			// A frame was uploaded — present it and pace.
@@ -1676,21 +1665,10 @@ int main(int argc, char *argv[]) {
 	// via g_sim.GetJoystickManager())
 	extern void ATRegistryFlushToDisk();
 	try {
+		// Match Windows main.cpp:4044 — save every registered category
+		// except FullScreen.  Covers Devices, MountedImages, and NVRAM.
 		ATSaveSettings((ATSettingsCategory)(
-			kATSettingsCategory_Hardware
-			| kATSettingsCategory_Firmware
-			| kATSettingsCategory_Acceleration
-			| kATSettingsCategory_Debugging
-			| kATSettingsCategory_View
-			| kATSettingsCategory_Color
-			| kATSettingsCategory_Sound
-			| kATSettingsCategory_Boot
-			| kATSettingsCategory_Environment
-			| kATSettingsCategory_Speed
-			| kATSettingsCategory_StartupConfig
-			| kATSettingsCategory_FullScreen
-			| kATSettingsCategory_Input
-			| kATSettingsCategory_InputMaps
+			kATSettingsCategory_All & ~kATSettingsCategory_FullScreen
 		));
 		ATRegistryFlushToDisk();
 	} catch (...) {

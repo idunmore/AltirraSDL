@@ -1081,13 +1081,7 @@ void ATAudioOutputSDL3::InternalWriteAudio(
 				const int minMs = bps > 0 ? (mAudioStatus.mMeasuredMin * 1000 / bps) : 0;
 				const int maxMs = bps > 0 ? (mAudioStatus.mMeasuredMax * 1000 / bps) : 0;
 
-				fprintf(stderr,
-					"[Audio] q=%d/%d/%d-%dms ratio=%.4f uf=%u of=%u drop=%u "
-					"in=%.0f exp=%.0f\n",
-					minMs, maxMs, mLatency, mLatency + mExtraBuffer,
-					(double)mFreqRatio,
-					ufDelta, ofDelta, drDelta,
-					mAudioStatus.mIncomingRate, mAudioStatus.mExpectedRate);
+				(void)minMs; (void)maxMs; (void)ufDelta; (void)ofDelta; (void)drDelta;
 			}
 		}
 	}
