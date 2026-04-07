@@ -159,7 +159,6 @@ private:
 	void OpenDevice(SDL_JoystickID id);
 	void OpenGamepad(SDL_JoystickID id);
 	void OpenRawJoystick(SDL_JoystickID id);
-	void CloseDeviceByInstance(SDL_JoystickID id);
 	void LogEnumerationStartup();
 	ATControllerSDL3 *FindController(SDL_JoystickID id);
 
@@ -290,54 +289,22 @@ void ATJoystickManagerSDL3Impl::RescanForDevices() {
 	if (!ids)
 		return;
 
+	// We intentionally do NOT reclassify already-tracked devices.
+	// SDL3 completes gamepad classification synchronously before
+	// firing SDL_EVENT_{GAMEPAD,JOYSTICK}_ADDED, so the first time we
+	// see a device SDL_IsGamepad already returns its final answer.
+	// Closing and reopening an existing device in place would shift
+	// mControllers ordering and therefore the port-index assignments
+	// that GetConnectedDevices derives from it, which would surface
+	// as the player-index of already-working devices changing on the
+	// fly. If a device ever does end up on the wrong codepath the
+	// user can recover by unplugging and replugging it.
 	for (int i = 0; i < count; ++i) {
-		const SDL_JoystickID id = ids[i];
-		ATControllerSDL3 *existing = FindController(id);
-
-		if (!existing) {
-			OpenDevice(id);
-			continue;
-		}
-
-		// Defensive: if SDL has upgraded (or downgraded) this instance's
-		// gamepad classification since we last opened it — e.g. because
-		// the gamepad layer finished classifying after we already saw the
-		// raw joystick, or a user-installed mapping was loaded at
-		// runtime — close the stale handle and reopen on the correct
-		// path so the right button/axis remap applies.
-		const bool isGamepadNow = SDL_IsGamepad(id);
-		if (isGamepadNow != existing->mbIsGamepad) {
-			LOG_INFO("Joystick",
-				"Reclassifying instance %u: %s → %s",
-				(unsigned)id,
-				existing->mbIsGamepad ? "gamepad" : "raw joystick",
-				isGamepadNow ? "gamepad" : "raw joystick");
-			CloseDeviceByInstance(id);
-			OpenDevice(id);
-		}
+		if (!FindController(ids[i]))
+			OpenDevice(ids[i]);
 	}
 
 	SDL_free(ids);
-}
-
-void ATJoystickManagerSDL3Impl::CloseDeviceByInstance(SDL_JoystickID id) {
-	// Internal helper used by the reclassification path.  Same body as
-	// CloseGamepad but with a neutral log line (not a "disconnected"
-	// event — the device is still physically present).
-	for (auto it = mControllers.begin(); it != mControllers.end(); ++it) {
-		if ((*it)->mInstanceID == id) {
-			auto *ctrl = *it;
-			if (ctrl->mUnit >= 0 && mpInputManager)
-				mpInputManager->UnregisterInputUnit(ctrl->mUnit);
-			if (ctrl->mpGamepad)
-				SDL_CloseGamepad(ctrl->mpGamepad);
-			if (ctrl->mpJoystick)
-				SDL_CloseJoystick(ctrl->mpJoystick);
-			delete ctrl;
-			mControllers.erase(it);
-			return;
-		}
-	}
 }
 
 void ATJoystickManagerSDL3Impl::OpenDevice(SDL_JoystickID id) {
