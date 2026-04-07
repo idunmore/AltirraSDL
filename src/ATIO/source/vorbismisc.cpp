@@ -580,8 +580,11 @@ void ATVorbisDecoupleChannels_NEON(float *__restrict magnitudes, float *__restri
 		const auto m2 = vaddq_f32(mabs, vminq_f32(a, zero));
 		const auto a2 = vsubq_f32(mabs, vmaxq_f32(a, zero));
 
-		vst1q_f32(&magnitudes[i], veorq_u32(vreinterpretq_u32_f32(m2), sign));
-		vst1q_f32(&angles[i], veorq_u32(vreinterpretq_u32_f32(a2), sign));
+		// veorq_u32 returns uint32x4_t; vst1q_f32 wants float32x4_t, so we
+		// need an explicit reinterpret. Clang accepts the implicit cast but
+		// GCC (correctly) rejects it.
+		vst1q_f32(&magnitudes[i], vreinterpretq_f32_u32(veorq_u32(vreinterpretq_u32_f32(m2), sign)));
+		vst1q_f32(&angles[i],     vreinterpretq_f32_u32(veorq_u32(vreinterpretq_u32_f32(a2), sign)));
 	}
 }
 #endif
@@ -1074,7 +1077,9 @@ uint32 ATVorbisUpdateCRC_SSSE3_CLMUL(uint32 crc, const void *src, size_t len) {
 #endif
 
 #if defined(VD_CPU_ARM64)
-VD_CPU_TARGET("crc")
+// ARM64: GCC requires '+' prefix on target-attribute extensions ("+crc"),
+// while Clang accepts both. See note in src/system/source/zip.cpp.
+VD_CPU_TARGET("+crc")
 uint32 ATVorbisUpdateCRC_ARM64_CRC32(uint32 crc, const void *src, size_t len) {
 	// The ARM64 version is stupidly simpler than the x64 version because ARM64
 	// has a native instruction to calculate the Ethernet CRC. It has all
