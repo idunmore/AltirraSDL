@@ -131,6 +131,12 @@ bool LibrashaderRuntime::LoadPreset(const char *path) {
 	opts.force_no_mipmaps = false;
 	opts.disable_cache = false;
 
+	// NOTE: libra_gl_filter_chain_create unconditionally takes ownership of
+	// the preset (it calls preset_ptr.take() before any fallible work, see
+	// librashader-capi/src/runtime/gl/filter_chain.rs).  After this call the
+	// handle is already None/consumed whether the call succeeds or fails, so
+	// we must NOT call libra_preset_free on it — doing so panics inside
+	// librashader at presets.rs:235 (`Option::unwrap() on a None value`).
 	err = instance->gl_filter_chain_create(
 		&preset,
 		(libra_gl_loader_t)SDL_GL_GetProcAddress,
@@ -140,12 +146,10 @@ bool LibrashaderRuntime::LoadPreset(const char *path) {
 	if (err) {
 		LOG_ERROR("librashader", "Failed to create filter chain for: %s", path);
 		instance->error_free(&err);
-		instance->preset_free(&preset);
 		mParams.clear();
 		return false;
 	}
 
-	instance->preset_free(&preset);
 	mFilterChain = chain;
 	mPresetPath = path;
 
