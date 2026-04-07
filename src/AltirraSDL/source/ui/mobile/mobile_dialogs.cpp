@@ -45,6 +45,15 @@ void RenderMobileModalSheet(const ATMobileUIState &mobileState) {
 
 	ImGui::SetNextWindowPos(ImVec2(sheetX, sheetY));
 	ImGui::SetNextWindowSize(ImVec2(sheetW, 0));
+	// Force focus onto the modal sheet every frame it is visible.
+	// Without NavEnableGamepad this is a no-op for touch users; with
+	// gamepad nav enabled it traps D-pad navigation inside the sheet
+	// so the user cannot accidentally focus widgets that are still
+	// drawn behind the dim backdrop.  SetNextWindowFocus only
+	// changes which *window* is active — the per-item focus inside
+	// the modal is preserved between frames, so D-pad up/down still
+	// moves between OK/Cancel/Confirm normally.
+	ImGui::SetNextWindowFocus();
 
 	ImGuiStyle &style = ImGui::GetStyle();
 	float prevR = style.WindowRounding;

@@ -552,17 +552,66 @@ void ATMobileUI_Render(ATSimulator &sim, ATUIState &uiState,
 // Event handling
 // -------------------------------------------------------------------------
 
+// Fingers that began their touch sequence on the in-game overlay (touch
+// controls, console buttons, hamburger button).  We must continue to
+// swallow MOTION/UP events for these fingers even after a screen
+// transition (e.g. menu opens), otherwise ImGui sees the synthetic
+// FINGER_UP and treats it as a click on whatever item happens to be
+// under the finger — typically the close button or the first menu row.
+namespace {
+	constexpr int kMaxOwnedFingers = 8;
+	SDL_FingerID s_gameOwnedFingers[kMaxOwnedFingers] = {};
+	int s_gameOwnedCount = 0;
+
+	bool IsGameOwnedFinger(SDL_FingerID id) {
+		for (int i = 0; i < s_gameOwnedCount; ++i)
+			if (s_gameOwnedFingers[i] == id) return true;
+		return false;
+	}
+	void AddGameOwnedFinger(SDL_FingerID id) {
+		if (IsGameOwnedFinger(id)) return;
+		if (s_gameOwnedCount < kMaxOwnedFingers)
+			s_gameOwnedFingers[s_gameOwnedCount++] = id;
+	}
+	void RemoveGameOwnedFinger(SDL_FingerID id) {
+		for (int i = 0; i < s_gameOwnedCount; ++i) {
+			if (s_gameOwnedFingers[i] == id) {
+				s_gameOwnedFingers[i] = s_gameOwnedFingers[--s_gameOwnedCount];
+				return;
+			}
+		}
+	}
+}
+
 bool ATMobileUI_HandleEvent(const SDL_Event &ev, ATMobileUIState &mobileState) {
+	const bool isFinger =
+		ev.type == SDL_EVENT_FINGER_DOWN ||
+		ev.type == SDL_EVENT_FINGER_MOTION ||
+		ev.type == SDL_EVENT_FINGER_UP;
+
+	// Continue swallowing any in-flight finger that originated on the
+	// game-side touch layer, regardless of which screen is now active.
+	if (isFinger && IsGameOwnedFinger(ev.tfinger.fingerID)) {
+		// Forward to touch_controls so it can run its own release
+		// bookkeeping for the joystick / console / fire buttons.
+		// Ignored if the screen is no longer the gameplay overlay —
+		// the handler is robust to that.
+		ATTouchControls_HandleEvent(ev, mobileState.layout, mobileState.layoutConfig);
+		if (ev.type == SDL_EVENT_FINGER_UP)
+			RemoveGameOwnedFinger(ev.tfinger.fingerID);
+		return true;
+	}
+
 	// If a menu/dialog is open, let ImGui handle everything
 	if (mobileState.currentScreen != ATMobileUIScreen::None)
 		return false;
 
 	// Route touch events to touch controls
-	if (ev.type == SDL_EVENT_FINGER_DOWN ||
-		ev.type == SDL_EVENT_FINGER_MOTION ||
-		ev.type == SDL_EVENT_FINGER_UP)
-	{
-		return ATTouchControls_HandleEvent(ev, mobileState.layout, mobileState.layoutConfig);
+	if (isFinger) {
+		bool consumed = ATTouchControls_HandleEvent(ev, mobileState.layout, mobileState.layoutConfig);
+		if (consumed && ev.type == SDL_EVENT_FINGER_DOWN)
+			AddGameOwnedFinger(ev.tfinger.fingerID);
+		return consumed;
 	}
 
 	return false;

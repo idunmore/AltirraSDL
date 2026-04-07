@@ -33,7 +33,7 @@ namespace nsVDPixmapSpanUtils {
 		--w;
 		++src;
 
-		uint16x8_t coeff = vdupq_n_u8(0x03);
+		uint8x16_t coeff = vdupq_n_u8(0x03);
 
 		while(w >= 32) {
 			uint8x16x2_t v0 = vld2q_u8(src);

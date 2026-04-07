@@ -356,6 +356,8 @@ struct DragState {
 	float   scrollY = 0.0f;     // fractional accumulator
 	ImVec2  pressAnchor{};
 	float   dragDistSq = 0.0f;  // total distance moved during this press
+	bool    exceededSlop = false; // sticky: kept set through release frame
+	bool    clearedActive = false; // ClearActiveID already called this press
 };
 
 // Keep a handful of per-window states so nested scroll regions
@@ -399,6 +401,8 @@ void ATTouchDragScroll() {
 			ds->scrollY = ImGui::GetScrollY();
 			ds->pressAnchor = io.MousePos;
 			ds->dragDistSq = 0.0f;
+			ds->exceededSlop = false;
+			ds->clearedActive = false;
 		}
 		// Integrate finger delta into the scroll accumulator.
 		ds->scrollY -= io.MouseDelta.y;
@@ -413,9 +417,30 @@ void ATTouchDragScroll() {
 		ImVec2 d(io.MousePos.x - ds->pressAnchor.x,
 		         io.MousePos.y - ds->pressAnchor.y);
 		ds->dragDistSq = d.x * d.x + d.y * d.y;
+
+		float slop = dp(10.0f);
+		if (!ds->exceededSlop && ds->dragDistSq > slop * slop)
+			ds->exceededSlop = true;
+
+		// Once we've decided this press is a scroll gesture, cancel
+		// whatever ImGui widget the press latched onto so its release
+		// won't fire.  Without this, every Button/Selectable inside
+		// the scrolling list activates when the finger lifts after a
+		// scroll drag.
+		if (ds->exceededSlop && !ds->clearedActive) {
+			ImGui::ClearActiveID();
+			ds->clearedActive = true;
+		}
 	} else if (!mouseDown && ds->active) {
+		// Keep exceededSlop set for THIS frame so any widget that
+		// queries ATTouchIsDraggingBeyondSlop() during the release
+		// frame still sees the drag.  Reset on the next press in the
+		// `if (!ds->active)` branch above.
 		ds->active = false;
 		ds->dragDistSq = 0.0f;
+		ds->clearedActive = false;
+		// Note: exceededSlop intentionally NOT reset here.  It is
+		// reset when the next press begins.
 	}
 }
 
@@ -424,9 +449,10 @@ bool ATTouchIsDraggingBeyondSlop() {
 	ImGuiWindow *window = ImGui::GetCurrentWindow();
 	if (!window) return false;
 	DragState *ds = GetDragState(window->ID);
-	if (!ds->active) return false;
-	float slop = dp(10.0f);
-	return ds->dragDistSq > slop * slop;
+	// Sticky flag: stays true through the release frame so tap-slop
+	// suppression works on the frame the Selectable/Button reports
+	// its click-release.
+	return ds->exceededSlop;
 }
 
 // -------------------------------------------------------------------------

@@ -533,11 +533,11 @@ void VDResamplerSeparableTableRowStage8NEON::Process(void *dst, const void *src,
 				uint8x16_t srcVector = vld1q_u8((const uint8 *)src + (*offsets++));
 				uint8x16_t gatherVector = vqtbl1q_u8(srcVector, vreinterpretq_u8_s16(vld1q_s16(rowFilter)));
 				uint8x16_t filterVector = vreinterpretq_u8_s16(vld1q_s16(rowFilter + 8));
-				int16x8_t accum =
+				int16x8_t accum = vreinterpretq_s16_u16(
 					vpaddq_u16(
 						vmull_u8(vget_low_u8(gatherVector), vget_low_u8(filterVector)),
 						vmull_high_u8(gatherVector, filterVector)
-					);
+					));
 
 				vst1_u8(dst8, vqshrun_n_s16(accum, 7));
 
@@ -560,7 +560,7 @@ void VDResamplerSeparableTableRowStage8NEON::Process(void *dst, const void *src,
 				srcVector = vset_lane_u16(*(const uint16 *)((const uint8 *)src + offset3), srcVector, 3);
 
 				// filter and then pairwise add
-				int16x8_t srcVector2 = vreinterpretq_s16_u16(vmovl_u8(srcVector));
+				int16x8_t srcVector2 = vreinterpretq_s16_u16(vmovl_u8(vreinterpret_u8_u16(srcVector)));
 				int16x8_t coeffs = vld1q_s16(rowFilter + 8);
 				int32x4_t accum = vpaddq_s32(
 					vmull_s16(vget_low_s16(srcVector2), vget_low_s16(coeffs)),
@@ -583,7 +583,7 @@ void VDResamplerSeparableTableRowStage8NEON::Process(void *dst, const void *src,
 	if (kquads == 1) {
 		while(w--) {
 			const uint8 *VDRESTRICT src2 = (const uint8 *)src + (uint16)rowFilter[0];
-			int16x4_t v = vreinterpret_s16_u16(vget_low_u8(vmovl_u8(vreinterpret_u8_u32(vdup_n_u32(*(uint32 *)src2)))));
+			int16x4_t v = vreinterpret_s16_u16(vget_low_u16(vmovl_u8(vreinterpret_u8_u32(vdup_n_u32(*(uint32 *)src2)))));
 			int16x4_t coeffs = vld1_s16(rowFilter + 4);
 			int32x4_t accum = vmull_s16(v, coeffs);
 
