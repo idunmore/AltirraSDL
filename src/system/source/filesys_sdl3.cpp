@@ -196,27 +196,73 @@ VDString VDFileSplitExtRight(const VDString& s) {
 	return VDString(VDFileSplitExt(s.c_str()));
 }
 
+// Range-based extension split: finds the '.' of the last extension within
+// the half-open range [s, t), stopping at the last path separator.  If no
+// extension is present, returns t.  All returned pointers are inside the
+// same [s, t) range as the input, so they can be safely used to build a
+// VDStringSpan without touching foreign memory.
+//
+// NOTE: the previous implementations of the *Span variants below constructed
+// a temporary VDString/VDStringW to NUL-terminate the input, called
+// VDFileSplitExt on the temporary, then built a span mixing a pointer into
+// the temporary with a pointer into the caller's buffer.  That was doubly
+// wrong: (1) the pointer into the temporary dangled as soon as the temporary
+// was destroyed at end-of-statement, and (2) subtracting pointers from two
+// unrelated allocations is undefined behaviour and produced garbage span
+// lengths.  The resulting spans caused large out-of-bounds memcpy crashes in
+// ATSimulator::LoadCartridge() when it tried to copy the "symbol hint path"
+// (see the backtrace where LoadMountedImages -> LoadCartridge crashed in
+// __memmove_avx_unaligned_erms with rdx ~= 2802 wide chars for a ~30-char
+// source path).  The correct implementation mirrors filesys.cpp's range
+// overload and stays entirely within the caller's buffer.
+namespace {
+	const char *vd_split_ext_range(const char *s, const char *t) {
+		const char *const end = t;
+		while (t > s) {
+			--t;
+			if (*t == '.')
+				return t;
+			if (*t == ':' || *t == '\\' || *t == '/')
+				break;
+		}
+		return end;
+	}
+
+	const wchar_t *vd_split_ext_range(const wchar_t *s, const wchar_t *t) {
+		const wchar_t *const end = t;
+		while (t > s) {
+			--t;
+			if (*t == L'.')
+				return t;
+			if (*t == L':' || *t == L'\\' || *t == L'/')
+				break;
+		}
+		return end;
+	}
+}
+
 VDStringSpanA VDFileSplitExtLeftSpan(const VDStringSpanA& s) {
-	const char *base = s.data();
-	const char *ext  = VDFileSplitExt(VDString(s.data(), s.size()).c_str());
-	return VDStringSpanA(base, ext);
+	const char *begin = s.data();
+	const char *end   = begin + s.size();
+	return VDStringSpanA(begin, vd_split_ext_range(begin, end));
 }
 
 VDStringSpanA VDFileSplitExtRightSpan(const VDStringSpanA& s) {
-	const char *ext = VDFileSplitExt(VDString(s.data(), s.size()).c_str());
-	return VDStringSpanA(ext, s.data() + s.size());
+	const char *begin = s.data();
+	const char *end   = begin + s.size();
+	return VDStringSpanA(vd_split_ext_range(begin, end), end);
 }
 
 VDStringSpanW VDFileSplitExtLeftSpan(const VDStringSpanW& s) {
-	VDStringW tmp(s.data(), s.size());
-	const wchar_t *ext = VDFileSplitExt(tmp.c_str());
-	return VDStringSpanW(s.data(), ext);
+	const wchar_t *begin = s.data();
+	const wchar_t *end   = begin + s.size();
+	return VDStringSpanW(begin, vd_split_ext_range(begin, end));
 }
 
 VDStringSpanW VDFileSplitExtRightSpan(const VDStringSpanW& s) {
-	VDStringW tmp(s.data(), s.size());
-	const wchar_t *ext = VDFileSplitExt(tmp.c_str());
-	return VDStringSpanW(ext, s.data() + s.size());
+	const wchar_t *begin = s.data();
+	const wchar_t *end   = begin + s.size();
+	return VDStringSpanW(vd_split_ext_range(begin, end), end);
 }
 
 // -------------------------------------------------------------------------
