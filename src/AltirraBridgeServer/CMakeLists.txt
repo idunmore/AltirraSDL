@@ -218,23 +218,6 @@ endif()
 # declared. The main AltirraSDL target doesn't need this because its
 # .sln / VS-generator path pulls the intrinsics via a different
 # include chain; the Ninja+cl bridge build does.
-if(MSVC)
-    # Force-include both MSVC intrinsic headers at the top of every TU:
-    #   <intrin.h>    — compiler intrinsics like _ReturnAddress,
-    #                   needed by <ppltasks.h>.
-    #   <immintrin.h> — __m128i / __m256i and the _mm_* / _mm256_*
-    #                   families, needed by <wchar.h> (SDK 10.0.26100
-    #                   has inline functions using AVX types).
-    # Neither header on its own is sufficient; both are required
-    # because the standard-library headers pull them in different
-    # orders through <tchar.h> / <math.h> / <ppltasks.h>. The main
-    # AltirraSDL .sln / VS-generator path gets this via a different
-    # include chain; the Ninja+cl bridge build does not.
-    target_compile_options(AltirraBridgeServer PRIVATE
-        /FI intrin.h
-        /FI immintrin.h)
-endif()
-
 # Per-file SIMD flags. Mirror src/AltirraSDL/CMakeLists.txt — these
 # files use intrinsics that need -mbmi / -mssse3 to compile under
 # GCC/Clang on x86_64.
