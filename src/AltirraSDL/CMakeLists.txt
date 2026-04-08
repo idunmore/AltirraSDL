@@ -1,54 +1,13 @@
 cmake_minimum_required(VERSION 3.24)
 
-# Collect all Altirra simulator source files
-file(GLOB ALTIRRA_ALL_SOURCES
-    "${CMAKE_SOURCE_DIR}/src/Altirra/source/*.cpp"
-)
-
-# Filter out Win32 UI, entry point, and platform-specific files
-list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*/ui[a-zA-Z][^/]*\\.cpp$")
-list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*_win32\\.cpp$")
-list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*/main\\.cpp$")
-list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*/oshelper\\.cpp$")
-list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*/console\\.cpp$")
-list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*/videowriter\\.cpp$")
-list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*/aviwriter\\.cpp$")
-list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*/directorywatcher\\.cpp$")
-list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*/joystick\\.cpp$")
-list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*/safewrite\\.cpp$")
-# Exclude files that use Win32-only APIs and have no emulation purpose
-list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*/about\\.cpp$")       # richedit.h
-list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*/allocator\\.cpp$")   # crtdbg.h (MSVC debug heap)
-# Exclude UI command handler files (include atnativeui/uiframe.h -> windows.h)
-list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*/cmd[a-z][^/]*\\.cpp$")
-# Exclude files with Win32 UI dependencies not needed for emulation core
-# debugger.cpp now compiles via stub headers (stubs/at/atnativeui/uiframe.h)
-# debuggerautotest.cpp now compiles via stub headers (stubs/at/atui/uicommandmanager.h)
-# cpuheatmap.cpp has no Win32 deps (only uses console.h, cpu.h, simeventmanager.h)
-list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*/customdevice\\.cpp$")      # includes customdevice_win32.h
-list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*/customdevicevmtypes\\.cpp$") # includes atui/uicommandmanager.h
-list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*/cs8900a\\.cpp$")           # Win32 UI debug path
-list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*/idephysdisk\\.cpp$")       # Win32 raw disk access (DeviceIoControl)
-# idevhdimage.cpp is now portable (UTF-16LE encoding handled for non-Windows)
-list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*/midimate\\.cpp$")          # Win32 MIDI API (winmm.h)
-list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*/modemtcp\\.cpp$")          # Win32 networking (windows.h)
-list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*/profilerui\\.cpp$")        # Win32 profiler UI (w32assist.h)
-# settings.cpp is now compiled for SDL3 — Win32 UI deps are satisfied by
-# stubs/uiaccessors_stubs.cpp and stub headers in stubs/.
-list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*/startuplogger\\.cpp$")     # Win32 only (windows.h)
-list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*/texteditor\\.cpp$")        # Win32 HWND/WndProc text editor widget
-# vgmwriter.cpp is now portable (UTF-16LE encoding fixed for non-Windows)
-# Exclude architecture-specific files for the wrong target
-if(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "(aarch64|ARM64|arm64)")
-    list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*_neon\\.cpp$")
-    list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*_arm64\\.cpp$")
-endif()
-if(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64|AMD64|i[36]86)")
-    list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*_sse2\\.cpp$")
-    list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*_sse2_intrin\\.cpp$")
-    list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*_ssse3\\.cpp$")
-    list(FILTER ALTIRRA_ALL_SOURCES EXCLUDE REGEX ".*_avx2\\.cpp$")
-endif()
+# Computes ALTIRRA_ALL_SOURCES — the set of platform-agnostic Altirra
+# emulation source files with Win32 UI / unused-files filtered out.
+# Shared between AltirraSDL and AltirraBridgeServer; see the helper
+# file for the full filter list and rationale.
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/altirra_core_sources.cmake)
+# Re-publish for the parent scope so add_subdirectory(AltirraBridgeServer)
+# can read the same list without re-globbing.
+set(ALTIRRA_ALL_SOURCES "${ALTIRRA_ALL_SOURCES}" PARENT_SCOPE)
 
 # On Android, the native code is a shared library loaded by SDLActivity.
 # On desktop, it's a regular executable.
@@ -264,6 +223,32 @@ if(WIN32)
     )
 endif()
 
+# AltirraBridge — scripting/automation server (TCP/UDS, line-delimited JSON).
+# Self-contained module under source/bridge/. Default ON. Disable with
+# -DALTIRRA_BRIDGE=OFF for size-sensitive builds; the rest of AltirraSDL
+# compiles unchanged and the binary contains no bridge symbols.
+# See src/AltirraSDL/AltirraBridge/docs/PROTOCOL.md for the wire contract.
+# Winsock (ws2_32) propagates transitively from `system` and ATNetworkSockets,
+# so no explicit link is needed on Windows.
+option(ALTIRRA_BRIDGE "Build the AltirraBridge scripting server" ON)
+if(ALTIRRA_BRIDGE)
+    target_sources(AltirraSDL PRIVATE
+        source/bridge/bridge_server.cpp
+        source/bridge/bridge_protocol.cpp
+        source/bridge/bridge_transport.cpp
+        source/bridge/bridge_commands_state.cpp
+        source/bridge/bridge_commands_write.cpp
+        source/bridge/bridge_commands_render.cpp
+        source/bridge/bridge_commands_debug.cpp
+        source/bridge/bridge_commands_debug2.cpp
+        # Per-target glue: SDL3 routes BOOT/MOUNT/STATE_* through
+        # the deferred-action queue. The headless AltirraBridgeServer
+        # target provides its own implementation of these symbols.
+        source/bridge/bridge_main_glue_sdl3.cpp
+    )
+    target_compile_definitions(AltirraSDL PRIVATE ALTIRRA_BRIDGE_ENABLED=1)
+endif()
+
 
 target_include_directories(AltirraSDL PRIVATE
     # Public system headers
@@ -291,6 +276,7 @@ target_include_directories(AltirraSDL PRIVATE
     ${CMAKE_SOURCE_DIR}/src/AltirraSDL/source/ui/debugger
     ${CMAKE_SOURCE_DIR}/src/AltirraSDL/source/ui/tapeeditor
     ${CMAKE_SOURCE_DIR}/src/AltirraSDL/source/ui/testmode
+    ${CMAKE_SOURCE_DIR}/src/AltirraSDL/source/bridge
     ${CMAKE_SOURCE_DIR}/src/AltirraSDL/source/ui/mobile
     # ATAudio headers
     ${CMAKE_SOURCE_DIR}/src/ATAudio/h
