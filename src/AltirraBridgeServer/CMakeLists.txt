@@ -209,6 +209,19 @@ elseif(UNIX)
     target_compile_definitions(AltirraBridgeServer PRIVATE VD_OS_LINUX=1)
 endif()
 
+# MSVC + Windows SDK 10.0.26100 UCRT <wchar.h> contains inline
+# functions that unconditionally use __m128i/__m256i and the _mm_*
+# intrinsic family. If <wchar.h> is pulled in (via <tchar.h>,
+# <math.h>, or <string.h>) before the intrinsics are declared, the
+# compiler chokes on undeclared identifiers. Force-include <intrin.h>
+# so every TU in this target starts with the full intrinsic set
+# declared. The main AltirraSDL target doesn't need this because its
+# .sln / VS-generator path pulls the intrinsics via a different
+# include chain; the Ninja+cl bridge build does.
+if(MSVC)
+    target_compile_options(AltirraBridgeServer PRIVATE /FI intrin.h)
+endif()
+
 # Per-file SIMD flags. Mirror src/AltirraSDL/CMakeLists.txt — these
 # files use intrinsics that need -mbmi / -mssse3 to compile under
 # GCC/Clang on x86_64.

@@ -58,6 +58,9 @@ jobs:
           apt-get update
           # Smaller dep set than the full AppImage build: bridge server
           # links SDL3 only for audio (with the dummy driver), no UI.
+          # Mirror the apt set from .github/workflows/linux.yml (the
+          # main SDL3 desktop build) so SDL3's FetchContent build
+          # passes the same windowing-system feature checks.
           apt-get install -y --no-install-recommends \
             build-essential ninja-build git ca-certificates \
             curl wget file zip unzip xz-utils patch pkg-config \
@@ -67,8 +70,9 @@ jobs:
             libx11-dev libxext-dev libxrandr-dev libxcursor-dev \
             libxi-dev libxfixes-dev libxss-dev libxkbcommon-dev \
             libwayland-dev wayland-protocols libdecor-0-dev \
-            libasound2-dev libpulse-dev \
+            libasound2-dev libpulse-dev libjack-jackd2-dev libpipewire-0.3-dev \
             libdbus-1-dev libudev-dev libibus-1.0-dev \
+            libusb-1.0-0-dev desktop-file-utils \
             tar gzip
           # CMake >= 3.24 + gcc-12.
           wget -qO- https://apt.kitware.com/keys/kitware-archive-latest.asc \
@@ -89,9 +93,16 @@ jobs:
       - name: Configure
         shell: bash
         run: |
+          # SDL_UNIX_CONSOLE_BUILD=ON disables SDL3's "must have a
+          # windowing system" assertion. The bridge server is
+          # headless; 04_paint gets built but never executed in CI,
+          # so a pure-console SDL3 build is acceptable and keeps
+          # FetchContent from erroring out if any single X11 dev
+          # sub-package's version check trips SDL3's feature probes.
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DALTIRRA_BRIDGE_SERVER=ON
+            -DALTIRRA_BRIDGE_SERVER=ON \
+            -DSDL_UNIX_CONSOLE_BUILD=ON
 
       - name: Build AltirraBridgeServer
         shell: bash
