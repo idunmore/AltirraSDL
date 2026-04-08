@@ -470,7 +470,15 @@ jobs:
 
       - name: Build AltirraBridgeServer
         shell: pwsh
-        run: cmake --build build/windows-sdl-release --target AltirraBridgeServer --config Release
+        run: |
+          # Also build SDL3-shared so 04_paint has something to link
+          # against. The bridge server itself doesn't need SDL3 (we
+          # removed that dep), but 04_paint uses find_package(SDL3)
+          # against the FetchContent'd build tree and expects the
+          # .lib / .dll to actually exist.
+          cmake --build build/windows-sdl-release `
+              --target AltirraBridgeServer SDL3-shared `
+              --config Release
 
       - name: Build C example binaries
         shell: pwsh
