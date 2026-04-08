@@ -304,8 +304,19 @@ void ATInputSDL3_Init(ATPokeyEmulator *pokey, ATInputManager *inputMgr, ATGTIAEm
 	g_inputState.mpGTIA = gtia;
 
 	// Register console callback so gamepad Start/Select/Option work
-	if (inputMgr)
+	if (inputMgr) {
 		inputMgr->SetConsoleCallback(&g_consoleCallback);
+
+		// Parity with Windows uivideodisplaywindow.cpp:1693 — the Win32 UI
+		// clears restricted mode when the display window is created, and
+		// only ever re-enables it for modal UI-navigation capture.  SDL3
+		// has no modal UI-nav mode, so the flag must simply start false.
+		// A header default initializer (inputmanager.h) already guarantees
+		// this, but we make the intent explicit here so parity with the
+		// Windows init sequence is visible and future code that adds a
+		// modal capture mode has an obvious place to pair with.
+		inputMgr->SetRestrictedMode(false);
+	}
 }
 
 // -------------------------------------------------------------------------

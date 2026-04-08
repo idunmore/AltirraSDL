@@ -129,35 +129,63 @@ jobs:
 
       - name: Smoke test bridge + Python SDK + C example
         shell: bash
+        timeout-minutes: 5
         run: |
           set -e
           ./build/src/AltirraBridgeServer/AltirraBridgeServer \
             --bridge=tcp:127.0.0.1:0 >/tmp/brs.log 2>&1 &
           BPID=$!
-          sleep 2
-          TOKFILE=$(grep -oP 'token-file: \K\S+' /tmp/brs.log | head -1)
+          # Wait up to 30s for the token-file line, checking every 1s
+          # and bailing if the process died.
+          TOKFILE=""
+          for i in $(seq 1 30); do
+            sleep 1
+            if ! kill -0 $BPID 2>/dev/null; then
+              echo "server exited before printing token-file"; cat /tmp/brs.log; exit 1
+            fi
+            TOKFILE=$(grep -oP 'token-file: \K\S+' /tmp/brs.log 2>/dev/null | head -1)
+            [ -n "$TOKFILE" ] && break
+          done
           if [ -z "$TOKFILE" ]; then
-            cat /tmp/brs.log; kill $BPID 2>/dev/null || true; exit 1
+            cat /tmp/brs.log; kill -KILL $BPID 2>/dev/null || true; exit 1
           fi
-          # Python SDK end-to-end
-          PYTHONPATH=src/AltirraSDL/AltirraBridge/sdk/python python3 - <<PY
-          from altirra_bridge import AltirraBridge
-          with AltirraBridge.from_token_file("${TOKFILE}") as a:
-              assert a.ping()['ok']
-              a.frame(20)
-              png = a.screenshot()
-              assert png[:8] == b'\x89PNG\r\n\x1a\n'
-              insns = a.disasm(0xe477, 4)
-              assert 'COLDSV' in insns[0]['text']
-          print("python sdk OK")
+          # Python SDK end-to-end. Set a default socket timeout so a
+          # hung server can't wedge the step forever, and retry a few
+          # times in case a localhost probe occupies the bridge's
+          # single-client slot on the first attempt.
+          BRIDGE_TOKFILE="$TOKFILE" \
+          PYTHONPATH=src/AltirraSDL/AltirraBridge/sdk/python \
+          python3 - <<'PY'
+          import os, socket, time
+          socket.setdefaulttimeout(10.0)
+          from altirra_bridge import AltirraBridge, BridgeError
+          last = None
+          for attempt in range(5):
+              try:
+                  with AltirraBridge.from_token_file(os.environ['BRIDGE_TOKFILE']) as a:
+                      assert a.ping()['ok']
+                      a.frame(20)
+                      png = a.screenshot()
+                      assert png[:8] == b'\x89PNG\r\n\x1a\n'
+                      insns = a.disasm(0xe477, 4)
+                      assert 'COLDSV' in insns[0]['text']
+                  print(f"python sdk OK (attempt {attempt+1})")
+                  break
+              except (BridgeError, ConnectionError, OSError) as e:
+                  last = e
+                  print(f"attempt {attempt+1} failed: {e!r}")
+                  time.sleep(1)
+          else:
+              raise SystemExit(f"python smoke failed after retries: {last!r}")
           PY
           # C example (uses the same token file)
-          ./build_c_examples/01_ping "${TOKFILE}" || { echo "C ping failed"; kill $BPID; exit 1; }
+          ./build_c_examples/01_ping "${TOKFILE}" || { echo "C ping failed"; cat /tmp/brs.log; kill -KILL $BPID; exit 1; }
           echo "c example OK"
-          # Tell the server to quit
-          # Tear down the server unconditionally. We don't wait on
-          # its PID — on macOS the process has hung CI in the past
-          # after QUIT, so SIGTERM+sleep+SIGKILL bounds the cleanup.
+          # Always print the server log on success too — cheap and
+          # catches silent regressions.
+          echo "===== brs.log ====="; cat /tmp/brs.log
+          # Tear down the server. Unbounded `wait` has hung CI before;
+          # SIGTERM + short sleep + SIGKILL is guaranteed to return.
           kill -TERM $BPID 2>/dev/null || true
           sleep 1
           kill -KILL $BPID 2>/dev/null || true
@@ -305,32 +333,56 @@ jobs:
 
       - name: Smoke test
         shell: bash
+        timeout-minutes: 5
         run: |
           set -e
           ./build/src/AltirraBridgeServer/AltirraBridgeServer \
             --bridge=tcp:127.0.0.1:0 >/tmp/brs.log 2>&1 &
           BPID=$!
-          sleep 2
-          TOKFILE=$(grep -E 'token-file: ' /tmp/brs.log | sed 's/.*token-file: //' | head -1)
+          # Wait up to 30s for the token-file line, bailing if the
+          # server died. macOS Ventura+ occasionally takes longer than
+          # 2s to bind + write the token file on first cold run.
+          TOKFILE=""
+          for i in $(seq 1 30); do
+            sleep 1
+            if ! kill -0 $BPID 2>/dev/null; then
+              echo "server exited before printing token-file"; cat /tmp/brs.log; exit 1
+            fi
+            TOKFILE=$(grep -E 'token-file: ' /tmp/brs.log 2>/dev/null | sed 's/.*token-file: //' | head -1)
+            [ -n "$TOKFILE" ] && break
+          done
           if [ -z "$TOKFILE" ]; then
-            cat /tmp/brs.log; kill $BPID 2>/dev/null || true; exit 1
+            cat /tmp/brs.log; kill -KILL $BPID 2>/dev/null || true; exit 1
           fi
-          PYTHONPATH=src/AltirraSDL/AltirraBridge/sdk/python python3 - <<PY
-          from altirra_bridge import AltirraBridge
-          with AltirraBridge.from_token_file("${TOKFILE}") as a:
-              assert a.ping()['ok']
-              a.frame(20)
-              png = a.screenshot()
-              assert png[:8] == b'\x89PNG\r\n\x1a\n'
-              insns = a.disasm(0xe477, 4)
-              assert 'COLDSV' in insns[0]['text']
-          print("python sdk OK")
+          BRIDGE_TOKFILE="$TOKFILE" \
+          PYTHONPATH=src/AltirraSDL/AltirraBridge/sdk/python \
+          python3 - <<'PY'
+          import os, socket, time
+          socket.setdefaulttimeout(10.0)
+          from altirra_bridge import AltirraBridge, BridgeError
+          last = None
+          for attempt in range(5):
+              try:
+                  with AltirraBridge.from_token_file(os.environ['BRIDGE_TOKFILE']) as a:
+                      assert a.ping()['ok']
+                      a.frame(20)
+                      png = a.screenshot()
+                      assert png[:8] == b'\x89PNG\r\n\x1a\n'
+                      insns = a.disasm(0xe477, 4)
+                      assert 'COLDSV' in insns[0]['text']
+                  print(f"python sdk OK (attempt {attempt+1})")
+                  break
+              except (BridgeError, ConnectionError, OSError) as e:
+                  last = e
+                  print(f"attempt {attempt+1} failed: {e!r}")
+                  time.sleep(1)
+          else:
+              raise SystemExit(f"python smoke failed after retries: {last!r}")
           PY
-          ./build_c_examples/01_ping "${TOKFILE}" || { echo "C ping failed"; kill $BPID; exit 1; }
+          ./build_c_examples/01_ping "${TOKFILE}" || { echo "C ping failed"; cat /tmp/brs.log; kill -KILL $BPID; exit 1; }
           echo "c example OK"
-          # Tear down the server unconditionally. We don't wait on
-          # its PID — on macOS the process has hung CI in the past
-          # after QUIT, so SIGTERM+sleep+SIGKILL bounds the cleanup.
+          echo "===== brs.log ====="; cat /tmp/brs.log
+          # Bounded kill; see Linux smoke test for rationale.
           kill -TERM $BPID 2>/dev/null || true
           sleep 1
           kill -KILL $BPID 2>/dev/null || true
@@ -510,6 +562,7 @@ jobs:
 
       - name: Smoke test
         shell: pwsh
+        timeout-minutes: 5
         run: |
           $ErrorActionPreference = 'Stop'
 
@@ -580,7 +633,8 @@ jobs:
           # next connection arrives, but a single-shot client can
           # still race and get an EOF on the first attempt.
           $py = @"
-          import os, time
+          import os, socket, time
+          socket.setdefaulttimeout(10.0)
           from altirra_bridge import AltirraBridge, BridgeError
           last = None
           for attempt in range(5):

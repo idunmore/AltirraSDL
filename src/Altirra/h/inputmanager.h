@@ -321,7 +321,18 @@ protected:
 	ATLightPenPort *mpLightPen = nullptr;
 	IATDevicePortManager *mpPortMgr = nullptr;
 	IATInputConsoleCallback *mpCB = nullptr;
-	bool mbRestrictedMode;
+	// Default-initialised because the ctor does not list it and no header
+	// default existed historically.  Previously the flag held indeterminate
+	// heap bytes until the first SetRestrictedMode() call.  The Win32 build
+	// happened to mask this because uivideodisplaywindow.cpp always calls
+	// SetRestrictedMode(false) during display-window creation, which runs
+	// before any key press.  The SDL3 frontend has no equivalent call site,
+	// so the garbage byte leaked into IsTriggerRestricted() and — when
+	// non-zero — suppressed every joystick direction and fire press in
+	// ActivateMappings(), producing the "arrows-as-joystick does nothing
+	// after fresh config" report on Linux Mint.  Keep the default here so
+	// the field is safe regardless of which frontend instantiates us.
+	bool mbRestrictedMode = false;
 	int m5200ControllerIndex;
 	bool mb5200PotsEnabled;
 	bool mb5200Mode;
