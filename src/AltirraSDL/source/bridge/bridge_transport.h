@@ -92,6 +92,7 @@ private:
 	SockHandle  mListenFd = kInvalidSock;
 	SockHandle  mClientFd = kInvalidSock;
 	bool        mIsTcp = false;     // true if listening socket is AF_INET (sets TCP_NODELAY on accept)
+	bool        mClientHasSpoken = false;  // true once current client has sent at least one byte
 	std::string mUnixPath;          // for unix: filesystem socket cleanup
 	std::string mPendingSend;       // bytes that didn't fit in the kernel buffer
 };

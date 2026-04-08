@@ -321,20 +321,70 @@ bool Transport::TryAccept() {
 		return false;
 
 	if (!BR_IS_INVALID(mClientFd)) {
-		// Already have one client. Reject any new connections so they
-		// don't pile up in the listen backlog: accept and immediately
-		// close. The new client gets a clean EOF.
+		// Already have one client. Two cases:
+		//
+		// (a) The current client has spoken at least once (sent ≥1
+		//     byte). Treat it as the real client and reject any new
+		//     connections so they don't pile up in the listen backlog.
+		//     The new client gets a clean EOF.
+		//
+		// (b) The current client has never sent a byte. On Windows
+		//     this happens when Windows Defender / SmartScreen / other
+		//     security software probes a newly-opened loopback listener
+		//     — it completes the TCP handshake, holds the connection
+		//     open, and sends nothing. Without special handling those
+		//     probes permanently occupy the single-client slot and the
+		//     real client gets rejected with "second client".
+		//     Drop the silent holder so the real client can take over.
 #if defined(_WIN32)
 		SOCKET extra = accept((SOCKET)mListenFd, nullptr, nullptr);
 		if (extra != INVALID_SOCKET) {
-			LOG_INFO("Bridge", "Rejecting second client (single-client mode)");
-			closesocket(extra);
+			if (mClientHasSpoken) {
+				LOG_INFO("Bridge", "Rejecting second client (single-client mode)");
+				closesocket(extra);
+				return false;
+			}
+			LOG_INFO("Bridge", "Evicting silent client, taking new connection");
+			DropClient();
+			if (!SetNonBlocking((SockHandle)extra)) {
+				closesocket(extra);
+				return false;
+			}
+			if (mIsTcp) {
+				int yes = 1;
+				::setsockopt((int)extra, IPPROTO_TCP, TCP_NODELAY,
+					(const char*)&yes, sizeof yes);
+			}
+			mClientFd = (SockHandle)extra;
+			mPendingSend.clear();
+			mClientHasSpoken = false;
+			LOG_INFO("Bridge", "Client connected");
+			return true;
 		}
 #else
 		int extra = ::accept((int)mListenFd, nullptr, nullptr);
 		if (extra >= 0) {
-			LOG_INFO("Bridge", "Rejecting second client (single-client mode)");
-			::close(extra);
+			if (mClientHasSpoken) {
+				LOG_INFO("Bridge", "Rejecting second client (single-client mode)");
+				::close(extra);
+				return false;
+			}
+			LOG_INFO("Bridge", "Evicting silent client, taking new connection");
+			DropClient();
+			if (!SetNonBlocking((SockHandle)extra)) {
+				::close(extra);
+				return false;
+			}
+			if (mIsTcp) {
+				int yes = 1;
+				::setsockopt((int)extra, IPPROTO_TCP, TCP_NODELAY,
+					(const char*)&yes, sizeof yes);
+			}
+			mClientFd = (SockHandle)extra;
+			mPendingSend.clear();
+			mClientHasSpoken = false;
+			LOG_INFO("Bridge", "Client connected");
+			return true;
 		}
 #endif
 		return false;
@@ -376,6 +426,7 @@ bool Transport::TryAccept() {
 
 	mClientFd = (SockHandle)c;
 	mPendingSend.clear();
+	mClientHasSpoken = false;
 	LOG_INFO("Bridge", "Client connected");
 	return true;
 }
@@ -387,14 +438,14 @@ IoResult Transport::Recv(void* buf, size_t len, size_t* outBytes) {
 
 #if defined(_WIN32)
 	int n = ::recv((SOCKET)mClientFd, (char*)buf, (int)len, 0);
-	if (n > 0) { *outBytes = (size_t)n; return IoResult::Ok; }
+	if (n > 0) { *outBytes = (size_t)n; mClientHasSpoken = true; return IoResult::Ok; }
 	if (n == 0) return IoResult::PeerClosed;
 	int e = BR_LAST_ERR();
 	if (BR_WOULDBLOCK(e) || BR_INTR(e)) return IoResult::WouldBlock;
 	return IoResult::Error;
 #else
 	ssize_t n = ::recv((int)mClientFd, buf, len, 0);
-	if (n > 0) { *outBytes = (size_t)n; return IoResult::Ok; }
+	if (n > 0) { *outBytes = (size_t)n; mClientHasSpoken = true; return IoResult::Ok; }
 	if (n == 0) return IoResult::PeerClosed;
 	int e = BR_LAST_ERR();
 	if (BR_WOULDBLOCK(e) || BR_INTR(e)) return IoResult::WouldBlock;
@@ -442,6 +493,7 @@ void Transport::DropClient() {
 		BR_CLOSE(mClientFd);
 		mClientFd = kInvalidSock;
 		mPendingSend.clear();
+		mClientHasSpoken = false;
 		LOG_INFO("Bridge", "Client disconnected");
 	}
 }

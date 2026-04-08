@@ -573,17 +573,33 @@ jobs:
           # Python doesn't try to parse Windows backslashes (e.g.
           # 'C:\Users\...') as Unicode escapes inside string literals.
           $env:BRIDGE_TOKFILE = $tokfile
+          # The Python script retries from_token_file a few times.
+          # On Windows CI runners, Windows Defender / SmartScreen may
+          # probe the new loopback listener the instant it opens; the
+          # bridge server evicts such silent probes as soon as the
+          # next connection arrives, but a single-shot client can
+          # still race and get an EOF on the first attempt.
           $py = @"
-          import os
-          from altirra_bridge import AltirraBridge
-          with AltirraBridge.from_token_file(os.environ['BRIDGE_TOKFILE']) as a:
-              assert a.ping()['ok']
-              a.frame(20)
-              png = a.screenshot()
-              assert png[:8] == b'\x89PNG\r\n\x1a\n'
-              insns = a.disasm(0xe477, 4)
-              assert 'COLDSV' in insns[0]['text']
-          print("python sdk OK")
+          import os, time
+          from altirra_bridge import AltirraBridge, BridgeError
+          last = None
+          for attempt in range(5):
+              try:
+                  with AltirraBridge.from_token_file(os.environ['BRIDGE_TOKFILE']) as a:
+                      assert a.ping()['ok']
+                      a.frame(20)
+                      png = a.screenshot()
+                      assert png[:8] == b'\x89PNG\r\n\x1a\n'
+                      insns = a.disasm(0xe477, 4)
+                      assert 'COLDSV' in insns[0]['text']
+                  print('python sdk OK (attempt', attempt + 1, ')')
+                  break
+              except (BridgeError, ConnectionError, OSError) as e:
+                  last = e
+                  print('attempt', attempt + 1, 'failed:', repr(e))
+                  time.sleep(1)
+          else:
+              raise SystemExit('python smoke failed after retries: ' + repr(last))
           "@
           $py | python -
           if ($LASTEXITCODE -ne 0) {
