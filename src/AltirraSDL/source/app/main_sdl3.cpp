@@ -13,6 +13,7 @@
 #define SDL_MAIN_HANDLED
 #include <SDL3/SDL_main.h>
 #include <stdio.h>
+#include <string>
 
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/VDString.h>
@@ -40,6 +41,9 @@
 #include "ui_main.h"
 #include "ui_debugger.h"
 #include "ui_testmode.h"
+#ifdef ALTIRRA_BRIDGE_ENABLED
+#include "bridge_server.h"
+#endif
 #include "ui_textselection.h"
 #include "ui_progress.h"
 #include "ui_emuerror.h"
@@ -931,6 +935,16 @@ static void RenderAndPresent() {
 	g_pBackend->Present();
 }
 
+#ifdef ALTIRRA_BRIDGE_ENABLED
+// Bridge → main loop coupling. The bridge's QUIT command needs to ask
+// the SDL3 main loop to exit cleanly. We define the function here, in
+// the file that owns g_running, so the bridge module stays decoupled
+// from main_sdl3 internals.
+void ATBridgeRequestAppQuit() {
+	g_running = false;
+}
+#endif
+
 // =========================================================================
 // Main
 // =========================================================================
@@ -964,6 +978,70 @@ int main(int argc, char *argv[]) {
 			--i;
 		}
 	}
+
+	// Check for --headless flag (must be before SDL_Init).
+	//
+	// --headless tells SDL3 to use the offscreen video driver and
+	// the dummy audio driver, so AltirraSDL runs without opening a
+	// window or playing audio. Use this for automated testing, CI,
+	// RL training pipelines, or any context where you want the
+	// emulator running but no UI on screen. Same binary, same code
+	// paths, same dependencies — only the SDL3 video/audio backends
+	// differ.
+	//
+	// We use SDL_SetHint() with SDL3's canonical hint names
+	// (SDL_HINT_VIDEO_DRIVER / SDL_HINT_AUDIO_DRIVER) — calling
+	// libc setenv() after main() has started is too late, because
+	// SDL3 imports its hint store from the environment at startup
+	// and won't see late env-var modifications. SDL_SetHint pokes
+	// directly into SDL3's internal hint store, which is read by
+	// SDL_Init.
+	//
+	// We respect any pre-existing SDL3 hint set by the user (so
+	// --headless plus SDL_VIDEO_DRIVER=foo in the shell still uses
+	// foo, not offscreen).
+	for (int i = 1; i < argc; ++i) {
+		if (strcmp(argv[i], "--headless") == 0) {
+			if (SDL_GetHint(SDL_HINT_VIDEO_DRIVER) == nullptr)
+				SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "offscreen");
+			if (SDL_GetHint(SDL_HINT_AUDIO_DRIVER) == nullptr)
+				SDL_SetHint(SDL_HINT_AUDIO_DRIVER, "dummy");
+			SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+				"Altirra: --headless: SDL_HINT_VIDEO_DRIVER=offscreen SDL_HINT_AUDIO_DRIVER=dummy");
+			for (int j = i; j < argc - 1; ++j)
+				argv[j] = argv[j + 1];
+			--argc;
+			--i;
+		}
+	}
+
+#ifdef ALTIRRA_BRIDGE_ENABLED
+	// Check for --bridge / --bridge=<spec> (must be stripped before SDL_Init
+	// for the same reason as --test-mode: otherwise the argv parser later
+	// in startup would mistake it for a boot image path).
+	//
+	// Spec forms:
+	//   --bridge                       tcp:127.0.0.1:0 (OS picks port)
+	//   --bridge=tcp:127.0.0.1:6502    explicit TCP port
+	//   --bridge=unix:/path/to/sock    POSIX UDS (POSIX only)
+	//   --bridge=unix-abstract:NAME    Linux abstract UDS (Linux/Android only)
+	bool bridgeRequested = false;
+	std::string bridgeAddrSpec;
+	for (int i = 1; i < argc; ++i) {
+		if (strcmp(argv[i], "--bridge") == 0) {
+			bridgeRequested = true;
+		} else if (strncmp(argv[i], "--bridge=", 9) == 0) {
+			bridgeRequested = true;
+			bridgeAddrSpec = argv[i] + 9;
+		} else {
+			continue;
+		}
+		for (int j = i; j < argc - 1; ++j)
+			argv[j] = argv[j + 1];
+		--argc;
+		--i;
+	}
+#endif
 
 	phase = "SDL_Init";
 	if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_EVENTS | SDL_INIT_GAMEPAD)) {
@@ -1079,6 +1157,19 @@ int main(int argc, char *argv[]) {
 	}
 #else
 	g_testModeEnabled = false;
+#endif
+
+#ifdef ALTIRRA_BRIDGE_ENABLED
+	// Initialise the AltirraBridge scripting/automation server. Runs on
+	// every platform including Android (loopback TCP works inside the
+	// app and is reachable via `adb forward tcp:N tcp:N`). Non-fatal:
+	// if init fails (port in use, malformed addr spec) we log and
+	// continue without the bridge.
+	if (bridgeRequested) {
+		if (!ATBridge::Init(bridgeAddrSpec)) {
+			LOG_ERROR("Main", "Failed to initialise AltirraBridge");
+		}
+	}
 #endif
 
 	// Give the mouse capture system access to the window
@@ -1553,6 +1644,13 @@ int main(int argc, char *argv[]) {
 		// Process test mode commands from external agent (no-op if not in test mode)
 		ATTestModePollCommands(g_sim, g_uiState);
 
+#ifdef ALTIRRA_BRIDGE_ENABLED
+		// Process AltirraBridge commands from external scripting clients
+		// (no-op if --bridge wasn't passed). Single-threaded: socket I/O
+		// happens here on the main thread, capped at 64 commands/frame.
+		ATBridge::Poll(g_sim, g_uiState);
+#endif
+
 		// Process deferred file dialog results on main thread
 		ATUIPollDeferredActions();
 
@@ -1617,6 +1715,12 @@ int main(int argc, char *argv[]) {
 
 		bool didRender = false;
 		if (hadFrame) {
+#ifdef ALTIRRA_BRIDGE_ENABLED
+			// Frame-gate hook for the bridge: decrements its counter
+			// and re-pauses the simulator when the gate hits zero.
+			// No-op if no FRAME command is currently active.
+			ATBridge::OnFrameCompleted(g_sim);
+#endif
 			// A frame was uploaded — present it and pace.
 			RenderAndPresent();
 			didRender = true;
@@ -1670,6 +1774,14 @@ int main(int argc, char *argv[]) {
 			}
 		}
 	}
+
+#ifdef ALTIRRA_BRIDGE_ENABLED
+	// Drop any bridge client, release injected input, free the
+	// joystick PIA input slot, and remove the token file before the
+	// simulator goes away. Idempotent — safe even if --bridge wasn't
+	// passed or Init() failed.
+	ATBridge::Shutdown(g_sim);
+#endif
 
 	g_sim.GetGTIA().SetVideoOutput(nullptr);
 
