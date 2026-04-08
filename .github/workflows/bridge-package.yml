@@ -529,9 +529,14 @@ jobs:
           }
           Write-Host "token file: $tokfile"
           $env:PYTHONPATH = "src/AltirraSDL/AltirraBridge/sdk/python"
+          # Pass the token file path via an environment variable so
+          # Python doesn't try to parse Windows backslashes (e.g.
+          # 'C:\Users\...') as Unicode escapes inside string literals.
+          $env:BRIDGE_TOKFILE = $tokfile
           $py = @"
+          import os
           from altirra_bridge import AltirraBridge
-          with AltirraBridge.from_token_file('$tokfile') as a:
+          with AltirraBridge.from_token_file(os.environ['BRIDGE_TOKFILE']) as a:
               assert a.ping()['ok']
               a.frame(20)
               png = a.screenshot()
@@ -545,10 +550,9 @@ jobs:
           .\build_c_examples\Release\01_ping.exe $tokfile
           if ($LASTEXITCODE -ne 0) { Stop-Process -Id $proc.Id -Force; throw "C ping failed" }
           Write-Host "c example OK"
-          # Quit the server
-          $quit = "from altirra_bridge import AltirraBridge; AltirraBridge.from_token_file('$tokfile').quit()"
-          $quit | python - 2>$null
-          Start-Sleep -Seconds 1
+          # Tear down the server. Bounded kill instead of a Python
+          # QUIT round-trip (which can hang on slow runners and would
+          # also hit the same backslash-escape problem).
           if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
 
       - name: Stage package
