@@ -512,24 +512,64 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $env:Path = "$env:Path"
+
+          # Always-print-logs helper. Pass it $proc afterwards so we
+          # also see whether the server process is still alive and,
+          # if not, what its exit code was. Crucial for diagnosing
+          # mid-handshake RST (server crash) on Windows.
+          function Dump-ServerState($proc) {
+              Write-Host "===== brs.log (stderr) ====="
+              if (Test-Path "$env:TEMP\brs.log") {
+                  Get-Content "$env:TEMP\brs.log" -Raw
+              } else { Write-Host "(file missing)" }
+              Write-Host "===== brs_stdout.log ====="
+              if (Test-Path "$env:TEMP\brs_stdout.log") {
+                  Get-Content "$env:TEMP\brs_stdout.log" -Raw
+              } else { Write-Host "(file missing)" }
+              if ($proc) {
+                  if ($proc.HasExited) {
+                      Write-Host "===== server PID $($proc.Id) HAS EXITED, code=$($proc.ExitCode) ====="
+                  } else {
+                      Write-Host "===== server PID $($proc.Id) still running ====="
+                  }
+              }
+              Write-Host "==========================="
+          }
+
           $proc = Start-Process -PassThru -NoNewWindow `
               -FilePath ".\build\windows-sdl-release\src\AltirraBridgeServer\Release\AltirraBridgeServer.exe" `
               -ArgumentList "--bridge=tcp:127.0.0.1:0" `
               -RedirectStandardError "$env:TEMP\brs.log" `
               -RedirectStandardOutput "$env:TEMP\brs_stdout.log"
-          Start-Sleep -Seconds 3
-          $log = Get-Content "$env:TEMP\brs.log" -Raw
-          if ($log -match 'token-file:\s*(\S+)') {
-              $tokfile = $Matches[1]
-          } else {
-              Write-Host $log
-              Stop-Process -Id $proc.Id -Force
-              throw "no token-file in server log"
+
+          # Wait up to 30s for the token-file line to appear in the
+          # server's stderr. Slow Windows runners take longer than 3s
+          # to bind + write the file. Bail out fast if the process
+          # has already died.
+          $tokfile = $null
+          for ($i = 0; $i -lt 30; $i++) {
+              Start-Sleep -Seconds 1
+              if ($proc.HasExited) {
+                  Dump-ServerState $proc
+                  throw "server exited before printing token-file (code=$($proc.ExitCode))"
+              }
+              if (Test-Path "$env:TEMP\brs.log") {
+                  $log = Get-Content "$env:TEMP\brs.log" -Raw
+                  if ($log -match 'token-file:\s*(\S+)') {
+                      $tokfile = $Matches[1]
+                      break
+                  }
+              }
+          }
+          if (-not $tokfile) {
+              Dump-ServerState $proc
+              Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+              throw "timed out waiting for token-file in server log"
           }
           Write-Host "token file: $tokfile"
+
           $env:PYTHONPATH = "src/AltirraSDL/AltirraBridge/sdk/python"
-          # Pass the token file path via an environment variable so
+          # Pass the token-file path via an environment variable so
           # Python doesn't try to parse Windows backslashes (e.g.
           # 'C:\Users\...') as Unicode escapes inside string literals.
           $env:BRIDGE_TOKFILE = $tokfile
@@ -546,14 +586,26 @@ jobs:
           print("python sdk OK")
           "@
           $py | python -
-          if ($LASTEXITCODE -ne 0) { Stop-Process -Id $proc.Id -Force; throw "python smoke failed" }
+          if ($LASTEXITCODE -ne 0) {
+              Dump-ServerState $proc
+              Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+              throw "python smoke failed (exit $LASTEXITCODE)"
+          }
+
           .\build_c_examples\Release\01_ping.exe $tokfile
-          if ($LASTEXITCODE -ne 0) { Stop-Process -Id $proc.Id -Force; throw "C ping failed" }
+          if ($LASTEXITCODE -ne 0) {
+              Dump-ServerState $proc
+              Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+              throw "C ping failed (exit $LASTEXITCODE)"
+          }
           Write-Host "c example OK"
-          # Tear down the server. Bounded kill instead of a Python
-          # QUIT round-trip (which can hang on slow runners and would
-          # also hit the same backslash-escape problem).
-          if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
+
+          # Always show the server log for the success path too — small
+          # cost, big gain when triaging unrelated regressions later.
+          Dump-ServerState $proc
+          if (-not $proc.HasExited) {
+              Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+          }
 
       - name: Stage package
         shell: pwsh
