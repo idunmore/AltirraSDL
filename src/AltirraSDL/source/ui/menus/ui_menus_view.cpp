@@ -24,6 +24,7 @@
 extern ATSimulator g_sim;
 extern SDL_Window *g_pWindow;
 void ATUIPasteText();
+bool ATUIClipIsTextAvailable();
 void ATSetFullscreen(bool fs);
 
 // Use the same ShortcutContextMenu short name as ui_menus.cpp so the
@@ -299,7 +300,7 @@ void ATUIRenderViewMenu(ATSimulator &sim, ATUIState &state, SDL_Window *window, 
 			ATUITextCopy(ATTextCopyMode::Hex);
 		if (ImGui::MenuItem("Copy Unicode", nullptr, false, hasSelection))
 			ATUITextCopy(ATTextCopyMode::Unicode);
-		if (ImGui::MenuItem("Paste Text", ATUIGetShortcutStringForCommand("Edit.PasteText")))
+		if (ImGui::MenuItem("Paste Text", ATUIGetShortcutStringForCommand("Edit.PasteText"), false, ATUIClipIsTextAvailable()))
 			ATUIPasteText();
 		ImGui::Separator();
 		if (ImGui::MenuItem("Select All", ATUIGetShortcutStringForCommand("Edit.SelectAll")))

@@ -163,12 +163,42 @@ const char *ATGetNameForWindowMessageW32(uint32 msgId) { return "(unknown)"; }
 #include "uiaccessors.h"
 #include "devicemanager.h"
 
+bool ATUIClipIsTextAvailable() {
+	return SDL_HasClipboardText();
+}
+
+bool ATUIClipGetText(VDStringA& s8, VDStringW& s16, bool& use16) {
+	// SDL3 only exposes clipboard text as UTF-8, so we always take the
+	// "unicode preferred" path that Windows takes for CF_UNICODETEXT.
+	if (!SDL_HasClipboardText())
+		return false;
+
+	char *t = SDL_GetClipboardText();
+	if (!t) return false;
+	if (!*t) { SDL_free(t); return false; }
+
+	s16 = VDTextU8ToW(VDStringA(t));
+	SDL_free(t);
+
+	// Mirror Windows: strip at first embedded NUL.
+	auto nullPos = s16.find(L'\0');
+	if (nullPos != s16.npos)
+		s16.erase(nullPos);
+
+	use16 = true;
+	return true;
+}
+
 bool ATUIClipGetText(VDStringW& s) {
 	if (!SDL_HasClipboardText()) return false;
 	char *t = SDL_GetClipboardText();
 	if (!t || !*t) { SDL_free(t); return false; }
 	s = VDTextU8ToW(VDStringA(t));
 	SDL_free(t);
+
+	auto nullPos = s.find(L'\0');
+	if (nullPos != s.npos)
+		s.erase(nullPos);
 	return true;
 }
 

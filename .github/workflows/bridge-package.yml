@@ -1,7 +1,7 @@
 name: AltirraBridge package
 
-# Builds the headless AltirraBridgeServer binary on Linux x86_64,
-# macOS arm64, and Windows x86_64. For each platform, packages the
+# Builds the headless AltirraBridgeServer binary on Linux (x86_64 and
+# aarch64), macOS arm64, and Windows x86_64. For each platform, packages the
 # binary together with the Python and C SDKs, the documentation,
 # the examples (source AND compiled C example binaries), the case
 # studies, and the Claude Code skill into a self-contained archive.
@@ -39,13 +39,27 @@ permissions:
   contents: read
 
 # ===========================================================================
-# Linux x86_64
+# Linux (x86_64 + aarch64)
 # ===========================================================================
+#
+# Both arches build inside the same multi-arch ubuntu:22.04 container so
+# their glibc / libstdc++ floor matches (glibc 2.35, gcc-12). The aarch64
+# variant runs on GitHub's native arm64 runner (ubuntu-22.04-arm) — free
+# for public repos, no QEMU, no cross-compilation. The resulting aarch64
+# tarball runs cleanly on Raspberry Pi OS Bookworm (Pi 4 / 5 / 500).
 
 jobs:
   linux:
-    name: Build (Linux x86_64)
-    runs-on: ubuntu-latest
+    name: Build (Linux ${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+          - arch: aarch64
+            runner: ubuntu-22.04-arm
     container:
       image: ubuntu:22.04
       options: --user root
@@ -83,6 +97,15 @@ jobs:
           apt-get install -y --no-install-recommends cmake gcc-12 g++-12
           update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-12 100
           update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-12 100
+          # Hard floor check (see linux.yml for rationale).
+          cmake --version
+          CMAKE_VER=$(cmake --version | awk 'NR==1{print $3}')
+          CMAKE_MAJOR=${CMAKE_VER%%.*}
+          CMAKE_MINOR=${CMAKE_VER#*.}; CMAKE_MINOR=${CMAKE_MINOR%%.*}
+          if [ "$CMAKE_MAJOR" -lt 3 ] || { [ "$CMAKE_MAJOR" -eq 3 ] && [ "$CMAKE_MINOR" -lt 24 ]; }; then
+            echo "ERROR: CMake $CMAKE_VER below 3.24 floor (Kitware arm64?)" >&2
+            exit 1
+          fi
 
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
@@ -201,7 +224,7 @@ jobs:
             VER="$(git rev-parse --short HEAD)"
             SLUG="nightly"
           fi
-          NAME="AltirraBridge-${SLUG}-linux-x86_64"
+          NAME="AltirraBridge-${SLUG}-linux-${{ matrix.arch }}"
           STAGE="staging/${NAME}"
           mkdir -p "${STAGE}"
 
@@ -236,12 +259,13 @@ jobs:
           # Build receipt (minimal — all user-facing docs live in README.md)
           STAMP="$(date -u +%Y-%m-%d)"
           cat > "${STAGE}/BUILD-INFO.txt" <<EOF
-          AltirraBridge ${VER} — Linux x86_64
+          AltirraBridge ${VER} — Linux ${{ matrix.arch }}
           Built ${STAMP} from commit ${{ github.sha }}
 
           Requirements:
-            - Linux x86_64, glibc >= 2.35
-              (Ubuntu 22.04+, Debian 12+, Fedora 36+, RHEL 9+)
+            - Linux ${{ matrix.arch }}, glibc >= 2.35
+              (Ubuntu 22.04+, Debian 12+ / Raspberry Pi OS Bookworm+,
+               Fedora 36+, RHEL 9+)
             - Python >= 3.9 for the Python SDK (stdlib only)
 
           See README.md for the full walkthrough and usage guide.
@@ -253,7 +277,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: AltirraBridge-linux-x86_64
+          name: AltirraBridge-linux-${{ matrix.arch }}
           path: dist/*.tar.gz
           if-no-files-found: error
           retention-days: 30
@@ -755,8 +779,13 @@ jobs:
             | Platform        | File                                            |
             |-----------------|-------------------------------------------------|
             | Linux x86_64    | `AltirraBridge-*-linux-x86_64.tar.gz`           |
+            | Linux aarch64   | `AltirraBridge-*-linux-aarch64.tar.gz`          |
             | macOS arm64     | `AltirraBridge-*-macos-arm64.tar.gz`            |
             | Windows x86_64  | `AltirraBridge-*-windows-x86_64.zip`            |
+
+            The Linux aarch64 build targets Raspberry Pi 4 / 5 / 500
+            running 64-bit Raspberry Pi OS Bookworm (or any other
+            arm64 Linux with glibc ≥ 2.35).
 
             Each archive is fully self-contained: just unpack and run.
 

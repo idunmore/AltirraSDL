@@ -18,6 +18,7 @@
 #include "ui_main.h"
 #include "ui_debugger.h"
 #include "ui_textselection.h"
+#include "uiclipboard.h"
 
 extern ATSimulator g_sim;
 extern SDL_Window *g_pWindow;
@@ -281,7 +282,7 @@ static const ATUICommand kSDL3Commands[] = {
 	{ "Audio.ToggleChannel2",          CmdToggleChannel2,       nullptr, nullptr, nullptr },
 	{ "Audio.ToggleChannel3",          CmdToggleChannel3,       nullptr, nullptr, nullptr },
 	{ "Audio.ToggleChannel4",          CmdToggleChannel4,       nullptr, nullptr, nullptr },
-	{ "Edit.PasteText",                CmdPasteText,            nullptr, nullptr, nullptr },
+	{ "Edit.PasteText",                CmdPasteText,            ATUIClipIsTextAvailable, nullptr, nullptr },
 	{ "Edit.SaveFrame",                CmdSaveFrame,            nullptr, nullptr, nullptr },
 	{ "Edit.CopyText",                 CmdCopyText,             nullptr, nullptr, nullptr },
 	{ "Edit.CopyFrame",                CmdCopyFrame,            nullptr, nullptr, nullptr },
