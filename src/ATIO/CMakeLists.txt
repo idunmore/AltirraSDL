@@ -42,27 +42,20 @@ elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "(aarch64|ARM64|arm64)")
     list(APPEND ATIO_SOURCES source/audioreaderflac_arm64.cpp)
 endif()
 
-# GNU-only per-file flags for audioreaderflac_arm64.cpp:
+# audioreaderflac_arm64.cpp's FLAC CRC16 fast path uses vmull_p64 /
+# vmull_high_p64 (PMULL polynomial multiply), which mainline GCC
+# considers part of the ARMv8 crypto/AES extension and refuses to
+# inline without +crypto in the target arch. Same class of issue as
+# the SHA2 intrinsics in src/ATCore/checksum_arm64.cpp — see that
+# CMakeLists for the matching pattern and full rationale.
 #
-#  * -march=armv8-a+crypto: the FLAC CRC16 fast path uses vmull_p64 /
-#    vmull_high_p64 (PMULL polynomial multiply), which GCC considers
-#    part of the ARMv8 crypto/AES extension and refuses to inline
-#    without +crypto in the target arch. MSVC and Apple clang enable
-#    these by default. Pi 4/5/500 (Cortex-A72/A76) all ship the crypto
-#    extensions.
-#
-#  * -flax-vector-conversions: the LPC inner loop reinterprets
-#    int32x4_t / int64x2_t vector lanes. MSVC and Apple clang accept
-#    the implicit conversions; mainline GCC's strict NEON type
-#    checking rejects them.
-#
-# See src/ATCore/CMakeLists.txt for the matching pattern (checksum_arm64
-# uses the same crypto-extension class of intrinsic — SHA2 instead of
-# PMULL — and the same rationale applies).
+# (The separate -flax-vector-conversions relaxation for the LPC inner
+# loop's int32x4_t/int64x2_t reinterprets is applied globally for
+# GNU+aarch64 in the top-level CMakeLists.txt.)
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND
    CMAKE_SYSTEM_PROCESSOR MATCHES "(aarch64|ARM64|arm64)")
     set_source_files_properties(source/audioreaderflac_arm64.cpp PROPERTIES
-        COMPILE_FLAGS "-march=armv8-a+crypto -flax-vector-conversions")
+        COMPILE_FLAGS "-march=armv8-a+crypto")
 endif()
 
 add_library(ATIO STATIC ${ATIO_SOURCES})

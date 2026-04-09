@@ -101,6 +101,34 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     add_compile_options(-Wno-multichar -Wno-attributes)
 endif()
 
+# Mainline GCC on aarch64 is the strictest of the three toolchains we
+# support for NEON intrinsics. Distinct opaque typedefs per element
+# type/width with no implicit conversion between them — whereas MSVC
+# (ARM64) treats all 128-bit NEON vectors as essentially interchangeable,
+# and Apple clang's arm_neon.h marks the vector typedefs __may_alias__
+# so conversions are implicit there too.
+#
+# Every NEON source file in this tree — src/ATCore, src/ATIO, src/Kasumi,
+# src/Altirra, and the vecmath_neon.h header — contains some amount of
+# idiomatic vector reinterpretation (bit patterns shared between signed
+# and unsigned lanes, element-width shuffling, etc.) that MSVC and Apple
+# clang accept implicitly but mainline GCC rejects without
+# -flax-vector-conversions.
+#
+# Rather than annotating every NEON file individually (and adding every
+# new NEON file to a list forever after), enable the relaxation globally
+# for GNU on aarch64. This flag ONLY affects SIMD vector-type
+# conversions; it's a no-op on scalar code and on every other file in
+# the project, so it doesn't hide any non-SIMD type bugs.
+#
+# Scope is deliberately narrow: GNU only (clang/Apple clang don't need
+# it), aarch64 only (x86_64 NEON doesn't exist), and not MSVC (which
+# has its own rules and doesn't read these CMake flags anyway).
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND
+   CMAKE_SYSTEM_PROCESSOR MATCHES "(aarch64|ARM64|arm64)")
+    add_compile_options(-flax-vector-conversions)
+endif()
+
 # Match MSVC convention: _DEBUG in debug builds (MSVC defines it automatically)
 if(NOT MSVC)
     add_compile_definitions($<$<CONFIG:Debug>:_DEBUG>)
