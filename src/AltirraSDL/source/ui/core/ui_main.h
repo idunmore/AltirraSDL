@@ -266,6 +266,12 @@ void ATUIOpenDeviceConfig(IATDevice *dev, ATDeviceManager *devMgr);
 bool ATUIIsDeviceConfigOpen();
 void ATUICloseDeviceConfigFor(IATDevice *dev); // close if open for this device
 void ATUIRenderDeviceConfig(ATDeviceManager *devMgr);
+// Begin adding a new device: opens the configure dialog with empty
+// properties (so path/geometry/etc. can be provided) and, on apply,
+// creates the device and attaches it to a compatible parent bus if
+// one exists.  Falls back to direct creation for simple devices with
+// no configure dialog.
+void ATUIBeginAddDevice(ATDeviceManager *devMgr, const char *tag);
 
 // Compatibility warning — SDL3/ImGui replacement for Windows IDD_COMPATIBILITY
 void ATUICheckCompatibility(ATSimulator &sim, ATUIState &state);

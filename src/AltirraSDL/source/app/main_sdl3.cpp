@@ -28,6 +28,10 @@
 #include <imgui.h>
 #include "display_sdl3_impl.h"
 #include "display_backend.h"
+
+#if ALTIRRA_HAS_BAKED_ICON
+#include "altirra_icon_data.h"
+#endif
 #include "display_backend_gl33.h"
 #include "display_backend_sdl.h"
 #include "gl_funcs.h"
@@ -1138,6 +1142,48 @@ int main(int argc, char *argv[]) {
 		g_pWindow = SDL_CreateWindow("AltirraSDL", kDefaultWidth, kDefaultHeight, SDL_WINDOW_RESIZABLE);
 		if (!g_pWindow) { LOG_INFO("Main", "CreateWindow: %s", SDL_GetError()); SDL_Quit(); return 1; }
 	}
+
+	// Set the window/taskbar/dock icon from the baked RGBA data.
+	// The largest image is the primary surface; smaller sizes are
+	// attached as alternates so SDL can pick the right one for HiDPI
+	// displays (matches how the Windows .ico multi-resolution picker
+	// works).  On Windows the caption/ALT-TAB icon comes from here,
+	// while the taskbar/Explorer icon still comes from the .ico
+	// resource embedded via AltirraSDL_icon.rc — both paths are
+	// required for full coverage.
+#if ALTIRRA_HAS_BAKED_ICON
+	if (g_pWindow && kAltirraIconCount > 0) {
+		const ATBakedIcon& primary = kAltirraIcons[0];
+		SDL_Surface* iconSurf = SDL_CreateSurfaceFrom(
+			primary.size, primary.size,
+			SDL_PIXELFORMAT_RGBA32,
+			(void*)primary.rgba,
+			primary.size * 4);
+		if (iconSurf) {
+			for (size_t i = 1; i < kAltirraIconCount; ++i) {
+				const ATBakedIcon& alt = kAltirraIcons[i];
+				SDL_Surface* altSurf = SDL_CreateSurfaceFrom(
+					alt.size, alt.size,
+					SDL_PIXELFORMAT_RGBA32,
+					(void*)alt.rgba,
+					alt.size * 4);
+				if (altSurf) {
+					SDL_AddSurfaceAlternateImage(iconSurf, altSurf);
+					// SDL retains its own reference — release ours.
+					SDL_DestroySurface(altSurf);
+				}
+			}
+			if (!SDL_SetWindowIcon(g_pWindow, iconSurf)) {
+				LOG_INFO("Main", "SDL_SetWindowIcon failed: %s",
+					SDL_GetError());
+			}
+			SDL_DestroySurface(iconSurf);
+		} else {
+			LOG_INFO("Main", "SDL_CreateSurfaceFrom (icon) failed: %s",
+				SDL_GetError());
+		}
+	}
+#endif
 
 	// Restore saved window size, position, and fullscreen state
 	ATRestoreWindowPlacement(g_pWindow);

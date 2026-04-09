@@ -16,8 +16,9 @@
 // by `if (mpStream)`) is unreachable dead code. These stubs exist only
 // so the file compiles without <SDL3/SDL.h>.
 struct SDL_AudioStream;
+typedef unsigned int SDL_AudioDeviceID;
 struct SDL_AudioSpec { int format; int channels; int freq; };
-#define SDL_AUDIO_F32 0
+#define SDL_AUDIO_S16 0
 #define SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK 0
 static inline SDL_AudioStream* SDL_OpenAudioDeviceStream(int, const SDL_AudioSpec*, void*, void*) { return nullptr; }
 static inline void SDL_DestroyAudioStream(SDL_AudioStream*) {}
@@ -26,9 +27,9 @@ static inline void SDL_PauseAudioStreamDevice(SDL_AudioStream*) {}
 static inline void SDL_SetAudioStreamFormat(SDL_AudioStream*, const SDL_AudioSpec*, const SDL_AudioSpec*) {}
 static inline int SDL_GetAudioStreamQueued(SDL_AudioStream*) { return 0; }
 static inline bool SDL_PutAudioStreamData(SDL_AudioStream*, const void*, int) { return true; }
-static inline bool SDL_SetAudioStreamFrequencyRatio(SDL_AudioStream*, float) { return true; }
+static inline SDL_AudioDeviceID SDL_GetAudioStreamDevice(SDL_AudioStream*) { return 0; }
+static inline bool SDL_GetAudioDeviceFormat(SDL_AudioDeviceID, SDL_AudioSpec*, int*) { return false; }
 static inline const char* SDL_GetError() { return ""; }
-static inline uint64 SDL_GetTicks() { return 0; }
 #else
 #include <SDL3/SDL.h>
 #endif
@@ -231,10 +232,23 @@ public:
 	void Init(ATScheduler& scheduler) override;
 	void InitNativeAudio() override;
 
+	// Windows exposes a WaveOut/DSound/XAudio2/WASAPI selector, which the
+	// SDL3 Audio Options dialog (ui_recording.cpp:ATUIRenderAudioOptionsDialog)
+	// deliberately omits: SDL3 picks a driver at SDL_Init time via
+	// SDL_HINT_AUDIO_DRIVER, and users almost always want the OS default
+	// (PulseAudio/PipeWire on Linux, CoreAudio on macOS). GetApi reports
+	// Auto; SetApi is accepted but has no effect.
 	ATAudioApi GetApi() override { return kATAudioApi_Auto; }
 	void SetApi(ATAudioApi) override {}
 
-	void SetAudioTap(IATAudioTap* tap) override { mpAudioTap = tap; }
+	void SetAudioTap(IATAudioTap* tap) override {
+		mpAudioTap = tap;
+		// Tap presence switches the async-player mix-rate path
+		// (POKEY rate vs output rate).  Windows calls
+		// RecomputeResamplingRate() here for the same reason
+		// (audiooutput.cpp:488-492).
+		RecomputeResamplingRate();
+	}
 	ATUIAudioStatus GetAudioStatus() const override { return mAudioStatus; }
 
 	IATAudioMixer& AsMixer() override { return *this; }
@@ -258,13 +272,17 @@ public:
 	void SetLatency(int ms) override {
 		if (ms < 10) ms = 10;
 		else if (ms > 500) ms = 500;
+		if (mLatency == ms) return;
 		mLatency = ms;
+		RecomputeBuffering();
 	}
 	int GetExtraBuffer() override { return mExtraBuffer; }
 	void SetExtraBuffer(int ms) override {
 		if (ms < 10) ms = 10;
 		else if (ms > 500) ms = 500;
+		if (mExtraBuffer == ms) return;
 		mExtraBuffer = ms;
+		RecomputeBuffering();
 	}
 
 	void SetFiltersEnabled(bool enable) override {
@@ -299,6 +317,8 @@ private:
 	void InternalWriteAudio(const float* left, const float* right,
 	                        uint32 count, bool pushAudio, bool pushStereoAsMono,
 	                        uint64 timestamp);
+	void RecomputeBuffering();
+	void RecomputeResamplingRate();
 
 	// Buffer sizing — matches Windows ATAudioOutput exactly
 	enum {
@@ -335,8 +355,10 @@ private:
 	typedef vdfastvector<IATAudioAsyncSource *> AsyncAudioSources;
 	AsyncAudioSources mAsyncAudioSources;
 
-	// Mix levels
-	float mMixLevels[kATAudioMixCount];
+	// Mix levels.  Zero-initialized so that any index not explicitly set
+	// by the constructor (e.g. kATAudioMix_Pokey) has a defined value
+	// until settings.cpp loads user preferences.  Previously indeterminate.
+	float mMixLevels[kATAudioMixCount] {};
 
 	// Source buffers — aligned for SIMD
 	alignas(16) float mSourceBuffer[2][kSourceBufferSize] {};
@@ -345,79 +367,54 @@ private:
 	// State
 	uint32 mBufferLevel = 0;
 	double mTickRate = 1;
-	float mMixingRate = 0;
-	// Defaults match the Windows engine (audiooutput.cpp:329-330).  These
-	// are normally overridden by ATLoadSettings shortly after construction
-	// (settings.cpp:1185-1186 -> SetLatency/SetExtraBuffer with defaults
-	// 80/100), so they only matter for the brief window before settings
-	// load and for fresh installs without an Audio: Latency key.  The
-	// previous values (40/0) gave only ~40ms of headroom which is too tight
-	// for Linux PulseAudio/PipeWire scheduling jitter.
-	int mLatency = 100;
-	int mExtraBuffer = 100;
+	float mMixingRate = 0;              // POKEY mixing rate = cps / 28
+	uint32 mSamplingRate = 48000;       // Device output rate (set in InitNativeAudio)
+	int mLatency = 80;                  // Matches Windows settings.cpp default
+	int mExtraBuffer = 100;             // Matches Windows settings.cpp default
 	bool mbMute = false;
 	bool mbFilterStereo = false;
 	uint32 mFilterMonoSamples = 0;
 	uint32 mBlockInternalAudioCount = 0;
 	uint32 mPauseCount = 0;
 
-	// Profiling / status
+	// Polyphase resampler state (ported verbatim from audiooutput.cpp).
+	// SDL3 performs zero resampling: we feed the device rate directly as
+	// S16 stereo, so Altirra's interp-filter polyphase is the only sample
+	// rate converter in the chain.
+	uint64 mResampleAccum = 0;          // fixed-point source position (32.32)
+	sint64 mResampleRate = 0;           // fixed-point source/dest ratio
+	uint32 mLatencyTargetMin = 0;       // bytes
+	uint32 mLatencyTargetMax = 0;       // bytes
+	uint32 mMinLevel = 0xFFFFFFFFU;     // windowed queue min (bytes)
+	uint32 mMaxLevel = 0;               // windowed queue max (bytes)
+
+	// Status / profiling
 	ATUIAudioStatus mAudioStatus {};
 	uint32 mWritePosition = 0;
 	uint32 mProfileCounter = 0;
 	uint32 mProfileBlockStartPos = 0;
 	uint64 mProfileBlockStartTime = 0;
-	uint32 mCheckCounter = 0;
-	uint32 mUnderflowCount = 0;
-	uint32 mOverflowCount = 0;
-	int mMixingRateInt = 63920;
+	uint32 mCheckCounter = 0;           // gates the 15-call drop/stats window
+	uint32 mUnderflowCount = 0;         // per-window, reset at window end
+	uint32 mOverflowCount = 0;          // per-window, reset at window end
+	uint32 mDropCounter = 0;            // Windows-style drop hysteresis
 
-	// --- Adaptive clock recovery state (Phase B port of Windows
-	// RecomputeResamplingRate / mResampleAccum / mDropCounter logic) ---
-	//
-	// We do not have access to the OS hardware audio clock through SDL3 —
-	// only to the SDL audio stream queue depth.  We close the loop by
-	// observing average queue depth over a 15-call window and bending the
-	// SDL stream's input/output frequency ratio so the average tracks the
-	// midpoint of [latency, latency+extraBuffer].  Drift correction is
-	// gentle (gain 0.05, hard-clamped to ±0.5%) to prevent oscillation.
-	uint64 mQueueSampleSum = 0;       // accumulated SDL_GetAudioStreamQueued() per call
-	uint32 mQueueSampleCount = 0;     // number of samples in the current window
-	int    mQueueSampleMin = 0x7FFFFFFF;
-	int    mQueueSampleMax = 0;
-	float  mFreqRatio = 1.0f;         // last applied frequency ratio
-	uint32 mDropCounter = 0;          // sustained-overflow counter (Windows hysteresis)
-
-	// --- Speed-modifier compensation (port of Windows mRepeatInc /
-	// mRepeatAccum from audiooutput.cpp:1007-1017) ---
-	//
-	// SetCyclesPerSecond receives a `repeatfactor = 1.0 / speedRate`
-	// which encodes how many times each WriteAudio chunk should be
-	// pushed to the audio device to keep audio playback at correct
-	// wallclock pace.  At normal speed (rate=1.0) repeatfactor=1.0 →
-	// inc=65536 → exactly one push per call.  At 2× speed
-	// (rate=2.0) repeatfactor=0.5 → inc=32768 → on average 0.5 pushes
-	// per call (every other call drops the chunk).  At slowmo
-	// (rate=0.5) repeatfactor=2.0 → inc=131072 → 2 pushes per call.
-	//
-	// Without this, slowmo and Configure System speed modifiers cause
-	// continuous queue underflow / overflow because POKEY's call rate
-	// no longer matches realtime sample consumption.
+	// Speed-modifier write duplication (mRepeatInc / mRepeatAccum
+	// ported from audiooutput.cpp:523 and 1007-1017). Governs how many
+	// times each resampled block is pushed to SDL to keep wallclock
+	// audio pace during turbo/slowmo.
 	uint32 mRepeatInc = 65536;
 	uint32 mRepeatAccum = 0;
 
-	// Class-member interleave buffer for the output stage, so that we
-	// can push the same chunk multiple times to SDL3 without redoing
-	// the interleave (see write loop below).  Sized for the worst case
-	// kBufferSize samples × 2 channels.
-	alignas(16) float mInterleaveBuffer[kBufferSize * 2] {};
+	// Resampler output buffer (S16 interleaved stereo) — pushed to SDL.
+	vdblock<sint16> mOutputBuffer16;
 
-	// --- Telemetry for the once-per-second "[Audio]" diagnostic line.
-	// Cumulative counters; we log the delta since the previous tick.
-	uint64 mTelemetryNextMs = 0;
-	uint32 mTelemetryLastUnderflow = 0;
-	uint32 mTelemetryLastOverflow = 0;
-	uint32 mTelemetryLastDrop = 0;
+	// Async mix buffer at OUTPUT rate for the no-audio-tap path. Matches
+	// Windows audiooutput.cpp:859-886. When an audio tap is present the
+	// async sources are mixed at POKEY rate post-filter instead (matching
+	// Windows's tap-present branch).
+	vdblock<float> mAsyncMixBuffer;
+	bool mbAsyncMixBufferZeroed = false;
 };
 
 // -------------------------------------------------------------------------
@@ -460,21 +457,15 @@ void ATAudioOutputSDL3::Init(ATScheduler& scheduler) {
 	mFilterMonoSamples = 0;
 
 	mBufferLevel = 0;
+	mResampleAccum = 0;
 
 	mCheckCounter = 0;
+	mMinLevel = 0xFFFFFFFFU;
+	mMaxLevel = 0;
 	mUnderflowCount = 0;
 	mOverflowCount = 0;
-
-	// Reset adaptive clock recovery state.
-	mQueueSampleSum = 0;
-	mQueueSampleCount = 0;
-	mQueueSampleMin = 0x7FFFFFFF;
-	mQueueSampleMax = 0;
-	mFreqRatio = 1.0f;
 	mDropCounter = 0;
 
-	// Reset speed-modifier accumulator.  mRepeatInc is set by the
-	// SetCyclesPerSecond call below.
 	mRepeatAccum = 0;
 
 	mWritePosition = 0;
@@ -483,6 +474,10 @@ void ATAudioOutputSDL3::Init(ATScheduler& scheduler) {
 	mProfileBlockStartTime = VDGetPreciseTick();
 	mProfileCounter = 0;
 
+	// Provisional latency targets: RecomputeBuffering uses mSamplingRate's
+	// default (48 kHz). InitNativeAudio will recompute after picking the
+	// real device rate.
+	RecomputeBuffering();
 	SetCyclesPerSecond(1789772.5, 1.0);
 }
 
@@ -496,9 +491,13 @@ void ATAudioOutputSDL3::InitNativeAudio() {
 	// are silently dropped in WriteAudio (mpStream stays nullptr).
 	return;
 #else
+	// Open the device with a placeholder S16 stereo 48 kHz spec. SDL3
+	// picks the device and its internal format; we then query the actual
+	// device rate and reconfigure the stream so that SDL performs no
+	// resampling — Altirra's polyphase filter is the only rate converter.
 	SDL_AudioSpec spec {};
-	spec.freq = mMixingRateInt;
-	spec.format = SDL_AUDIO_F32;
+	spec.freq = 48000;
+	spec.format = SDL_AUDIO_S16;
 	spec.channels = 2;
 
 	mpStream = SDL_OpenAudioDeviceStream(
@@ -510,10 +509,47 @@ void ATAudioOutputSDL3::InitNativeAudio() {
 		return;
 	}
 
-	SDL_ResumeAudioStreamDevice(mpStream);
+	// Query the actual device format and clamp to [44100, 48000] to keep
+	// the polyphase filter in its downsampling regime (matches Windows
+	// audiooutput.cpp:1082-1091). If the device rate is inside that range
+	// we configure the stream 1:1 and SDL does zero conversion; if the
+	// device runs at e.g. 96 kHz, SDL does a final lightweight upsample
+	// from 48 kHz — much cheaper than asking SDL to do the primary
+	// ~64 kHz → device conversion.
+	SDL_AudioDeviceID devId = SDL_GetAudioStreamDevice(mpStream);
+	SDL_AudioSpec devSpec {};
+	uint32 preferredRate = 0;
+	if (devId && SDL_GetAudioDeviceFormat(devId, &devSpec, nullptr))
+		preferredRate = (uint32)devSpec.freq;
 
-	fprintf(stderr, "[ATAudioOutputSDL3] Audio initialized at %d Hz stereo (full mixer)\n",
-	        mMixingRateInt);
+	if (preferredRate == 0)
+		mSamplingRate = 48000;
+	else if (preferredRate < 44100)
+		mSamplingRate = 44100;
+	else if (preferredRate > 48000)
+		mSamplingRate = 48000;
+	else
+		mSamplingRate = preferredRate;
+
+	// Reconfigure the stream's source format to our chosen sampling rate.
+	// Passing dst = NULL leaves the device side alone, so SDL only has to
+	// resample if our clamp diverged from the device rate.
+	SDL_AudioSpec srcSpec {};
+	srcSpec.freq = (int)mSamplingRate;
+	srcSpec.format = SDL_AUDIO_S16;
+	srcSpec.channels = 2;
+	SDL_SetAudioStreamFormat(mpStream, &srcSpec, nullptr);
+
+	RecomputeBuffering();
+	RecomputeResamplingRate();
+
+	// Only start the stream if no outstanding Pause() request. Windows
+	// ReinitAudio has the same guard (audiooutput.cpp:1113-1114).
+	if (!mPauseCount)
+		SDL_ResumeAudioStreamDevice(mpStream);
+
+	fprintf(stderr, "[ATAudioOutputSDL3] Audio initialized at %u Hz stereo S16 (Altirra polyphase)\n",
+	        mSamplingRate);
 #endif
 }
 
@@ -525,24 +561,23 @@ void ATAudioOutputSDL3::SetCyclesPerSecond(double cps, double repeatfactor) {
 	mTickRate = cps;
 	mMixingRate = (float)(cps / 28.0);
 	mAudioStatus.mExpectedRate = cps / 28.0;
+	RecomputeResamplingRate();
 
-	// Apply speed-modifier compensation (matches Windows
-	// audiooutput.cpp:523).  See class member comment for details.
+	// Speed-modifier write duplication — matches Windows audiooutput.cpp:523.
 	mRepeatInc = (uint32)(repeatfactor * 65536.0 + 0.5);
+}
 
-	int newRate = (int)(cps / 28.0 + 0.5);
-	bool rateChanged = (newRate != mMixingRateInt);
-	mMixingRateInt = newRate;
+void ATAudioOutputSDL3::RecomputeBuffering() {
+	// SDL3 behaves more like WaveOut/DirectSound than like WASAPI: we push
+	// data and it plays from our side of the queue, so we use the
+	// non-WASAPI branch from Windows audiooutput.cpp:1032-1034.
+	mLatencyTargetMin = ((mLatency * mSamplingRate + 500) / 1000) * 4;
+	mLatencyTargetMax = mLatencyTargetMin + ((mExtraBuffer * mSamplingRate + 500) / 1000) * 4;
+}
 
-	if (rateChanged && mpStream) {
-		SDL_AudioSpec srcSpec {};
-		srcSpec.freq = mMixingRateInt;
-		srcSpec.format = SDL_AUDIO_F32;
-		srcSpec.channels = 2;
-		SDL_SetAudioStreamFormat(mpStream, &srcSpec, nullptr);
-	}
+void ATAudioOutputSDL3::RecomputeResamplingRate() {
+	mResampleRate = (sint64)(0.5 + 4294967296.0 * mAudioStatus.mExpectedRate / (double)mSamplingRate);
 
-	// Update sample player rates — matches Windows RecomputeResamplingRate()
 	float pokeyMixingRate = mMixingRate;
 
 	if (mpSamplePlayer)
@@ -551,10 +586,18 @@ void ATAudioOutputSDL3::SetCyclesPerSecond(double cps, double repeatfactor) {
 	if (mpEdgeSamplePlayer)
 		mpEdgeSamplePlayer->SetRates(pokeyMixingRate, 1.0f, 1.0f / (float)kATCyclesPerSyncSample);
 
-	// For SDL3, async player always mixes at POKEY rate (we don't resample internally).
-	// This matches the Windows audio-tap-present path.
-	if (mpAsyncSamplePlayer)
-		mpAsyncSamplePlayer->SetRates(pokeyMixingRate, 1.0f, 1.0f / (float)kATCyclesPerSyncSample);
+	// Audio tap present → async player mixes at POKEY rate post-filter
+	// (tap can observe digitized sources).  No tap → async mixes at
+	// output rate and is added during resampling.  Matches Windows
+	// audiooutput.cpp:1050-1055.
+	if (mpAsyncSamplePlayer) {
+		if (mpAudioTap)
+			mpAsyncSamplePlayer->SetRates(pokeyMixingRate, 1.0f, 1.0f / (float)kATCyclesPerSyncSample);
+		else
+			mpAsyncSamplePlayer->SetRates((float)mSamplingRate,
+				pokeyMixingRate / (float)mSamplingRate,
+				(double)mSamplingRate / mTickRate);
+	}
 }
 
 // -------------------------------------------------------------------------
@@ -676,9 +719,16 @@ void ATAudioOutputSDL3::WriteAudio(
 // -------------------------------------------------------------------------
 // InternalWriteAudio — full mixing pipeline
 //
-// This closely follows ATAudioOutput::InternalWriteAudio() from the
-// Windows implementation, diverging only at the output stage where we
-// push float32 to SDL3 instead of resampling to sint16 for IVDAudioOutput.
+// Ports ATAudioOutput::InternalWriteAudio() from the Windows implementation.
+// Diverges only at the very last step: the resampler output (sint16 stereo
+// at mSamplingRate) is pushed to SDL_AudioStream instead of IVDAudioOutput.
+// SDL performs no sample-rate conversion because we configure the stream's
+// src/dst formats to match.
+//
+// Note: count may legitimately be zero. The outer WriteAudio loop calls
+// InternalWriteAudio with tc=0 when mBufferLevel == kBufferSize, to give
+// the resample/output stage a chance to drain buffered samples before the
+// `if (!tc) break;` exit. The mixing steps are guarded by `if (count)`.
 // -------------------------------------------------------------------------
 
 void ATAudioOutputSDL3::InternalWriteAudio(
@@ -689,7 +739,6 @@ void ATAudioOutputSDL3::InternalWriteAudio(
 	bool pushStereoAsMono,
 	uint64 timestamp)
 {
-	VDASSERT(count > 0);
 	VDASSERT(mBufferLevel + count <= kBufferSize);
 
 	// ---- Step 1: Determine stereo requirements ----
@@ -704,26 +753,30 @@ void ATAudioOutputSDL3::InternalWriteAudio(
 		}
 	}
 
-	// For SDL3 we always mix async sources at mixing rate (like the audio-tap path)
-	for(IATAudioAsyncSource *src : mAsyncAudioSources) {
-		if (src->RequiresStereoMixingNow()) {
-			needStereo = true;
-		} else {
-			needMono = true;
+	// Async sources only influence filter-chain stereo state on the tap
+	// path, because that's the only path where async mixes into the
+	// POKEY-rate source buffer. In the no-tap path, async sources write
+	// to mAsyncMixBuffer at output rate and are added during resampling,
+	// so they don't care about mbFilterStereo. Matches Windows
+	// audiooutput.cpp:661-669.
+	if (mpAudioTap) {
+		for(IATAudioAsyncSource *src : mAsyncAudioSources) {
+			if (src->RequiresStereoMixingNow()) {
+				needStereo = true;
+			} else {
+				needMono = true;
+			}
 		}
 	}
 
-	// Switch to stereo filtering if needed
+	// Switch to stereo filtering if needed. Matches Windows
+	// audiooutput.cpp:672-676 exactly: copy the filter's internal state
+	// and mBufferLevel floats of buffered data to the right channel.
+	// Partial-shift semantics mean mBufferLevel >= kPreFilterOffset in
+	// steady state, so the filter lookback zone is covered implicitly.
 	if (needStereo && !mbFilterStereo) {
 		mFilters[1].CopyState(mFilters[0]);
-
-		// Copy the current buffer data PLUS the kPreFilterOffset overlap zone that
-		// contains filter state from the previous frame. In the Windows version,
-		// mBufferLevel is typically non-zero (the resampler doesn't consume everything),
-		// so the overlap zone is implicitly covered. In our SDL3 version, mBufferLevel
-		// is always 0 at the start of InternalWriteAudio because we flush everything,
-		// so we must explicitly copy the overlap zone.
-		memcpy(mSourceBuffer[1], mSourceBuffer[0], sizeof(float) * (mBufferLevel + kPreFilterOffset));
+		memcpy(mSourceBuffer[1], mSourceBuffer[0], sizeof(float) * mBufferLevel);
 		mbFilterStereo = true;
 	}
 
@@ -857,65 +910,173 @@ void ATAudioOutputSDL3::InternalWriteAudio(
 		mFilterMonoSamples = 0;
 	}
 
-	// ---- Step 9: Mix async sources at mixing rate and send to audio tap ----
-	{
+	// ---- Step 9: Audio tap forwarding (tap path only) ----
+	// Matches Windows audiooutput.cpp:814-832: when a tap is present, async
+	// sources are mixed at POKEY rate post-filter and the tap observes the
+	// combined stream.  When no tap is present, async sources are mixed at
+	// OUTPUT rate later, during resampling (Step 10).
+	if (mpAudioTap) {
 		ATAudioAsyncMixInfo asyncMixInfo {};
 		asyncMixInfo.mStartTime = timestamp;
 		asyncMixInfo.mCount = count;
 		asyncMixInfo.mNumCycles = count * kATCyclesPerSyncSample;
 		asyncMixInfo.mMixingRate = mMixingRate;
 		asyncMixInfo.mpLeft = mSourceBuffer[0] + mBufferLevel + kFilterOffset;
-		asyncMixInfo.mpRight = mbFilterStereo ? mSourceBuffer[1] + mBufferLevel + kFilterOffset : nullptr;
+		asyncMixInfo.mpRight = mbFilterStereo
+			? mSourceBuffer[1] + mBufferLevel + kFilterOffset
+			: nullptr;
 		asyncMixInfo.mpMixLevels = mMixLevels;
 
-		for(IATAudioAsyncSource *asyncSource : mAsyncAudioSources) {
+		for (IATAudioAsyncSource *asyncSource : mAsyncAudioSources)
 			asyncSource->WriteAsyncAudio(asyncMixInfo);
-		}
 
-		if (mpAudioTap) {
-			if (mbFilterStereo)
-				mpAudioTap->WriteRawAudio(mSourceBuffer[0] + mBufferLevel + kFilterOffset, mSourceBuffer[1] + mBufferLevel + kFilterOffset, count, timestamp);
-			else
-				mpAudioTap->WriteRawAudio(mSourceBuffer[0] + mBufferLevel + kFilterOffset, nullptr, count, timestamp);
-		}
+		if (mbFilterStereo)
+			mpAudioTap->WriteRawAudio(mSourceBuffer[0] + mBufferLevel + kFilterOffset,
+				mSourceBuffer[1] + mBufferLevel + kFilterOffset, count, timestamp);
+		else
+			mpAudioTap->WriteRawAudio(mSourceBuffer[0] + mBufferLevel + kFilterOffset,
+				nullptr, count, timestamp);
 	}
 
 	mBufferLevel += count;
 	VDASSERT(mBufferLevel <= kBufferSize);
 
-	// ---- Step 10: Output filtered samples to SDL3 ----
-	if (mpStream && mBufferLevel > 0) {
-		// Sample SDL stream queue depth.  This is our only source of
-		// feedback about audio consumption — there is no SDL3 equivalent
-		// of Windows' EstimateHWBufferLevel().  Note: SDL_GetAudioStreamQueued
-		// returns -1 on failure; clamp to 0 so we don't spuriously trip
-		// the underflow path or corrupt the unsigned accumulator.
+	// ---- Step 10: Resample + output (ported from Windows audiooutput.cpp:846-1025) ----
+	//
+	// Altirra's polyphase resampler converts POKEY-rate float samples to
+	// S16 stereo at mSamplingRate.  SDL is used as a dumb byte sink; its
+	// internal stream performs no sample-rate conversion because src and
+	// dst rates are equal (or differ only by a final device upsample).
+
+	// Determine how many samples we can produce via resampling.
+	uint32 resampleAvail = mBufferLevel + kFilterOffset;
+	uint32 resampleCount = 0;
+
+	uint64 limit = ((uint64)(resampleAvail - 8) << 32) + 0xFFFFFFFFU;
+
+	if (limit >= mResampleAccum) {
+		resampleCount = (uint32)((limit - mResampleAccum) / mResampleRate + 1);
+
+		if (resampleCount) {
+			if (mOutputBuffer16.size() < resampleCount * 2)
+				mOutputBuffer16.resize((resampleCount * 2 + 2047) & ~(size_t)2047);
+
+			size_t asyncChannelLen = (resampleCount + 7) & ~7;
+			if (mAsyncMixBuffer.size() < asyncChannelLen * 2) {
+				mAsyncMixBuffer.resize((asyncChannelLen * 2 + 1023) & ~(size_t)1023);
+				mbAsyncMixBufferZeroed = false;
+			}
+
+			if (!mbAsyncMixBufferZeroed) {
+				mbAsyncMixBufferZeroed = true;
+				std::fill(mAsyncMixBuffer.begin(), mAsyncMixBuffer.end(), 0.0f);
+			}
+
+			float *asyncLeft = mAsyncMixBuffer.data();
+			float *asyncRight = mAsyncMixBuffer.data() + asyncChannelLen;
+
+			// No-tap path: mix async sources at OUTPUT rate into the async
+			// mix buffer, combined below during resampling via *Add16.
+			if (!mpAudioTap) {
+				ATAudioAsyncMixInfo asyncMixInfo {};
+				asyncMixInfo.mStartTime = timestamp;
+				asyncMixInfo.mCount = resampleCount;
+				asyncMixInfo.mNumCycles = count * kATCyclesPerSyncSample;
+				asyncMixInfo.mMixingRate = mMixingRate;
+				asyncMixInfo.mpLeft = asyncLeft;
+				asyncMixInfo.mpRight = asyncRight;
+				asyncMixInfo.mpMixLevels = mMixLevels;
+
+				for (IATAudioAsyncSource *asyncSource : mAsyncAudioSources) {
+					if (asyncSource->WriteAsyncAudio(asyncMixInfo))
+						mbAsyncMixBufferZeroed = false;
+				}
+			}
+
+			if (mbMute) {
+				mResampleAccum += (uint64)mResampleRate * resampleCount;
+				memset(mOutputBuffer16.data(), 0, sizeof(mOutputBuffer16[0]) * resampleCount * 2);
+			} else if (mbFilterStereo) {
+				if (mbAsyncMixBufferZeroed)
+					mResampleAccum = ATFilterResampleStereo16(mOutputBuffer16.data(),
+						mSourceBuffer[0], mSourceBuffer[1], resampleCount,
+						mResampleAccum, mResampleRate, true);
+				else
+					mResampleAccum = ATFilterResampleStereoAdd16(mOutputBuffer16.data(),
+						mSourceBuffer[0], mSourceBuffer[1], asyncLeft, asyncRight,
+						resampleCount, mResampleAccum, mResampleRate, true);
+			} else {
+				if (mbAsyncMixBufferZeroed)
+					mResampleAccum = ATFilterResampleMonoToStereo16(mOutputBuffer16.data(),
+						mSourceBuffer[0], resampleCount,
+						mResampleAccum, mResampleRate, true);
+				else
+					mResampleAccum = ATFilterResampleMonoToStereoAdd16(mOutputBuffer16.data(),
+						mSourceBuffer[0], asyncLeft, asyncRight, resampleCount,
+						mResampleAccum, mResampleRate, true);
+			}
+
+			// Shift consumed source samples out of the buffer.  Preserves
+			// mBufferLevel - shift samples PLUS kPreFilterOffset of filter
+			// lookback state (matches Windows audiooutput.cpp:904-920).
+			uint32 shift = (uint32)(mResampleAccum >> 32);
+
+			if (shift > mBufferLevel)
+				shift = mBufferLevel;
+
+			if (shift) {
+				uint32 bytesToShift = sizeof(float) * (mBufferLevel - shift + kPreFilterOffset);
+
+				memmove(mSourceBuffer[0], mSourceBuffer[0] + shift, bytesToShift);
+
+				if (mbFilterStereo)
+					memmove(mSourceBuffer[1], mSourceBuffer[1] + shift, bytesToShift);
+
+				mBufferLevel -= shift;
+				mResampleAccum -= (uint64)shift << 32;
+			}
+		}
+	}
+
+	VDASSERT(mResampleAccum < (uint64)mOutputBuffer16.size() << (32+4));
+
+	// ---- Status window + drop hysteresis ----
+	// Use SDL_GetAudioStreamQueued as a proxy for the hardware-side buffer
+	// level.  This is PUT-side bytes (bytes we've fed the stream minus
+	// bytes SDL has drained toward the device), which is noisier than
+	// Windows's EstimateHWBufferLevel but is the only feedback SDL3 gives
+	// us.  Windowed min/max over mCheckCounter calls smooths it out.
+	uint32 bytes = 0;
+	if (mpStream) {
 		int queued = SDL_GetAudioStreamQueued(mpStream);
-		if (queued < 0) queued = 0;
-		const int bytesPerSecond = mMixingRateInt * 2 * (int)sizeof(float);
-		const int targetMidBytes = bytesPerSecond * (mLatency + mLatency + mExtraBuffer) / 2 / 1000;
-		const int latencyBytes   = bytesPerSecond * mLatency / 1000;
-		const int maxQueueBytes  = bytesPerSecond * (mLatency + mExtraBuffer + 50) / 1000;
-		const int underflowThresholdBytes = latencyBytes / 4;
+		if (queued > 0)
+			bytes = (uint32)queued;
+	}
 
-		// Update min/max for this status window (used for the live read-out).
-		if (queued < mQueueSampleMin) mQueueSampleMin = queued;
-		if (queued > mQueueSampleMax) mQueueSampleMax = queued;
-		mQueueSampleSum += (uint64)queued;
-		++mQueueSampleCount;
+	if (mMinLevel > bytes)
+		mMinLevel = bytes;
 
-		// --- Drop hysteresis (Phase B2, mirrors Windows audiooutput.cpp:944-967) ---
-		// Drop a block only if (a) we have not recently underflowed and
-		// (b) the over-target condition has persisted for 10 consecutive
-		// samples.  This prevents transient queue spikes (caused by audio
-		// thread scheduling jitter on Linux) from being treated as real
-		// overflow and producing audible glitches.  In turbo mode the
-		// emulator floods WriteAudio() much faster than realtime, so the
-		// 10-sample threshold is reached almost immediately and the queue
-		// is still bounded — no special turbo path needed.
-		bool dropBlock = false;
+	if (mMaxLevel < bytes)
+		mMaxLevel = bytes;
 
-		if (mUnderflowCount == 0 && queued > maxQueueBytes) {
+	uint32 adjustedLatencyTargetMin = mLatencyTargetMin;
+	uint32 adjustedLatencyTargetMax = mLatencyTargetMax;
+
+	bool dropBlock = false;
+	if (++mCheckCounter >= 15) {
+		mCheckCounter = 0;
+
+		// None             - see if we can remove data to lower latency
+		// Underflow        - do nothing; we already add data for this
+		// Overflow         - do nothing; we may be in turbo
+		// Under + overflow - increase spread
+		bool tryDrop = false;
+		if (!mUnderflowCount) {
+			if (mMinLevel > adjustedLatencyTargetMin + resampleCount * 8)
+				tryDrop = true;
+		}
+
+		if (tryDrop) {
 			if (++mDropCounter >= 10) {
 				mDropCounter = 0;
 				dropBlock = true;
@@ -924,204 +1085,66 @@ void ATAudioOutputSDL3::InternalWriteAudio(
 			mDropCounter = 0;
 		}
 
-		// --- Earlier underflow detection (Phase B4) ---
-		// Windows only flagged underflow when the queue was fully empty.
-		// We flag it when queue falls below 25% of the latency target so
-		// the recovery loop has something to react to before audible silence.
-		if (queued < underflowThresholdBytes && count > 0) {
-			++mUnderflowCount;
-			++mAudioStatus.mUnderflowCount;
-		}
+		mAudioStatus.mMeasuredMin = mMinLevel;
+		mAudioStatus.mMeasuredMax = mMaxLevel;
+		mAudioStatus.mTargetMin = mLatencyTargetMin;
+		mAudioStatus.mTargetMax = mLatencyTargetMax;
+		mAudioStatus.mbStereoMixing = mbFilterStereo;
+		mAudioStatus.mSamplingRate = mSamplingRate;
 
-		if (dropBlock) {
-			++mOverflowCount;
-			++mAudioStatus.mOverflowCount;
-			++mAudioStatus.mDropCount;
-		} else {
-			// Output the filtered buffer level worth of samples.
-			// The filtered data lives at offset kFilterOffset from the
-			// start of the source buffer.
-			const uint32 outputCount = mBufferLevel;
-			const float *srcLeft = mSourceBuffer[0] + kFilterOffset;
-			const float *srcRight = mbFilterStereo ? mSourceBuffer[1] + kFilterOffset : nullptr;
-
-			// --- Speed-modifier write count (Phase B port of Windows
-			// mRepeatAccum / mRepeatInc, audiooutput.cpp:1007-1017).
-			// At normal speed mRepeatInc = 65536 → writeCount = 1.
-			// In slowmo mRepeatInc > 65536 → writeCount can be 2+.
-			// At fast-forward (>1×) mRepeatInc < 65536 → writeCount
-			// alternates 0/1 averaging the desired write rate.
-			// Capped at 10 to bound buffer fill in pathological cases. ---
-			mRepeatAccum += mRepeatInc;
-			uint32 writeCount = mRepeatAccum >> 16;
-			mRepeatAccum &= 0xFFFF;
-			if (writeCount > 10) writeCount = 10;
-
-			if (writeCount > 0) {
-				// Interleave once into the class-member buffer, then
-				// push it to SDL3 writeCount times.
-				if (mbMute) {
-					memset(mInterleaveBuffer, 0, outputCount * 2 * sizeof(float));
-				} else if (srcRight) {
-					for (uint32 i = 0; i < outputCount; ++i) {
-						mInterleaveBuffer[i * 2    ] = srcLeft[i];
-						mInterleaveBuffer[i * 2 + 1] = srcRight[i];
-					}
-				} else {
-					for (uint32 i = 0; i < outputCount; ++i) {
-						mInterleaveBuffer[i * 2    ] = srcLeft[i];
-						mInterleaveBuffer[i * 2 + 1] = srcLeft[i];
-					}
-				}
-
-				const int byteCount = (int)(outputCount * 2 * sizeof(float));
-				for (uint32 rep = 0; rep < writeCount; ++rep) {
-					SDL_PutAudioStreamData(mpStream, mInterleaveBuffer, byteCount);
-				}
-			}
-			// writeCount == 0 → fast-forward dropped this chunk
-			// intentionally; this is the symmetric counterpart of the
-			// slowmo repeat path and is correct behaviour.
-
-			// Underflow already detected above using a more sensitive
-			// threshold (latency / 4), so no tail check needed here.
-		}
-	}
-
-	// Always shift the source buffer down and reset mBufferLevel, even if mpStream
-	// is null (audio device failed to open) or we dropped the block. Without this,
-	// mBufferLevel would grow without bound, causing buffer overflow and assert
-	// failures on the next WriteAudio call.
-	if (mBufferLevel > 0) {
-		uint32 bytesToShift = sizeof(float) * kPreFilterOffset;
-
-		memmove(mSourceBuffer[0], mSourceBuffer[0] + mBufferLevel, bytesToShift);
-
-		if (mbFilterStereo)
-			memmove(mSourceBuffer[1], mSourceBuffer[1] + mBufferLevel, bytesToShift);
-
-		mBufferLevel = 0;
-	}
-
-	// ---- Step 11: Status, clock recovery and profiling ----
-	if (mpStream) {
-		if (++mCheckCounter >= 15) {
-			mCheckCounter = 0;
-
-			// --- Phase B1: adaptive clock recovery via SDL stream
-			// frequency ratio.  This is the SDL3 analogue of Windows
-			// RecomputeResamplingRate / mResampleAccum (audiooutput.cpp
-			// 838-922, 1037-1056).  We bend the SDL audio stream's
-			// input/output ratio so the average queue depth tracks the
-			// midpoint of [latency, latency+extraBuffer], in bytes.
-			//
-			// Without this loop, any difference between the nominal
-			// 63920 Hz POKEY mixing rate and the real OS audio device
-			// clock accumulates as drift, eventually causing either
-			// underflow (silence) or overflow (drops).  Linux PulseAudio
-			// and PipeWire both internally resample everything and the
-			// "real" device clock is rarely exactly nominal, so the
-			// drift is real even on healthy hardware.
-			if (mQueueSampleCount > 0) {
-				const double avgQueue = (double)mQueueSampleSum / (double)mQueueSampleCount;
-				const int    bytesPerSecond = mMixingRateInt * 2 * (int)sizeof(float);
-				const int    targetMidBytes = bytesPerSecond * (mLatency + mLatency + mExtraBuffer) / 2 / 1000;
-
-				if (targetMidBytes > 0) {
-					// Positive error = queue too full = need to drain it
-					// faster.  Per SDL3 SDL_SetAudioStreamFrequencyRatio
-					// docs, ratio > 1.0 plays the audio FASTER, so input
-					// data is consumed more quickly — therefore positive
-					// error must INCREASE the ratio.
-					const double error = (avgQueue - (double)targetMidBytes) / (double)targetMidBytes;
-					constexpr double kGain = 0.05;
-					constexpr float  kRatioClamp = 0.005f; // ±0.5%
-
-					float newRatio = mFreqRatio + (float)(error * kGain);
-					if (newRatio < 1.0f - kRatioClamp) newRatio = 1.0f - kRatioClamp;
-					if (newRatio > 1.0f + kRatioClamp) newRatio = 1.0f + kRatioClamp;
-
-					if (newRatio != mFreqRatio) {
-						SDL_SetAudioStreamFrequencyRatio(mpStream, newRatio);
-						mFreqRatio = newRatio;
-					}
-				}
-
-				mAudioStatus.mMeasuredMin = mQueueSampleMin;
-				mAudioStatus.mMeasuredMax = mQueueSampleMax;
-			} else {
-				mAudioStatus.mMeasuredMin = 0;
-				mAudioStatus.mMeasuredMax = 0;
-			}
-
-			// Report target range in BYTES to match the Windows
-			// convention (audiooutput.cpp:971-972).  Note that on
-			// SDL3 our sample format is float stereo (8 bytes/sample)
-			// so any consumer converting bytes→ms must use 8, not 4.
-			const int statusBytesPerMs = mMixingRateInt * 2 * (int)sizeof(float) / 1000;
-			mAudioStatus.mTargetMin = mLatency * statusBytesPerMs;
-			mAudioStatus.mTargetMax = (mLatency + mExtraBuffer) * statusBytesPerMs;
-			mAudioStatus.mbStereoMixing = mbFilterStereo;
-			mAudioStatus.mSamplingRate = mMixingRateInt;
-
-			// Reset windowed accumulators.
-			mQueueSampleSum = 0;
-			mQueueSampleCount = 0;
-			mQueueSampleMin = 0x7FFFFFFF;
-			mQueueSampleMax = 0;
-
-			// mAudioStatus.mUnderflowCount and mOverflowCount are cumulative
-			// (incremented directly at detection time, never reset here).
-			// The local mUnderflowCount/mOverflowCount are windowed counters
-			// used only for the drop logic check.
-			mUnderflowCount = 0;
-			mOverflowCount = 0;
-
-			// --- Once-per-second diagnostic line ---------------------------
-			// Reports:
-			//   q=<min>/<max>/<target>ms    SDL queue depth window (min/max
-			//                                over ~375 ms) vs target latency,
-			//                                in milliseconds.
-			//   ratio=<f>                    Applied SDL frequency ratio
-			//                                (1.0 = nominal; ±0.5% = clock
-			//                                recovery bending the rate).
-			//   uf=<d> of=<d> drop=<d>       Underflow/overflow/drop events
-			//                                in the last second.
-			//   in=<f>k exp=<f>k             Measured vs expected POKEY
-			//                                sample rate in samples/sec.
-			//
-			// This tells us whether the crackling is an audio-engine
-			// problem (underflows, non-unity ratio, rate mismatch) or a
-			// frame-pacing problem (flat audio stats → look at [Pace]).
-			const uint64 nowMs = SDL_GetTicks();
-			if (nowMs >= mTelemetryNextMs) {
-				mTelemetryNextMs = nowMs + 1000;
-
-				const uint32 ufDelta = mAudioStatus.mUnderflowCount - mTelemetryLastUnderflow;
-				const uint32 ofDelta = mAudioStatus.mOverflowCount  - mTelemetryLastOverflow;
-				const uint32 drDelta = mAudioStatus.mDropCount      - mTelemetryLastDrop;
-				mTelemetryLastUnderflow = mAudioStatus.mUnderflowCount;
-				mTelemetryLastOverflow  = mAudioStatus.mOverflowCount;
-				mTelemetryLastDrop      = mAudioStatus.mDropCount;
-
-				const int bps = mMixingRateInt * 2 * (int)sizeof(float);
-				const int minMs = bps > 0 ? (mAudioStatus.mMeasuredMin * 1000 / bps) : 0;
-				const int maxMs = bps > 0 ? (mAudioStatus.mMeasuredMax * 1000 / bps) : 0;
-
-				(void)minMs; (void)maxMs; (void)ufDelta; (void)ofDelta; (void)drDelta;
-			}
-		}
+		mMinLevel = 0xFFFFFFFFU;
+		mMaxLevel = 0;
+		mUnderflowCount = 0;
+		mOverflowCount = 0;
 	}
 
 	if (++mProfileCounter >= 200) {
 		mProfileCounter = 0;
 		uint64 t = VDGetPreciseTick();
 
-		mAudioStatus.mIncomingRate = (double)(mWritePosition - mProfileBlockStartPos) / (double)(t - mProfileBlockStartTime) * VDGetPreciseTicksPerSecond();
+		mAudioStatus.mIncomingRate = (double)(mWritePosition - mProfileBlockStartPos)
+			/ (double)(t - mProfileBlockStartTime) * VDGetPreciseTicksPerSecond();
 
 		mProfileBlockStartPos = mWritePosition;
 		mProfileBlockStartTime = t;
 	}
+
+	// ---- Underflow: push an extra block ahead of the normal write ----
+	// Mirrors Windows audiooutput.cpp:992-1000.  On underflow we refill
+	// the queue with an extra copy of this block; control then falls
+	// through to the normal write path below, so the net effect at
+	// normal speed is two writes for this call instead of one.
+	if (mpStream && bytes < adjustedLatencyTargetMin) {
+		++mAudioStatus.mUnderflowCount;
+		++mUnderflowCount;
+
+		SDL_PutAudioStreamData(mpStream, mOutputBuffer16.data(), (int)(resampleCount * 4));
+
+		mDropCounter = 0;
+		dropBlock = false;
+	}
+
+	// ---- Normal write path ----
+	if (dropBlock) {
+		++mAudioStatus.mDropCount;
+	} else if (mpStream) {
+		if (bytes < adjustedLatencyTargetMin + adjustedLatencyTargetMax) {
+			mRepeatAccum += mRepeatInc;
+
+			uint32 repeats = mRepeatAccum >> 16;
+			mRepeatAccum &= 0xffff;
+
+			if (repeats > 10)
+				repeats = 10;
+
+			while (repeats--)
+				SDL_PutAudioStreamData(mpStream, mOutputBuffer16.data(), (int)(resampleCount * 4));
+		} else {
+			++mOverflowCount;
+			++mAudioStatus.mOverflowCount;
+		}
+	}
+	(void)pushAudio;
 }
 
 // =========================================================================

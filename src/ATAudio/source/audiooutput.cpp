@@ -373,7 +373,7 @@ protected:
 	typedef vdfastvector<IATAudioAsyncSource *> AsyncAudioSources;
 	AsyncAudioSources mAsyncAudioSources;
 	
-	float mMixLevels[kATAudioMixCount];
+	float mMixLevels[kATAudioMixCount] {};
 
 	alignas(16) float	mSourceBuffer[2][kSourceBufferSize] {};
 	alignas(16) float	mMonoMixBuffer[kBufferSize] {};

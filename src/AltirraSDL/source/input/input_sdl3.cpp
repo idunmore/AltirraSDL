@@ -1,19 +1,36 @@
 //	Altirra SDL3 frontend - input handling
 //
-//	Keyboard input has two paths:
+//	Keyboard input has three dispatch paths, one per independent axis of
+//	"what the key means":
 //
-//	1. POKEY direct path: SDL scancode → Atari KBCODE → PushKey()
-//	   This handles actual Atari keyboard typing (letters, numbers, etc.)
+//	1. ATInputManager path (physical position):
+//	     SDL_Scancode → ATInputCode (VK equivalent) → OnButtonDown/Up()
+//	   Used for input mapping — arrow keys as joystick, function keys as
+//	   console buttons, WASD as a gamepad, etc.  Always scancode-based so
+//	   muscle memory / remapped profiles follow finger position regardless
+//	   of the OS keyboard layout.  Matches Windows uivideodisplaywindow.cpp,
+//	   which feeds VK codes to ATInputManager for the controller mapping.
 //
-//	2. ATInputManager path: SDL scancode → ATInputCode (VK equivalent)
-//	   → ATInputManager::OnButtonDown/Up()
-//	   This handles input mapping — arrow keys as joystick, function keys
-//	   as console buttons, etc.  The input map system routes these to
-//	   emulated Atari controllers (joystick, paddle, 5200, etc.)
+//	2. POKEY direct path (layout-aware key identity):
+//	     a) SDL_Keycode (ev.key)  → VK  [letters, digits, OEM punctuation]
+//	     b) SDL_Scancode fallback → VK  [Enter, Esc, Tab, Space, arrows,
+//	                                     F-keys, modifiers, numpad, ...]
+//	     → ATUIGetScanCodeForVirtualKey() → PushKey()
+//	   Layout-aware for character keys (so Ctrl+Z works on a German
+//	   layout where the Z key is physically SDL_SCANCODE_Y), physical for
+//	   layout-invariant keys.  This mirrors how ImGui_ImplSDL3 splits its
+//	   mapping and how Windows Altirra naturally behaves — Win32 VK codes
+//	   are layout-aware for letters and digits, so WM_KEYDOWN on Windows
+//	   already delivers the "layout key identity" we reconstruct here.
 //
-//	The Windows version (uivideodisplaywindow.cpp) sends VK codes through
-//	ATInputManager for the controller mapping path.  We match that by
-//	translating SDL scancodes to the same VK code values (ATInputCode).
+//	3. Cooked character path (composed text):
+//	     SDL_EVENT_TEXT_INPUT → HandleTextInput → cooked character map
+//	   Handles non-ASCII characters, dead keys, AltGr compositions and
+//	   IME output.  The OS has already applied the keyboard layout and
+//	   compose state, so we just look the resulting character up in the
+//	   Atari character map.  Path 2 intentionally returns without
+//	   injecting anything when ev.key is a non-ASCII printable, leaving
+//	   the SDL_EVENT_TEXT_INPUT that follows to drive this path.
 
 #include <stdafx.h>
 #include <algorithm>
@@ -168,6 +185,70 @@ static uint32 SDLScancodeToInputCode(SDL_Scancode sc) {
 	case SDL_SCANCODE_APOSTROPHE:   return kATInputCode_KeyOem7;
 
 	default: return kATInputCode_None;
+	}
+}
+
+// -------------------------------------------------------------------------
+// SDL_Keycode (layout-aware) → Win32 VK.
+//
+// Used by the POKEY direct path for letter/digit/OEM-punctuation keys whose
+// identity must follow the OS keyboard layout, so that Ctrl+<letter> and
+// typed characters work correctly on non-US layouts.  On a German layout,
+// pressing the physical Y key (SDL_SCANCODE_Y) produces ev.key == 'z'
+// (SDL_Keycode numerically equal to the ASCII codepoint of the base
+// character); this function maps 'z' → VK_Z (0x5A), so the Atari keymap
+// lookup fires as if the user had pressed Z on a US layout — matching
+// Windows Altirra, which gets the layout-aware VK from WM_KEYDOWN directly.
+//
+// Mirrors the split used by ImGui_ImplSDL3_KeyEventToImGuiKey: letters,
+// digits and punctuation use SDL_Keycode; everything else (Enter, Esc,
+// Tab, Backspace, Space, arrows, Home/End, PgUp/PgDn, Ins/Del, F-keys,
+// modifiers, numpad, CapsLock/NumLock) falls through to the physical
+// SDL_Scancode path below.
+//
+// Important properties that keep the range checks safe:
+//   • Printable ASCII SDL_Keycode values equal their character code.
+//   • Non-printable SDL_Keycode values (arrows, function keys, numpad,
+//     modifiers, etc.) all have SDLK_SCANCODE_MASK (0x40000000) set, so
+//     they are always > 0x7F and cannot match the ASCII ranges here.
+//   • SDLK_RETURN (0x0D), SDLK_BACKSPACE (0x08), SDLK_TAB (0x09),
+//     SDLK_ESCAPE (0x1B) and SDLK_SPACE (0x20) are printable-ASCII
+//     codepoints but intentionally excluded — they are layout-invariant
+//     and handled via the scancode fallback.
+//   • Non-ASCII printable characters (ü, é, ß, ...) return None and
+//     are delivered via SDL_EVENT_TEXT_INPUT through the cooked
+//     character map, which is the only path that can correctly handle
+//     dead keys, AltGr composition and IME.
+// -------------------------------------------------------------------------
+static uint32 SDLKeycodeToVK_Layout(SDL_Keycode kc) {
+	// Letters: normalise to uppercase, which matches the Win32 VK numbering
+	// for A–Z exactly (VK_A = 0x41 .. VK_Z = 0x5A).  Accept either case so
+	// the function is robust regardless of whether SDL3 reports the shifted
+	// or base form in ev.key on a given platform / SDL build.
+	if (kc >= 'a' && kc <= 'z') return (uint32)(kc - 'a' + 0x41);
+	if (kc >= 'A' && kc <= 'Z') return (uint32)kc;
+
+	// Digits: '0'..'9' equal VK_0..VK_9 numerically.
+	if (kc >= '0' && kc <= '9') return (uint32)kc;
+
+	// OEM punctuation — mapped to the US-layout VK assignments that the
+	// Atari keymap (built in keyboard_keymap_sdl3.cpp from uikeyboard.cpp)
+	// is indexed by.  When the user presses the key that prints ';' on
+	// their layout, we route it through VK_OEM_1 regardless of where that
+	// key physically sits, so Ctrl+; and friends behave consistently.
+	switch (kc) {
+	case ';':  return kATInputCode_KeyOem1;       // 0xBA
+	case '=':  return kATInputCode_KeyOemPlus;    // 0xBB
+	case ',':  return kATInputCode_KeyOemComma;   // 0xBC
+	case '-':  return kATInputCode_KeyOemMinus;   // 0xBD
+	case '.':  return kATInputCode_KeyOemPeriod;  // 0xBE
+	case '/':  return kATInputCode_KeyOem2;       // 0xBF
+	case '`':  return kATInputCode_KeyOem3;       // 0xC0
+	case '[':  return kATInputCode_KeyOem4;       // 0xDB
+	case '\\': return kATInputCode_KeyOem5;       // 0xDC
+	case ']':  return kATInputCode_KeyOem6;       // 0xDD
+	case '\'': return kATInputCode_KeyOem7;       // 0xDE
+	default:   return kATInputCode_None;
 	}
 }
 
@@ -613,9 +694,30 @@ void ATInputSDL3_HandleKeyDown(const SDL_KeyboardEvent& ev) {
 		}
 	}
 
-	// Translate the SDL physical scancode to a Win32 VK number (matches
-	// the values in inputdefs.h, which use Win32 VK numbering by design).
-	uint32 vk = SDLScancodeToInputCode(ev.scancode);
+	// Translate the SDL event to a Win32 VK number (matches the values in
+	// inputdefs.h, which use Win32 VK numbering by design).
+	//
+	// Layout-aware first: for letters, digits and OEM punctuation we honour
+	// the OS keyboard layout via ev.key (SDL_Keycode), so that e.g. Ctrl+Z
+	// on a German layout (where the physical key is SDL_SCANCODE_Y) fires
+	// the Atari Ctrl+Z entry in the keymap — matching Windows Altirra,
+	// which receives a layout-aware VK_Z from WM_KEYDOWN directly.
+	//
+	// Physical fallback: for everything else (Enter, Esc, Tab, Backspace,
+	// Space, arrows, Home/End, PgUp/PgDn, Ins/Del, F-keys, modifiers,
+	// numpad, CapsLock/NumLock) we use ev.scancode via the existing table.
+	// These keys are layout-invariant, so physical position is both
+	// correct and unambiguous (notably, this keeps Numpad Enter distinct
+	// from the main Enter key, which share a keycode).
+	//
+	// Non-ASCII printable characters (ü, é, ß, dead-key results, IME
+	// output, AltGr compositions, ...) are NOT handled here at all — they
+	// flow through SDL_EVENT_TEXT_INPUT → HandleTextInput → the cooked
+	// character map, which is the only path that can correctly respect
+	// the OS's compose / dead-key / IME state.
+	uint32 vk = SDLKeycodeToVK_Layout(ev.key);
+	if (vk == kATInputCode_None)
+		vk = SDLScancodeToInputCode(ev.scancode);
 	// Numpad Enter uses VK_RETURN with the extended flag in the Windows
 	// keymap (uikeyboard.cpp:351-354 — VKEYMAP(VK_RETURN, kExtended, ...)).
 	// kATInputCode_KeyNumpadEnter (0x10D) is an Altirra-internal value for

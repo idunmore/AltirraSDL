@@ -251,6 +251,69 @@ if(ALTIRRA_BRIDGE)
     target_compile_definitions(AltirraSDL PRIVATE ALTIRRA_BRIDGE_ENABLED=1)
 endif()
 
+# ---------------------------------------------------------------------------
+# Window/taskbar icon
+# ---------------------------------------------------------------------------
+# Bake the Android launcher PNGs into:
+#   - altirra_icon_data.{h,c}  — RGBA arrays consumed by main_sdl3.cpp to
+#                                call SDL_SetWindowIcon (covers Linux
+#                                taskbar, macOS dock, Windows caption).
+#   - altirra.ico              — PNG-embedded .ico referenced by the
+#                                Windows resource script for the exe /
+#                                taskbar icon (Explorer uses the embedded
+#                                .ico, not SDL_SetWindowIcon).
+#
+# The script uses Python stdlib only (zlib), so it runs on every
+# GitHub-hosted runner without pip installs.  Not built on Android: the
+# APK already has launcher icons under android/app/src/main/res/mipmap-*.
+if(NOT ANDROID)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
+    set(ALTIRRA_ICON_SRC_PNGS
+        ${CMAKE_SOURCE_DIR}/android/app/src/main/res/mipmap-mdpi/ic_launcher.png
+        ${CMAKE_SOURCE_DIR}/android/app/src/main/res/mipmap-hdpi/ic_launcher.png
+        ${CMAKE_SOURCE_DIR}/android/app/src/main/res/mipmap-xhdpi/ic_launcher.png
+        ${CMAKE_SOURCE_DIR}/android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png
+        ${CMAKE_SOURCE_DIR}/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+    )
+    set(ALTIRRA_ICON_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
+    set(ALTIRRA_ICON_GEN_H ${ALTIRRA_ICON_GEN_DIR}/altirra_icon_data.h)
+    set(ALTIRRA_ICON_GEN_C ${ALTIRRA_ICON_GEN_DIR}/altirra_icon_data.cpp)
+    set(ALTIRRA_ICON_GEN_ICO ${ALTIRRA_ICON_GEN_DIR}/altirra.ico)
+    set(ALTIRRA_ICON_BAKE_SCRIPT
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/bake_icon.py)
+
+    add_custom_command(
+        OUTPUT ${ALTIRRA_ICON_GEN_H} ${ALTIRRA_ICON_GEN_C} ${ALTIRRA_ICON_GEN_ICO}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${ALTIRRA_ICON_GEN_DIR}
+        COMMAND ${Python3_EXECUTABLE} ${ALTIRRA_ICON_BAKE_SCRIPT}
+                ${ALTIRRA_ICON_GEN_DIR} ${ALTIRRA_ICON_SRC_PNGS}
+        DEPENDS ${ALTIRRA_ICON_BAKE_SCRIPT} ${ALTIRRA_ICON_SRC_PNGS}
+        COMMENT "Baking Altirra window icon (PNG -> RGBA + .ico)"
+        VERBATIM
+    )
+
+    target_sources(AltirraSDL PRIVATE ${ALTIRRA_ICON_GEN_C})
+    target_include_directories(AltirraSDL PRIVATE ${ALTIRRA_ICON_GEN_DIR})
+    target_compile_definitions(AltirraSDL PRIVATE ALTIRRA_HAS_BAKED_ICON=1)
+
+    if(WIN32)
+        # AltirraSDL.rc references altirra.ico via ALTIRRA_ICON_PATH
+        # (absolute path into the build tree, forward-slashed so the
+        # resource compiler is happy on all generators).
+        set(ALTIRRA_ICON_RC
+            ${CMAKE_CURRENT_BINARY_DIR}/AltirraSDL_icon.rc)
+        file(WRITE ${ALTIRRA_ICON_RC}
+            "// Auto-generated — do not edit.\n"
+            "IDI_ICON1 ICON \"${ALTIRRA_ICON_GEN_ICO}\"\n")
+        # Mark the .rc as depending on the generated .ico so MSVC/MinGW
+        # re-run rc.exe when the icon changes.
+        set_source_files_properties(${ALTIRRA_ICON_RC}
+            PROPERTIES OBJECT_DEPENDS ${ALTIRRA_ICON_GEN_ICO})
+        target_sources(AltirraSDL PRIVATE ${ALTIRRA_ICON_RC})
+    endif()
+endif()
+
 
 target_include_directories(AltirraSDL PRIVATE
     # Public system headers

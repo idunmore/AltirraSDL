@@ -17,6 +17,9 @@
 #include <vd2/system/text.h>
 #include <at/atcore/propertyset.h>
 #include <at/atcore/device.h>
+#include <at/atcore/deviceparent.h>
+#include <vd2/system/error.h>
+#include <vd2/system/refcount.h>
 #include "devicemanager.h"
 #include "ui_devconfig_internal.h"
 #include "ui_main.h"
@@ -38,6 +41,61 @@ ATDeviceConfigState g_devCfg;
 static void CleanupGenericEntries();
 
 // =========================================================================
+// Pre-add state (used when opening the configure dialog for a device that
+// has not been created yet).  g_devCfg.pDev == nullptr && s_pendingAddMgr
+// != nullptr means "on apply, create this device and attach it".
+// =========================================================================
+static ATDeviceManager *s_pendingAddMgr = nullptr;
+static IATDevice *s_pendingAddParentDev = nullptr;
+static sint32 s_pendingAddBusId = -1;
+static VDStringA s_pendingAddTag;
+
+static void ClearPendingAdd() {
+	s_pendingAddMgr = nullptr;
+	s_pendingAddParentDev = nullptr;
+	s_pendingAddBusId = -1;
+	s_pendingAddTag.clear();
+}
+
+// Walk existing top-level devices, looking for a bus that advertises the
+// given child device type.  Returns (parent device, bus ID) or (null, -1).
+static void FindCompatibleParentBus(ATDeviceManager *devMgr, const char *tag,
+	IATDevice *& outParent, sint32& outBusId)
+{
+	outParent = nullptr;
+	outBusId = -1;
+	if (!devMgr || !tag)
+		return;
+
+	for (IATDevice *dev : devMgr->GetDevices(false, false, false)) {
+		auto *parent = vdpoly_cast<IATDeviceParent *>(dev);
+		if (!parent)
+			continue;
+
+		for (uint32 bi = 0;; ++bi) {
+			sint32 busId = parent->GetDeviceBusIdByIndex(bi);
+			if (busId < 0)
+				break;
+
+			IATDeviceBus *bus = parent->GetDeviceBusById(busId);
+			if (!bus)
+				continue;
+
+			for (uint32 ti = 0;; ++ti) {
+				const char *s = bus->GetSupportedType(ti);
+				if (!s)
+					break;
+				if (!strcmp(s, tag)) {
+					outParent = dev;
+					outBusId = busId;
+					return;
+				}
+			}
+		}
+	}
+}
+
+// =========================================================================
 // Public API
 // =========================================================================
 
@@ -51,6 +109,10 @@ void ATUIOpenDeviceConfig(IATDevice *dev, ATDeviceManager *devMgr) {
 	if (!info.mpDef->mpConfigTag)
 		return;
 
+	// Drop any stale pending-add state from a prior ATUIBeginAddDevice()
+	// call that never reached the apply path (e.g., superseded before the
+	// dialog was rendered).
+	ClearPendingAdd();
 	g_devCfg.Reset();
 	g_devCfg.open = true;
 	g_devCfg.justOpened = true;
@@ -67,8 +129,64 @@ bool ATUIIsDeviceConfigOpen() {
 void ATUICloseDeviceConfigFor(IATDevice *dev) {
 	if (g_devCfg.open && g_devCfg.pDev == dev) {
 		CleanupGenericEntries();
+		ClearPendingAdd();
 		g_devCfg.Reset();
 	}
+
+	// If a pre-add dialog is holding a raw pointer to the parent device
+	// that is being removed, drop it so the apply path can't dereference
+	// a dangling pointer.
+	if (s_pendingAddParentDev == dev) {
+		CleanupGenericEntries();
+		ClearPendingAdd();
+		g_devCfg.Reset();
+	}
+}
+
+void ATUIBeginAddDevice(ATDeviceManager *devMgr, const char *tag) {
+	if (!devMgr || !tag)
+		return;
+
+	const ATDeviceDefinition *def = devMgr->GetDeviceDefinition(tag);
+	if (!def) {
+		LOG_ERROR("UI", "Failed to add device: %s (unknown type)", tag);
+		return;
+	}
+
+	IATDevice *parentDev = nullptr;
+	sint32 busId = -1;
+	FindCompatibleParentBus(devMgr, tag, parentDev, busId);
+	const bool needsParent = (parentDev != nullptr);
+
+	// Devices that have neither a configure dialog nor a parent bus can
+	// be created directly with empty properties (preserves existing
+	// behaviour for simple peripherals like RTime8, XEP80, etc.).
+	if (!def->mpConfigTag && !needsParent) {
+		try {
+			ATPropertySet pset;
+			devMgr->AddDevice(def, pset, false);
+		} catch (const MyError& e) {
+			LOG_ERROR("UI", "Failed to add device: %s: %s", tag, e.c_str());
+		} catch (...) {
+			LOG_ERROR("UI", "Failed to add device: %s", tag);
+		}
+		return;
+	}
+
+	// Pre-add mode: open the configure dialog with empty properties and
+	// defer creation to the apply handler in ATUIRenderDeviceConfig.
+	CleanupGenericEntries();
+	g_devCfg.Reset();
+	g_devCfg.open = true;
+	g_devCfg.justOpened = true;
+	g_devCfg.pDev = nullptr;
+	g_devCfg.configTag = def->mpConfigTag ? def->mpConfigTag : def->mpTag;
+	g_devCfg.deviceName = WToU8(def->mpName);
+
+	s_pendingAddMgr = devMgr;
+	s_pendingAddParentDev = parentDev;
+	s_pendingAddBusId = busId;
+	s_pendingAddTag = def->mpTag;
 }
 
 // Dispatch to the appropriate per-device dialog renderer
@@ -186,13 +304,46 @@ void ATUIRenderDeviceConfig(ATDeviceManager *devMgr) {
 		} else {
 			bool applied = DispatchDeviceDialog(g_devCfg.configTag.c_str(), g_devCfg.props, g_devCfg);
 
-			if (applied && g_devCfg.pDev && devMgr) {
-				try {
-					devMgr->ReconfigureDevice(*g_devCfg.pDev, g_devCfg.props);
-				} catch (...) {
-					LOG_ERROR("UI", "Failed to reconfigure device");
+			if (applied) {
+				if (g_devCfg.pDev && devMgr) {
+					try {
+						devMgr->ReconfigureDevice(*g_devCfg.pDev, g_devCfg.props);
+					} catch (...) {
+						LOG_ERROR("UI", "Failed to reconfigure device");
+					}
+					g_devCfg.Reset();
+				} else if (s_pendingAddMgr) {
+					// Pre-add apply: create the device now and, if a
+					// compatible parent bus was found, attach it there.
+					ATDeviceManager *mgr = s_pendingAddMgr;
+					IATDevice *parentDev = s_pendingAddParentDev;
+					sint32 busId = s_pendingAddBusId;
+					VDStringA tag = s_pendingAddTag;
+					ClearPendingAdd();
+
+					try {
+						const ATDeviceDefinition *def = mgr->GetDeviceDefinition(tag.c_str());
+						if (!def)
+							throw MyError("Unknown device type: %s", tag.c_str());
+
+						const bool childMode = (parentDev != nullptr);
+						IATDevice *dev = mgr->AddDevice(def, g_devCfg.props, childMode);
+
+						if (dev && childMode) {
+							auto *parent = vdpoly_cast<IATDeviceParent *>(parentDev);
+							if (parent) {
+								IATDeviceBus *bus = parent->GetDeviceBusById(busId);
+								if (bus)
+									bus->AddChildDevice(dev);
+							}
+						}
+					} catch (const MyError& e) {
+						LOG_ERROR("UI", "Failed to add device: %s: %s", tag.c_str(), e.c_str());
+					} catch (...) {
+						LOG_ERROR("UI", "Failed to add device: %s", tag.c_str());
+					}
+					g_devCfg.Reset();
 				}
-				g_devCfg.Reset();
 			}
 		}
 	}
@@ -202,8 +353,15 @@ void ATUIRenderDeviceConfig(ATDeviceManager *devMgr) {
 
 	if (!windowOpen) {
 		CleanupGenericEntries(); // clean up generic editor if it was active
+		ClearPendingAdd();
 		g_devCfg.Reset();
 	}
+
+	// If an individual renderer's Cancel button Reset() the state without
+	// going through the window-close path, make sure the pending-add info
+	// doesn't leak into the next dialog.
+	if (!g_devCfg.open)
+		ClearPendingAdd();
 
 }
 

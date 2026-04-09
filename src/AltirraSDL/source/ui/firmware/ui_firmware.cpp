@@ -181,9 +181,19 @@ static struct {
 	int editIdx = -1;
 	uint64 editId = 0;
 	char editName[256] = {};
-	int editTypeCombo = 0;
+	int editTypeCombo = -1; // -1 = "(Unknown)" placeholder; OK is rejected until user picks a real type
 	ATFirmwareType editType = kATFirmwareType_Unknown;
 	bool editOptionInvert = false; // OPTION key inverted flag (XL/XEGS kernels)
+
+	// When true, the edit dialog is for a newly-imported firmware that has
+	// NOT yet been committed to the firmware manager.  Matches Windows
+	// ATUIDialogFirmware::Add() flow, which only calls AddFirmware() after
+	// the user confirms the edit dialog; clicking Cancel discards the new
+	// entry entirely.
+	bool editAddMode = false;
+	ATFirmwareInfo pendingNewInfo;
+	ATSpecificFirmwareType pendingNewSpecific = kATSpecificFirmwareType_None;
+	vdfastvector<uint8> pendingNewData; // used for CRC display before commit
 
 	int selectedIdx = -1;
 	ATFirmwareType filterType = kATFirmwareType_Unknown; // Unknown = show all
@@ -198,6 +208,19 @@ static struct {
 
 	// Blank firmware warning state: 0=idle, 1=need to open popup, 2=popup open (waiting for user)
 	int blankWarningState = 0;
+
+	// Inline rename (matches Windows VDUIProxyListView OnItemLabelChanging/
+	// Changed flow: F2 on a custom entry swaps the Selectable for an
+	// InputText; Enter commits, Esc cancels).
+	int renameIdx = -1;
+	char renameBuf[256] = {};
+	bool renameFocusRequested = false;
+
+	// Drop/Add error popup (matches Windows ATUIDialogFirmware::OnDropFiles
+	// which calls ShowError on MyError).  The message is populated by the
+	// dialog/drop callback thread and consumed on the main thread.
+	bool addErrorPending = false;
+	VDStringA addErrorMsg;
 } g_fwMgr;
 
 // Audit dialog data — background thread scans firmware CRCs incrementally
@@ -264,6 +287,45 @@ static struct {
 	bool isBlank = false; // true if ROM is all-same-byte (matches Windows blank firmware check)
 } g_fwPendingAdd;
 
+// Open the Edit Firmware Settings dialog for an already-committed
+// firmware entry.  Shared between the context-menu "Edit..." item and
+// double-click handler so both stay in sync.
+static void OpenEditFirmwareDialog(ATFirmwareManager *fwm, uint64 id) {
+	ATFirmwareInfo info;
+	if (!fwm->GetFirmwareInfo(id, info))
+		return;
+
+	// Defensive: make sure we're not inheriting stale add-mode state
+	// from a previous import that never ran through the OK/Cancel path
+	// (e.g., the firmware manager was closed with the dialog still open).
+	g_fwMgr.editAddMode = false;
+	g_fwMgr.pendingNewInfo = ATFirmwareInfo{};
+	g_fwMgr.pendingNewSpecific = kATSpecificFirmwareType_None;
+	g_fwMgr.pendingNewData.clear();
+
+	g_fwMgr.editOpen = true;
+	g_fwMgr.editId = id;
+	g_fwMgr.editType = info.mType;
+	g_fwMgr.editOptionInvert = (info.mFlags & 1) != 0;
+	snprintf(g_fwMgr.editName, sizeof(g_fwMgr.editName), "%s",
+		VDTextWToU8(info.mName).c_str());
+
+	// Match the Add path: leave combo at -1 (="(Unknown)") when the
+	// firmware's recorded type is Unknown, so the OK button stays
+	// disabled until the user actually picks a type rather than
+	// silently defaulting to the first entry (Kernel800_OSA).
+	const auto& types = BuildFwTypeCombo();
+	g_fwMgr.editTypeCombo = -1;
+	if (info.mType != kATFirmwareType_Unknown) {
+		for (int j = 0; j < (int)types.size(); ++j) {
+			if (types[j].type == info.mType) {
+				g_fwMgr.editTypeCombo = j;
+				break;
+			}
+		}
+	}
+}
+
 // File dialog callback for Add Firmware — runs on SDL dialog thread
 static void FirmwareAddCallback(void *userdata, const char * const *filelist, int filter) {
 	(void)userdata;
@@ -282,15 +344,40 @@ static void FirmwareAddCallback(void *userdata, const char * const *filelist, in
 
 	// Read file on callback thread (file I/O is thread-safe)
 	vdfastvector<uint8> data;
+	VDStringA errMsg;
 	try {
 		VDFile f(wpath.c_str());
 		sint64 size = f.size();
-		if (size <= 0 || size > 4 * 1024 * 1024)
-			return;
-		data.resize((size_t)size);
-		f.read(data.data(), (long)size);
-		f.close();
+		// Match Windows uifirmware.cpp: no hard size cap on import.  The
+		// firmware manager only needs the file data to run autodetect
+		// and the blank-file check; SIDE 3 ships an 8 MB ROM and future
+		// devices may be larger still.  Cap at 64 MB to stop obvious
+		// garbage (and keep the blank-byte scan bounded).
+		if (size <= 0) {
+			errMsg.sprintf("Firmware file \"%s\" is empty.",
+				VDTextWToU8(VDStringW(VDFileSplitPath(wpath.c_str()))).c_str());
+		} else if (size > 64 * 1024 * 1024) {
+			errMsg.sprintf("Firmware file \"%s\" is too large (%lld bytes).  "
+				"Maximum supported size is 64 MB.",
+				VDTextWToU8(VDStringW(VDFileSplitPath(wpath.c_str()))).c_str(),
+				(long long)size);
+		} else {
+			data.resize((size_t)size);
+			f.read(data.data(), (long)size);
+			f.close();
+		}
+	} catch (const MyError& e) {
+		errMsg = e.c_str();
 	} catch (...) {
+		errMsg = "Unknown error reading firmware file.";
+	}
+
+	if (!errMsg.empty()) {
+		// Surface the failure via the error popup on the main thread
+		// (matches Windows OnDropFiles ShowError path).
+		std::lock_guard<std::mutex> lock(g_fwAddMutex);
+		g_fwMgr.addErrorPending = true;
+		g_fwMgr.addErrorMsg = std::move(errMsg);
 		return;
 	}
 
@@ -359,13 +446,15 @@ static void ProcessPendingFirmwareAdd(ATFirmwareManager *fwm) {
 
 	g_fwPendingAdd.pending = false;
 
-	// Add firmware to manager (main thread only)
-	fwm->AddFirmware(g_fwPendingAdd.info);
+	// Matches Windows ATUIDialogFirmware::Add(): the new firmware is NOT
+	// committed to the manager yet.  We hand the pending info + raw data
+	// off to the edit dialog in "add mode"; the dialog commits on OK and
+	// discards on Cancel.
+	g_fwMgr.editAddMode = true;
+	g_fwMgr.pendingNewInfo = g_fwPendingAdd.info;
+	g_fwMgr.pendingNewSpecific = g_fwPendingAdd.specificType;
+	g_fwMgr.pendingNewData = std::move(g_fwPendingAdd.data);
 
-	if (g_fwPendingAdd.specificType != kATSpecificFirmwareType_None)
-		fwm->SetSpecificFirmware(g_fwPendingAdd.specificType, g_fwPendingAdd.info.mId);
-
-	// Open edit dialog so user can confirm/change type and name
 	g_fwMgr.editOpen = true;
 	g_fwMgr.editId = g_fwPendingAdd.info.mId;
 	g_fwMgr.editType = g_fwPendingAdd.info.mType;
@@ -373,12 +462,18 @@ static void ProcessPendingFirmwareAdd(ATFirmwareManager *fwm) {
 	snprintf(g_fwMgr.editName, sizeof(g_fwMgr.editName), "%s",
 		VDTextWToU8(g_fwPendingAdd.info.mName).c_str());
 
+	// If autodetect identified the type, preselect it in the combo.
+	// Otherwise leave the combo on -1 so the dialog shows "(Unknown)"
+	// and the OK button stays disabled until the user picks a real
+	// type — Windows shows the same "must choose a type" behaviour.
 	const auto& types = BuildFwTypeCombo();
-	g_fwMgr.editTypeCombo = 0;
-	for (int i = 0; i < (int)types.size(); ++i) {
-		if (types[i].type == g_fwPendingAdd.info.mType) {
-			g_fwMgr.editTypeCombo = i;
-			break;
+	g_fwMgr.editTypeCombo = -1;
+	if (g_fwPendingAdd.info.mType != kATFirmwareType_Unknown) {
+		for (int i = 0; i < (int)types.size(); ++i) {
+			if (types[i].type == g_fwPendingAdd.info.mType) {
+				g_fwMgr.editTypeCombo = i;
+				break;
+			}
 		}
 	}
 
@@ -439,7 +534,7 @@ void ExecuteFirmwareScan(ATFirmwareManager *fwm, const VDStringW &scanDir) {
 			try {
 				VDFile f(filePath.c_str());
 				sint64 sz = f.size();
-				if (sz <= 0 || sz > 4 * 1024 * 1024) continue;
+				if (sz <= 0 || sz > 64 * 1024 * 1024) continue;
 				data.resize((size_t)sz);
 				f.read(data.data(), (long)sz);
 				f.close();
@@ -550,22 +645,40 @@ static void RenderFirmwareEditDialog(ATFirmwareManager *fwm) {
 			}
 		}
 
-		// Show path and CRC32 (read-only, CRC cached to avoid re-reading every frame)
+		// Show path and CRC32 (read-only).  In add-mode the firmware is not
+		// yet in the manager, so read path from the pending info and CRC
+		// from the buffered data; otherwise look both up via the manager.
 		ATFirmwareInfo info;
-		if (fwm->GetFirmwareInfo(g_fwMgr.editId, info)) {
+		bool haveInfo = g_fwMgr.editAddMode
+			? (info = g_fwMgr.pendingNewInfo, true)
+			: fwm->GetFirmwareInfo(g_fwMgr.editId, info);
+		if (haveInfo) {
 			VDStringA pathU8 = VDTextWToU8(info.mPath);
 			ImGui::TextWrapped("Path: %s", pathU8.c_str());
 
 			static uint64 s_cachedCrcId = 0;
+			static bool s_cachedCrcAddMode = false;
 			static char s_cachedCrc[16] = {};
-			if (s_cachedCrcId != g_fwMgr.editId) {
+			if (s_cachedCrcId != g_fwMgr.editId || s_cachedCrcAddMode != g_fwMgr.editAddMode) {
 				s_cachedCrcId = g_fwMgr.editId;
+				s_cachedCrcAddMode = g_fwMgr.editAddMode;
 				s_cachedCrc[0] = 0;
+
+				const uint8 *dataPtr = nullptr;
+				size_t dataLen = 0;
 				vdfastvector<uint8> data;
-				if (fwm->LoadFirmware(g_fwMgr.editId, nullptr, 0, 0, nullptr, nullptr, &data) && !data.empty()) {
+				if (g_fwMgr.editAddMode) {
+					dataPtr = g_fwMgr.pendingNewData.data();
+					dataLen = g_fwMgr.pendingNewData.size();
+				} else if (fwm->LoadFirmware(g_fwMgr.editId, nullptr, 0, 0, nullptr, nullptr, &data) && !data.empty()) {
+					dataPtr = data.data();
+					dataLen = data.size();
+				}
+
+				if (dataPtr && dataLen) {
 					uint32 crc = 0xFFFFFFFF;
-					for (uint8 b : data) {
-						crc ^= b;
+					for (size_t bi = 0; bi < dataLen; ++bi) {
+						crc ^= dataPtr[bi];
 						for (int k = 0; k < 8; ++k)
 							crc = (crc >> 1) ^ (0xEDB88320 & -(crc & 1));
 					}
@@ -588,35 +701,62 @@ static void RenderFirmwareEditDialog(ATFirmwareManager *fwm) {
 		}
 
 		ImGui::Separator();
+		ImGui::BeginDisabled(curEditType == kATFirmwareType_Unknown);
 		if (ImGui::Button("OK", ImVec2(120, 0))) {
-			// Validate type
-			if (curEditType == kATFirmwareType_Unknown) {
-				// Don't close — type must be set
-			} else {
-				// Apply changes
-				if (fwm->GetFirmwareInfo(g_fwMgr.editId, info)) {
-					info.mName = VDTextU8ToW(VDStringA(g_fwMgr.editName));
-					info.mType = curEditType;
-					// Set OPTION invert flag
-					if (curEditType == kATFirmwareType_KernelXL || curEditType == kATFirmwareType_KernelXEGS)
-						info.mFlags = g_fwMgr.editOptionInvert ? 1 : 0;
-					else
-						info.mFlags = 0;
+			ATFirmwareInfo target;
+			bool have = g_fwMgr.editAddMode
+				? (target = g_fwMgr.pendingNewInfo, true)
+				: fwm->GetFirmwareInfo(g_fwMgr.editId, target);
+
+			if (have) {
+				target.mName = VDTextU8ToW(VDStringA(g_fwMgr.editName));
+				target.mType = curEditType;
+				if (curEditType == kATFirmwareType_KernelXL || curEditType == kATFirmwareType_KernelXEGS)
+					target.mFlags = g_fwMgr.editOptionInvert ? 1 : 0;
+				else
+					target.mFlags = 0;
+
+				if (g_fwMgr.editAddMode) {
+					// First-time commit for a newly-imported firmware.
+					fwm->AddFirmware(target);
+					if (g_fwMgr.pendingNewSpecific != kATSpecificFirmwareType_None
+						&& !fwm->GetSpecificFirmware(g_fwMgr.pendingNewSpecific))
+					{
+						fwm->SetSpecificFirmware(g_fwMgr.pendingNewSpecific, target.mId);
+					}
+				} else {
 					// Re-add with updated info (replaces existing by same ID)
 					fwm->RemoveFirmware(g_fwMgr.editId);
-					fwm->AddFirmware(info);
+					fwm->AddFirmware(target);
 				}
-				g_fwMgr.editOpen = false;
 			}
-		}
-		ImGui::SameLine();
-		if (ImGui::Button("Cancel", ImVec2(120, 0)))
+
 			g_fwMgr.editOpen = false;
+			g_fwMgr.editAddMode = false;
+			g_fwMgr.pendingNewInfo = ATFirmwareInfo{};
+			g_fwMgr.pendingNewSpecific = kATSpecificFirmwareType_None;
+			g_fwMgr.pendingNewData.clear();
+		}
+		ImGui::EndDisabled();
+		ImGui::SameLine();
+		if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+			// Windows discards an un-committed Add on Cancel — do the same.
+			g_fwMgr.editOpen = false;
+			g_fwMgr.editAddMode = false;
+			g_fwMgr.pendingNewInfo = ATFirmwareInfo{};
+			g_fwMgr.pendingNewSpecific = kATSpecificFirmwareType_None;
+			g_fwMgr.pendingNewData.clear();
+		}
 	}
 	ImGui::End();
 
-	if (!open)
+	if (!open) {
 		g_fwMgr.editOpen = false;
+		g_fwMgr.editAddMode = false;
+		g_fwMgr.pendingNewInfo = ATFirmwareInfo{};
+		g_fwMgr.pendingNewSpecific = kATSpecificFirmwareType_None;
+		g_fwMgr.pendingNewData.clear();
+	}
 }
 
 // Background audit scan thread function (matches Windows ATUIDialogKnownFirmwareAudit::ThreadRun)
@@ -1027,48 +1167,84 @@ void RenderFirmwareManager(ATSimulator &sim, bool &show) {
 			ImGui::TableNextColumn();
 			bool selected = (i == g_fwMgr.selectedIdx);
 			if (e.id) {
-				if (ImGui::Selectable(e.name.c_str(), selected, ImGuiSelectableFlags_SpanAllColumns)) {
-					g_fwMgr.selectedIdx = i;
-				}
-				// Right-click context menu (matches Windows IDR_FIRMWARE_CONTEXT_MENU)
-				if (ImGui::BeginPopupContextItem("##FwCtx")) {
-					g_fwMgr.selectedIdx = i;
-					if (ImGui::MenuItem("Set as Default"))
-						fwm->SetDefaultFirmware(e.type, e.id);
-					if (e.isCustom) {
-						if (ImGui::MenuItem("Edit...")) {
-							ATFirmwareInfo info;
-							if (fwm->GetFirmwareInfo(e.id, info)) {
-								g_fwMgr.editOpen = true;
-								g_fwMgr.editId = e.id;
-								g_fwMgr.editType = info.mType;
-								g_fwMgr.editOptionInvert = (info.mFlags & 1) != 0;
-								snprintf(g_fwMgr.editName, sizeof(g_fwMgr.editName), "%s",
-									VDTextWToU8(info.mName).c_str());
-								const auto& types = BuildFwTypeCombo();
-								g_fwMgr.editTypeCombo = 0;
-								for (int j = 0; j < (int)types.size(); ++j)
-									if (types[j].type == info.mType) { g_fwMgr.editTypeCombo = j; break; }
+				// Inline rename edit box (matches Windows label-editing
+				// on custom firmware entries).  Only custom rows are
+				// editable; built-in/placeholder rows fall through to
+				// the regular Selectable.
+				if (g_fwMgr.renameIdx == i && e.isCustom) {
+					// First frame after entering rename mode: queue
+					// keyboard focus for this InputText.  The grace
+					// flag stays set for this frame so the cancel-on-
+					// deactivation branch below cannot fire before the
+					// widget has ever been active.
+					const bool firstFrame = g_fwMgr.renameFocusRequested;
+					if (firstFrame)
+						ImGui::SetKeyboardFocusHere();
+
+					ImGui::SetNextItemWidth(-FLT_MIN);
+					const bool committed = ImGui::InputText("##rename",
+						g_fwMgr.renameBuf, sizeof(g_fwMgr.renameBuf),
+						ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
+
+					// IsItemDeactivated() is edge-triggered: it only
+					// fires on the frame the widget transitions from
+					// active → inactive, so it's false on the initial
+					// draw (widget was never active) and safe to use
+					// without extra first-frame guards — but we still
+					// gate on !firstFrame for extra paranoia in case a
+					// future ImGui release reports it sooner.
+					const bool escaped = ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+					const bool deactivated = !firstFrame && ImGui::IsItemDeactivated();
+
+					if (committed) {
+						ATFirmwareInfo info;
+						if (fwm->GetFirmwareInfo(e.id, info)) {
+							VDStringW newName = VDTextU8ToW(VDStringA(g_fwMgr.renameBuf));
+							if (!newName.empty() && newName != info.mName) {
+								info.mName = newName;
+								fwm->RemoveFirmware(e.id);
+								fwm->AddFirmware(info);
 							}
 						}
+						g_fwMgr.renameIdx = -1;
+					} else if (escaped || deactivated) {
+						// Cancel on Escape or when the user clicks
+						// away without pressing Enter (matches Windows
+						// list-view edit-abort behaviour).
+						g_fwMgr.renameIdx = -1;
 					}
-					ImGui::EndPopup();
-				}
-				// Double-click opens edit (custom firmware only)
-				if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0) && e.isCustom) {
-					ATFirmwareInfo info;
-					if (fwm->GetFirmwareInfo(e.id, info)) {
-						g_fwMgr.editOpen = true;
-						g_fwMgr.editId = e.id;
-						g_fwMgr.editType = info.mType;
-						g_fwMgr.editOptionInvert = (info.mFlags & 1) != 0;
-						snprintf(g_fwMgr.editName, sizeof(g_fwMgr.editName), "%s",
-							VDTextWToU8(info.mName).c_str());
-						const auto& types = BuildFwTypeCombo();
-						g_fwMgr.editTypeCombo = 0;
-						for (int j = 0; j < (int)types.size(); ++j)
-							if (types[j].type == info.mType) { g_fwMgr.editTypeCombo = j; break; }
+
+					// Clear the focus-request flag AFTER using it so
+					// deactivation detection is deferred to subsequent
+					// frames.
+					g_fwMgr.renameFocusRequested = false;
+				} else {
+					if (ImGui::Selectable(e.name.c_str(), selected, ImGuiSelectableFlags_SpanAllColumns)) {
+						g_fwMgr.selectedIdx = i;
 					}
+					// Right-click context menu (matches Windows IDR_FIRMWARE_CONTEXT_MENU)
+					if (ImGui::BeginPopupContextItem("##FwCtx")) {
+						g_fwMgr.selectedIdx = i;
+						if (ImGui::MenuItem("Set as Default"))
+							fwm->SetDefaultFirmware(e.type, e.id);
+						if (e.isCustom) {
+							if (ImGui::MenuItem("Rename", "F2")) {
+								ATFirmwareInfo infoR;
+								if (fwm->GetFirmwareInfo(e.id, infoR)) {
+									g_fwMgr.renameIdx = i;
+									g_fwMgr.renameFocusRequested = true;
+									snprintf(g_fwMgr.renameBuf, sizeof(g_fwMgr.renameBuf),
+										"%s", VDTextWToU8(infoR.mName).c_str());
+								}
+							}
+							if (ImGui::MenuItem("Edit..."))
+								OpenEditFirmwareDialog(fwm, e.id);
+						}
+						ImGui::EndPopup();
+					}
+					// Double-click opens edit (custom firmware only)
+					if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0) && e.isCustom)
+						OpenEditFirmwareDialog(fwm, e.id);
 				}
 			} else {
 				// Placeholder row — not selectable (matches Windows behavior)
@@ -1101,6 +1277,24 @@ void RenderFirmwareManager(ATSimulator &sim, bool &show) {
 	bool selHasId = hasSel && entries[g_fwMgr.selectedIdx].id != 0;
 	bool selCustom = selHasId && entries[g_fwMgr.selectedIdx].isCustom;
 
+	// F2 enters inline rename on the selected custom entry (matches
+	// Windows list-view default F2 shortcut).  Only triggered while the
+	// firmware manager window holds focus and no inline edit is already
+	// in progress.
+	if (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows)
+		&& selCustom
+		&& g_fwMgr.renameIdx < 0
+		&& ImGui::IsKeyPressed(ImGuiKey_F2, false))
+	{
+		ATFirmwareInfo info;
+		if (fwm->GetFirmwareInfo(entries[g_fwMgr.selectedIdx].id, info)) {
+			g_fwMgr.renameIdx = g_fwMgr.selectedIdx;
+			g_fwMgr.renameFocusRequested = true;
+			snprintf(g_fwMgr.renameBuf, sizeof(g_fwMgr.renameBuf), "%s",
+				VDTextWToU8(info.mName).c_str());
+		}
+	}
+
 	// Row 1: Add, Remove, Settings, Scan
 	if (ImGui::Button("Add...")) {
 		static const SDL_DialogFileFilter kRomFilters[] = {
@@ -1120,21 +1314,8 @@ void RenderFirmwareManager(ATSimulator &sim, bool &show) {
 
 	ImGui::SameLine();
 	ImGui::BeginDisabled(!selCustom);
-	if (ImGui::Button("Settings...") && selCustom) {
-		ATFirmwareInfo info;
-		if (fwm->GetFirmwareInfo(entries[g_fwMgr.selectedIdx].id, info)) {
-			g_fwMgr.editOpen = true;
-			g_fwMgr.editId = info.mId;
-			g_fwMgr.editType = info.mType;
-			g_fwMgr.editOptionInvert = (info.mFlags & 1) != 0;
-			snprintf(g_fwMgr.editName, sizeof(g_fwMgr.editName), "%s",
-				VDTextWToU8(info.mName).c_str());
-			const auto& types = BuildFwTypeCombo();
-			g_fwMgr.editTypeCombo = 0;
-			for (int j = 0; j < (int)types.size(); ++j)
-				if (types[j].type == info.mType) { g_fwMgr.editTypeCombo = j; break; }
-		}
-	}
+	if (ImGui::Button("Settings...") && selCustom)
+		OpenEditFirmwareDialog(fwm, entries[g_fwMgr.selectedIdx].id);
 	ImGui::EndDisabled();
 
 	ImGui::SameLine();
@@ -1268,6 +1449,32 @@ void RenderFirmwareManager(ATSimulator &sim, bool &show) {
 			ImGui::CloseCurrentPopup();
 		}
 		ImGui::EndPopup();
+	}
+
+	// Add-error popup (matches Windows OnDropFiles ShowError path).
+	{
+		bool show;
+		VDStringA msg;
+		{
+			std::lock_guard<std::mutex> lock(g_fwAddMutex);
+			show = g_fwMgr.addErrorPending;
+			if (show) {
+				msg = g_fwMgr.addErrorMsg;
+				g_fwMgr.addErrorPending = false;
+			}
+		}
+		static VDStringA s_lastAddErrorMsg;
+		if (show) {
+			s_lastAddErrorMsg = std::move(msg);
+			ImGui::OpenPopup("AddFirmwareError");
+		}
+		if (ImGui::BeginPopupModal("AddFirmwareError", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
+			ImGui::TextWrapped("%s", s_lastAddErrorMsg.c_str());
+			ImGui::Separator();
+			if (ImGui::Button("OK", ImVec2(120, 0)))
+				ImGui::CloseCurrentPopup();
+			ImGui::EndPopup();
+		}
 	}
 
 	// Render sub-dialogs

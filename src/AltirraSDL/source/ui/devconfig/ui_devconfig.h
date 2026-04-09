@@ -8,6 +8,7 @@
 #include <at/atcore/propertyset.h>
 
 class IATDevice;
+class ATDeviceManager;
 
 // =========================================================================
 // Dialog state — persistent across frames while dialog is open

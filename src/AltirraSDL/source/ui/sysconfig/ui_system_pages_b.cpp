@@ -456,12 +456,12 @@ void RenderDevicesCategory(ATSimulator &sim) {
 					const ATDeviceDefinition *def = devMgr->GetDeviceDefinition(entry.tag);
 					if (ImGui::MenuItem(entry.displayName, nullptr, false, def != nullptr)) {
 						if (def) {
-							try {
-								ATPropertySet pset;
-								devMgr->AddDevice(entry.tag, pset);
-							} catch (...) {
-								LOG_ERROR("UI", "Failed to add device: %s", entry.tag);
-							}
+							// Routes through the configure-then-add path so
+							// devices like "harddisk" can get their path/
+							// geometry, and auto-attaches to a compatible
+							// parent bus (e.g. SIDE 3, MyIDE, Black Box) when
+							// one exists.
+							ATUIBeginAddDevice(devMgr, entry.tag);
 						}
 					}
 					if (entry.helpText)
