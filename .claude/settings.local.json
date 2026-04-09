@@ -117,7 +117,10 @@
       "Bash(xargs sed:*)",
       "Bash(git check-ignore:*)",
       "Read(//home/ilm/.config/altirra/**)",
-      "Skill(sdl3)"
+      "Skill(sdl3)",
+      "Bash(mkdir -p src/AltirraSDL/vendor/stb)",
+      "Bash(curl -sSL -o stb_image.h https://raw.githubusercontent.com/nothings/stb/master/stb_image.h)",
+      "Bash(curl -sSL -o stb_image_write.h https://raw.githubusercontent.com/nothings/stb/master/stb_image_write.h)"
     ]
   }
 }
