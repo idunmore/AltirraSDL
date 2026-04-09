@@ -42,6 +42,17 @@ elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "(aarch64|ARM64|arm64)")
     list(APPEND ATIO_SOURCES source/audioreaderflac_arm64.cpp)
 endif()
 
+# GNU-only NEON relaxation: audioreaderflac_arm64.cpp reinterprets
+# int32x4_t / int64x2_t vector lanes in the FLAC LPC inner loop; MSVC
+# and Apple clang accept the implicit conversions, but mainline GCC's
+# strict NEON type checking rejects them without -flax-vector-conversions.
+# See src/ATCore/CMakeLists.txt for the matching pattern and full rationale.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND
+   CMAKE_SYSTEM_PROCESSOR MATCHES "(aarch64|ARM64|arm64)")
+    set_source_files_properties(source/audioreaderflac_arm64.cpp PROPERTIES
+        COMPILE_FLAGS "-flax-vector-conversions")
+endif()
+
 add_library(ATIO STATIC ${ATIO_SOURCES})
 
 target_include_directories(ATIO
