@@ -169,8 +169,12 @@ namespace nsVDVecMath {
 		}
 
 		[[nodiscard]] static vdfloat32x4 unpacku8(uint32 v8) {
+			// vmovl_u8 returns uint16x8_t, so the low-half extract must
+			// be vget_low_u16 (not vget_low_u32). MSVC and Apple clang
+			// accept the wrong-typed form because they're lax about
+			// NEON vector element types; mainline GCC is strict.
 			return vdfloat32x4 {
-				vcvtq_f32_u32(vmovl_u16(vget_low_u32(vmovl_u8(vreinterpret_u8_u32(vdup_n_u32(v8))))))
+				vcvtq_f32_u32(vmovl_u16(vget_low_u16(vmovl_u8(vreinterpret_u8_u32(vdup_n_u32(v8))))))
 			};
 		}
 
@@ -272,12 +276,16 @@ namespace nsVDVecMath {
 			return vdint32x4 { vld1q_s32(v) };
 		}
 
+		// v is int32x4_t, so the compare must be vceqq_s32 (not
+		// vceqq_u32). Both produce a uint32x4_t mask of the same
+		// bit pattern — equality is signedness-agnostic — but only
+		// the signed form type-checks on mainline GCC.
 		[[nodiscard]] bool operator==(vdint32x4 y) const {
-			return ((vget_lane_u64(vreinterpret_u64_u16(vmovn_u32(vceqq_u32(v, y.v))), 0) | ((uint64_t)0xFFFF << 48)) + 1) == 0;
+			return ((vget_lane_u64(vreinterpret_u64_u16(vmovn_u32(vceqq_s32(v, y.v))), 0) | ((uint64_t)0xFFFF << 48)) + 1) == 0;
 		}
 
 		[[nodiscard]] bool operator!=(vdint32x4 y) const {
-			return ((vget_lane_u64(vreinterpret_u64_u16(vmovn_u32(vceqq_u32(v, y.v))), 0) | ((uint64_t)0xFFFF << 48)) + 1) != 0;
+			return ((vget_lane_u64(vreinterpret_u64_u16(vmovn_u32(vceqq_s32(v, y.v))), 0) | ((uint64_t)0xFFFF << 48)) + 1) != 0;
 		}
 	};
 
