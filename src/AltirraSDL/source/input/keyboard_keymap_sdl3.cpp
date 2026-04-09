@@ -31,48 +31,52 @@
 // the keymap built here can be looked up unchanged.  ATInputCode values in
 // inputdefs.h also use Win32 VK numbering, which is what makes this work.
 // -------------------------------------------------------------------------
-#ifndef _WIN32
-	#define VK_CANCEL     0x03
-	#define VK_BACK       0x08
-	#define VK_TAB        0x09
-	#define VK_RETURN     0x0D
-	#define VK_PAUSE      0x13
-	#define VK_CAPITAL    0x14
-	#define VK_ESCAPE     0x1B
-	#define VK_SPACE      0x20
-	#define VK_PRIOR      0x21
-	#define VK_NEXT       0x22
-	#define VK_END        0x23
-	#define VK_HOME       0x24
-	#define VK_LEFT       0x25
-	#define VK_UP         0x26
-	#define VK_RIGHT      0x27
-	#define VK_DOWN       0x28
-	#define VK_INSERT     0x2D
-	#define VK_DELETE     0x2E
-	#define VK_F1         0x70
-	#define VK_F2         0x71
-	#define VK_F3         0x72
-	#define VK_F4         0x73
-	#define VK_F5         0x74
-	#define VK_F6         0x75
-	#define VK_F7         0x76
-	#define VK_F8         0x77
-	#define VK_F9         0x78
-	#define VK_F10        0x79
-	#define VK_F11        0x7A
-	#define VK_F12        0x7B
-	#define VK_OEM_1      0xBA	// ';:' for US
-	#define VK_OEM_PLUS   0xBB	// '+' any country
-	#define VK_OEM_COMMA  0xBC	// ',' any country
-	#define VK_OEM_MINUS  0xBD	// '-' any country
-	#define VK_OEM_PERIOD 0xBE	// '.' any country
-	#define VK_OEM_2      0xBF	// '/?' for US
-	#define VK_OEM_3      0xC0	// '`~' for US
-	#define VK_OEM_4      0xDB	// '[{' for US
-	#define VK_OEM_5      0xDC	// '\|' for US
-	#define VK_OEM_6      0xDD	// ']}' for US
-	#define VK_OEM_7      0xDE	// '"' for US
+// Defined unconditionally (not pulled from <windows.h>) so this TU stays
+// free of Win32 macro pollution (min/max, near/far, etc.) on the Windows
+// build.  Values are the canonical Microsoft VK_* numbers from <WinUser.h>.
+// Guarded in case some future header transitively includes <WinUser.h>.
+#ifndef VK_CANCEL
+#define VK_CANCEL     0x03
+#define VK_BACK       0x08
+#define VK_TAB        0x09
+#define VK_RETURN     0x0D
+#define VK_PAUSE      0x13
+#define VK_CAPITAL    0x14
+#define VK_ESCAPE     0x1B
+#define VK_SPACE      0x20
+#define VK_PRIOR      0x21
+#define VK_NEXT       0x22
+#define VK_END        0x23
+#define VK_HOME       0x24
+#define VK_LEFT       0x25
+#define VK_UP         0x26
+#define VK_RIGHT      0x27
+#define VK_DOWN       0x28
+#define VK_INSERT     0x2D
+#define VK_DELETE     0x2E
+#define VK_F1         0x70
+#define VK_F2         0x71
+#define VK_F3         0x72
+#define VK_F4         0x73
+#define VK_F5         0x74
+#define VK_F6         0x75
+#define VK_F7         0x76
+#define VK_F8         0x77
+#define VK_F9         0x78
+#define VK_F10        0x79
+#define VK_F11        0x7A
+#define VK_F12        0x7B
+#define VK_OEM_1      0xBA	// ';:' for US
+#define VK_OEM_PLUS   0xBB	// '+' any country
+#define VK_OEM_COMMA  0xBC	// ',' any country
+#define VK_OEM_MINUS  0xBD	// '-' any country
+#define VK_OEM_PERIOD 0xBE	// '.' any country
+#define VK_OEM_2      0xBF	// '/?' for US
+#define VK_OEM_3      0xC0	// '`~' for US
+#define VK_OEM_4      0xDB	// '[{' for US
+#define VK_OEM_5      0xDC	// '\|' for US
+#define VK_OEM_6      0xDD	// ']}' for US
+#define VK_OEM_7      0xDE	// '"' for US
 #endif
 
 // -------------------------------------------------------------------------

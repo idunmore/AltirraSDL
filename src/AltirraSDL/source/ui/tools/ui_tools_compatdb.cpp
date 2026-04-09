@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <imgui.h>
 #include <SDL3/SDL.h>
+#include "ui_file_dialog_sdl3.h"
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/VDString.h>
 #include <vd2/system/text.h>
@@ -338,7 +339,7 @@ void ATUIRenderCompatDB(ATSimulator &sim, ATUIState &state) {
 					{ "Altirra CompatDB", "atcompatdb" },
 					{ "All Files", "*" },
 				};
-				SDL_ShowOpenFileDialog(CompatDBLoadCallback, nullptr, nullptr, kFilters, 2, nullptr, false);
+				ATUIShowOpenFileDialog('cpdb', CompatDBLoadCallback, nullptr, nullptr, kFilters, 2, false);
 			}
 			if (ImGui::MenuItem("Save")) {
 				if (g_compatDB.path.empty()) {
@@ -346,7 +347,7 @@ void ATUIRenderCompatDB(ATSimulator &sim, ATUIState &state) {
 						{ "Altirra CompatDB", "atcompatdb" },
 						{ "All Files", "*" },
 					};
-					SDL_ShowSaveFileDialog(CompatDBSaveCallback, nullptr, nullptr, kFilters, 2, nullptr);
+					ATUIShowSaveFileDialog('cpdb', CompatDBSaveCallback, nullptr, nullptr, kFilters, 2);
 				} else {
 					try {
 						ATSaveCompatEDB(g_compatDB.path.c_str(), g_compatDB.edb);
@@ -361,7 +362,7 @@ void ATUIRenderCompatDB(ATSimulator &sim, ATUIState &state) {
 					{ "Altirra CompatDB", "atcompatdb" },
 					{ "All Files", "*" },
 				};
-				SDL_ShowSaveFileDialog(CompatDBSaveCallback, nullptr, nullptr, kFilters, 2, nullptr);
+				ATUIShowSaveFileDialog('cpdb', CompatDBSaveCallback, nullptr, nullptr, kFilters, 2);
 			}
 			ImGui::Separator();
 			if (ImGui::MenuItem("Compile...")) {
@@ -382,7 +383,7 @@ void ATUIRenderCompatDB(ATSimulator &sim, ATUIState &state) {
 						{ "Compat Engine", "atcpengine" },
 						{ "All Files", "*" },
 					};
-					SDL_ShowSaveFileDialog(CompatDBCompileCallback, nullptr, nullptr, kFilters, 2, nullptr);
+					ATUIShowSaveFileDialog('cpdc', CompatDBCompileCallback, nullptr, nullptr, kFilters, 2);
 				}
 			}
 			if (ImGui::MenuItem("Compile To...")) {
@@ -390,7 +391,7 @@ void ATUIRenderCompatDB(ATSimulator &sim, ATUIState &state) {
 					{ "Compat Engine", "atcpengine" },
 					{ "All Files", "*" },
 				};
-				SDL_ShowSaveFileDialog(CompatDBCompileCallback, nullptr, nullptr, kFilters, 2, nullptr);
+				ATUIShowSaveFileDialog('cpdc', CompatDBCompileCallback, nullptr, nullptr, kFilters, 2);
 			}
 			ImGui::EndMenu();
 		}

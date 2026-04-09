@@ -14,6 +14,7 @@
 #include <mutex>
 #include <unordered_map>
 #include <SDL3/SDL.h>
+#include "ui_file_dialog_sdl3.h"
 #include <imgui.h>
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/VDString.h>
@@ -723,8 +724,8 @@ void ATUIRenderKeyboardCustomize(ATUIState &state) {
 		// Import
 		if (ImGui::Button("Import...")) {
 			SDL_DialogFileFilter filter = { "Altirra keyboard map", "atkmap" };
-			SDL_ShowOpenFileDialog(ImportFileCallback, nullptr,
-				SDL_GetKeyboardFocus(), &filter, 1, nullptr, false);
+			ATUIShowOpenFileDialog('kmap', ImportFileCallback, nullptr,
+				SDL_GetKeyboardFocus(), &filter, 1, false);
 		}
 
 		ImGui::SameLine();
@@ -734,8 +735,8 @@ void ATUIRenderKeyboardCustomize(ATUIState &state) {
 		if (!canExport) ImGui::BeginDisabled();
 		if (ImGui::Button("Export...")) {
 			SDL_DialogFileFilter filter = { "Altirra keyboard map", "atkmap" };
-			SDL_ShowSaveFileDialog(ExportFileCallback, nullptr,
-				SDL_GetKeyboardFocus(), &filter, 1, nullptr);
+			ATUIShowSaveFileDialog('kmap', ExportFileCallback, nullptr,
+				SDL_GetKeyboardFocus(), &filter, 1);
 		}
 		if (!canExport) ImGui::EndDisabled();
 

@@ -5,6 +5,7 @@
 #include <stdafx.h>
 #include <SDL3/SDL.h>
 #include <imgui.h>
+#include "ui_file_dialog_sdl3.h"
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/VDString.h>
 #include <vd2/system/text.h>
@@ -1301,7 +1302,7 @@ void RenderFirmwareManager(ATSimulator &sim, bool &show) {
 			{ "ROM Images", "rom;bin;epr;epm" },
 			{ "All Files", "*" },
 		};
-		SDL_ShowOpenFileDialog(FirmwareAddCallback, nullptr, nullptr, kRomFilters, 2, nullptr, false);
+		ATUIShowOpenFileDialog('ROMI', FirmwareAddCallback, nullptr, nullptr, kRomFilters, 2, false);
 	}
 
 	ImGui::SameLine();

@@ -5,6 +5,7 @@
 #include <stdafx.h>
 #include <SDL3/SDL.h>
 #include <imgui.h>
+#include "ui_file_dialog_sdl3.h"
 #include <mutex>
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/file.h>
@@ -407,22 +408,22 @@ void ATUIRenderAdjustColors(ATSimulator &sim, ATUIState &state) {
 				static const SDL_DialogFileFilter kFilter[] = {
 					{ "Altirra color settings (*.atcolors)", "atcolors" },
 				};
-				SDL_ShowOpenFileDialog(AdjustColorsLoadCallback,
-					nullptr, g_pWindow, kFilter, 1, nullptr, false);
+				ATUIShowOpenFileDialog('colr', AdjustColorsLoadCallback,
+					nullptr, g_pWindow, kFilter, 1, false);
 			}
 			if (ImGui::MenuItem("Save...")) {
 				static const SDL_DialogFileFilter kFilter[] = {
 					{ "Altirra color settings (*.atcolors)", "atcolors" },
 				};
-				SDL_ShowSaveFileDialog(AdjustColorsSaveCallback,
-					nullptr, g_pWindow, kFilter, 1, nullptr);
+				ATUIShowSaveFileDialog('colr', AdjustColorsSaveCallback,
+					nullptr, g_pWindow, kFilter, 1);
 			}
 			if (ImGui::MenuItem("Export Palette...")) {
 				static const SDL_DialogFileFilter kPalFilter[] = {
 					{ "Atari800 palette (*.pal)", "pal" },
 				};
-				SDL_ShowSaveFileDialog(AdjustColorsExportPaletteCallback,
-					nullptr, g_pWindow, kPalFilter, 1, nullptr);
+				ATUIShowSaveFileDialog('pal ', AdjustColorsExportPaletteCallback,
+					nullptr, g_pWindow, kPalFilter, 1);
 			}
 			if (ImGui::MenuItem("Palette Solver...")) {
 				s_adjustColors_showPaletteSolver = true;

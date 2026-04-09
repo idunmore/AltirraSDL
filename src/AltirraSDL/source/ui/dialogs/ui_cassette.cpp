@@ -7,6 +7,7 @@
 #include <stdafx.h>
 #include <SDL3/SDL.h>
 #include <imgui.h>
+#include "ui_file_dialog_sdl3.h"
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/VDString.h>
 #include <vd2/system/text.h>
@@ -75,19 +76,19 @@ void ATUIRenderCassetteControl(ATSimulator &sim, ATUIState &state, SDL_Window *w
 				cas.LoadNew();
 
 			if (ImGui::MenuItem("Load...")) {
-				SDL_ShowOpenFileDialog(TapeCtrlLoadCallback, nullptr, window,
-					kTapeCtrlLoadFilters, 2, nullptr, false);
+				ATUIShowOpenFileDialog('cass', TapeCtrlLoadCallback, nullptr, window,
+					kTapeCtrlLoadFilters, 2, false);
 			}
 
 			if (ImGui::MenuItem("Save", nullptr, false, loaded)) {
 				// Mirror Windows File > Save: if we have a path, overwrite; otherwise prompt.
-				SDL_ShowSaveFileDialog(TapeCtrlSaveCallback, nullptr, window,
-					kTapeCtrlSaveFilters, 2, nullptr);
+				ATUIShowSaveFileDialog('cass', TapeCtrlSaveCallback, nullptr, window,
+					kTapeCtrlSaveFilters, 2);
 			}
 
 			if (ImGui::MenuItem("Save As...", nullptr, false, loaded)) {
-				SDL_ShowSaveFileDialog(TapeCtrlSaveCallback, nullptr, window,
-					kTapeCtrlSaveFilters, 2, nullptr);
+				ATUIShowSaveFileDialog('cass', TapeCtrlSaveCallback, nullptr, window,
+					kTapeCtrlSaveFilters, 2);
 			}
 
 			ImGui::Separator();

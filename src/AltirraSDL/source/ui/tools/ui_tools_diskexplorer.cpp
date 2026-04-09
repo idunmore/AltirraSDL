@@ -20,6 +20,7 @@
 #include <cstdio>
 #include <imgui.h>
 #include <SDL3/SDL.h>
+#include "ui_file_dialog_sdl3.h"
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/VDString.h>
 #include <vd2/system/text.h>
@@ -1439,7 +1440,7 @@ void ATUIRenderDiskExplorer(ATSimulator &sim, ATUIState &state, SDL_Window *wind
 					{ "Disk Images", "atr;xfd;dcm;pro;atx;gz;zip;atz" },
 					{ "All Files", "*" },
 				};
-				SDL_ShowOpenFileDialog(DiskExplorerOpenCallback, nullptr, window, kFilters, 2, nullptr, false);
+				ATUIShowOpenFileDialog('disk', DiskExplorerOpenCallback, nullptr, window, kFilters, 2, false);
 			}
 			// Open from mounted drives
 			if (ImGui::BeginMenu("Open Mounted Drive")) {
@@ -1594,7 +1595,7 @@ void ATUIRenderDiskExplorer(ATSimulator &sim, ATUIState &state, SDL_Window *wind
 							{ "Disk Images", "atr;xfd;dcm;pro;atx;gz;zip;atz" },
 							{ "All Files", "*" },
 						};
-						SDL_ShowOpenFileDialog(DiskExplorerPartitionImportCallback, nullptr, window, kFilters, 2, nullptr, false);
+						ATUIShowOpenFileDialog('disk', DiskExplorerPartitionImportCallback, nullptr, window, kFilters, 2, false);
 					}
 					ImGui::EndDisabled();
 
@@ -1604,7 +1605,7 @@ void ATUIRenderDiskExplorer(ATSimulator &sim, ATUIState &state, SDL_Window *wind
 							{ "Atari Disk Image", "atr" },
 							{ "All Files", "*" },
 						};
-						SDL_ShowSaveFileDialog(DiskExplorerPartitionExportCallback, nullptr, window, kFilters, 2, nullptr);
+						ATUIShowSaveFileDialog('disk', DiskExplorerPartitionExportCallback, nullptr, window, kFilters, 2);
 					}
 
 					ImGui::EndPopup();
@@ -1645,7 +1646,7 @@ void ATUIRenderDiskExplorer(ATSimulator &sim, ATUIState &state, SDL_Window *wind
 	ImGui::BeginDisabled(!canWrite);
 	if (ImGui::SmallButton("Import...")) {
 		static const SDL_DialogFileFilter kFilters[] = { { "All Files", "*" } };
-		SDL_ShowOpenFileDialog(DiskExplorerImportCallback, nullptr, window, kFilters, 1, nullptr, false);
+		ATUIShowOpenFileDialog('dexp', DiskExplorerImportCallback, nullptr, window, kFilters, 1, false);
 	}
 	ImGui::EndDisabled();
 	ImGui::SameLine();
@@ -1687,7 +1688,7 @@ void ATUIRenderDiskExplorer(ATSimulator &sim, ATUIState &state, SDL_Window *wind
 				}
 			}
 			static const SDL_DialogFileFilter kFilters[] = { { "All Files", "*" } };
-			SDL_ShowSaveFileDialog(DiskExplorerExportCallback, nullptr, window, kFilters, 1, nullptr);
+			ATUIShowSaveFileDialog('dexp', DiskExplorerExportCallback, nullptr, window, kFilters, 1);
 		}
 	}
 	ImGui::EndDisabled();
@@ -1918,11 +1919,11 @@ void ATUIRenderDiskExplorer(ATSimulator &sim, ATUIState &state, SDL_Window *wind
 				ImGui::BeginDisabled(!writable);
 				if (ImGui::MenuItem("Import File...")) {
 					static const SDL_DialogFileFilter kFilters[] = { { "All Files", "*" } };
-					SDL_ShowOpenFileDialog(DiskExplorerImportCallback, nullptr, window, kFilters, 1, nullptr, false);
+					ATUIShowOpenFileDialog('dexp', DiskExplorerImportCallback, nullptr, window, kFilters, 1, false);
 				}
 				if (ImGui::MenuItem("Import File as Text...")) {
 					static const SDL_DialogFileFilter kFilters[] = { { "All Files", "*" } };
-					SDL_ShowOpenFileDialog(DiskExplorerImportTextCallback, nullptr, window, kFilters, 1, nullptr, false);
+					ATUIShowOpenFileDialog('dexp', DiskExplorerImportTextCallback, nullptr, window, kFilters, 1, false);
 				}
 				ImGui::EndDisabled();
 
@@ -1961,7 +1962,7 @@ void ATUIRenderDiskExplorer(ATSimulator &sim, ATUIState &state, SDL_Window *wind
 							g_diskExportInfo.dateValid = e.dateValid;
 							g_diskExportInfo.date = e.date;
 							static const SDL_DialogFileFilter kFilters[] = { { "All Files", "*" } };
-							SDL_ShowSaveFileDialog(DiskExplorerExportCallback, nullptr, window, kFilters, 1, nullptr);
+							ATUIShowSaveFileDialog('dexp', DiskExplorerExportCallback, nullptr, window, kFilters, 1);
 						}
 					}
 					if (ImGui::MenuItem("Export File as Text...") && canExport) {
@@ -1983,7 +1984,7 @@ void ATUIRenderDiskExplorer(ATSimulator &sim, ATUIState &state, SDL_Window *wind
 							g_diskExportTextInfo.dateValid = e.dateValid;
 							g_diskExportTextInfo.date = e.date;
 							static const SDL_DialogFileFilter kFilters[] = { { "All Files", "*" } };
-							SDL_ShowSaveFileDialog(DiskExplorerExportTextCallback, nullptr, window, kFilters, 1, nullptr);
+							ATUIShowSaveFileDialog('dexp', DiskExplorerExportTextCallback, nullptr, window, kFilters, 1);
 						}
 					}
 					ImGui::EndDisabled();

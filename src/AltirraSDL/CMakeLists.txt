@@ -44,6 +44,8 @@ target_sources(AltirraSDL PRIVATE
     source/app/commandline_sdl3.cpp
     source/app/crash_report.cpp
     source/app/android_platform.cpp
+    source/app/services_sdl3.cpp
+    source/app/ui_file_dialog_sdl3.cpp
 
     # --- display/ : SDL display + GL backends + shaders ---
     source/display/display_sdl3.cpp

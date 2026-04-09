@@ -7,6 +7,7 @@
 #include <SDL3/SDL.h>
 #include <imgui.h>
 #include "display_backend.h"
+#include "ui_file_dialog_sdl3.h"
 
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/VDString.h>
@@ -228,11 +229,11 @@ static const SDL_DialogFileFilter kImageFilters[] = {
 // =========================================================================
 
 void ATUIShowBootImageDialog(SDL_Window *window) {
-	SDL_ShowOpenFileDialog(BootImageCallback, nullptr, window, kImageFilters, 2, nullptr, false);
+	ATUIShowOpenFileDialog('load', BootImageCallback, nullptr, window, kImageFilters, 2, false);
 }
 
 void ATUIShowOpenImageDialog(SDL_Window *window) {
-	SDL_ShowOpenFileDialog(OpenImageCallback, nullptr, window, kImageFilters, 2, nullptr, false);
+	ATUIShowOpenFileDialog('load', OpenImageCallback, nullptr, window, kImageFilters, 2, false);
 }
 
 static std::mutex g_pendingSourceMutex;
@@ -245,19 +246,19 @@ void ATUIShowOpenSourceFileDialog(SDL_Window *window) {
 	};
 	// SDL3 file dialog callbacks may fire on a background thread.
 	// Store the path and process on the main thread.
-	SDL_ShowOpenFileDialog([](void *, const char * const *fl, int) {
+	ATUIShowOpenFileDialog('src ', [](void *, const char * const *fl, int) {
 		if (fl && fl[0]) {
 			std::lock_guard<std::mutex> lock(g_pendingSourceMutex);
 			g_pendingSourcePath = fl[0];
 		}
-	}, nullptr, window, srcFilters, 2, nullptr, false);
+	}, nullptr, window, srcFilters, 2, false);
 }
 
 void ATUIShowSaveFrameDialog(SDL_Window *window) {
 	static const SDL_DialogFileFilter filters[] = {
 		{ "BMP Images", "bmp" },
 	};
-	SDL_ShowSaveFileDialog(ATUISaveFrameCallback, nullptr, window, filters, 1, nullptr);
+	ATUIShowSaveFileDialog('scrn', ATUISaveFrameCallback, nullptr, window, filters, 1);
 }
 
 // =========================================================================
@@ -457,7 +458,7 @@ static const SDL_DialogFileFilter kCasSaveFilters[] = {
 
 static void RenderFileMenu(ATSimulator &sim, ATUIState &state, SDL_Window *window) {
 	if (ImGui::MenuItem("Boot Image...", ATUIGetShortcutStringForCommand("File.BootImage")))
-		SDL_ShowOpenFileDialog(BootImageCallback, nullptr, window, kImageFilters, 2, nullptr, false);
+		ATUIShowOpenFileDialog('load', BootImageCallback, nullptr, window, kImageFilters, 2, false);
 	ShortcutContextMenu("File.BootImage");
 
 	if (ImGui::MenuItem("Open Image...", ATUIGetShortcutStringForCommand("File.OpenImage")))
@@ -532,14 +533,14 @@ static void RenderFileMenu(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 				snprintf(fullLabel, sizeof(fullLabel), "Drive %d [%s]...",
 					i + 1, u8.empty() ? "loaded" : u8.c_str());
 				if (ImGui::MenuItem(fullLabel))
-					SDL_ShowOpenFileDialog(AttachDiskCallback,
+					ATUIShowOpenFileDialog('disk', AttachDiskCallback,
 						(void *)(intptr_t)i, window,
-						kDiskAttachFilters, 2, nullptr, false);
+						kDiskAttachFilters, 2, false);
 			} else {
 				if (ImGui::MenuItem(label))
-					SDL_ShowOpenFileDialog(AttachDiskCallback,
+					ATUIShowOpenFileDialog('disk', AttachDiskCallback,
 						(void *)(intptr_t)i, window,
-						kDiskAttachFilters, 2, nullptr, false);
+						kDiskAttachFilters, 2, false);
 			}
 		}
 		ImGui::EndMenu();
@@ -588,28 +589,28 @@ static void RenderFileMenu(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 			static const SDL_DialogFileFilter casFilters[] = {
 				{ "Cassette Images", "cas;wav" }, { "All Files", "*" },
 			};
-			SDL_ShowOpenFileDialog([](void *, const char * const *fl, int) {
+			ATUIShowOpenFileDialog('cass', [](void *, const char * const *fl, int) {
 				if (fl && fl[0])
 					ATUIPushDeferred(kATDeferred_LoadCassette, fl[0]);
-			}, nullptr, window, casFilters, 2, nullptr, false);
+			}, nullptr, window, casFilters, 2, false);
 		}
 
 		if (ImGui::MenuItem("Unload", nullptr, false, loaded))
 			cas.Unload();
 
 		if (ImGui::MenuItem("Save...", nullptr, false, loaded)) {
-			SDL_ShowSaveFileDialog(CassetteSaveCallback, nullptr, window,
-				kCasSaveFilters, 2, nullptr);
+			ATUIShowSaveFileDialog('cass', CassetteSaveCallback, nullptr, window,
+				kCasSaveFilters, 2);
 		}
 
 		if (ImGui::MenuItem("Export Audio Tape...", nullptr, false, loaded)) {
 			static const SDL_DialogFileFilter wavFilters[] = {
 				{ "WAV Audio", "wav" }, { "All Files", "*" },
 			};
-			SDL_ShowSaveFileDialog([](void *, const char * const *fl, int) {
+			ATUIShowSaveFileDialog('casa', [](void *, const char * const *fl, int) {
 				if (fl && fl[0])
 					ATUIPushDeferred(kATDeferred_ExportCassetteAudio, fl[0]);
-			}, nullptr, window, wavFilters, 1, nullptr);
+			}, nullptr, window, wavFilters, 1);
 		}
 		ImGui::EndMenu();
 	}
@@ -623,10 +624,10 @@ static void RenderFileMenu(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 		};
 
 		if (ImGui::MenuItem("Load State..."))
-			SDL_ShowOpenFileDialog(LoadStateCallback, nullptr, window, stateFilters, 2, nullptr, false);
+			ATUIShowOpenFileDialog('save', LoadStateCallback, nullptr, window, stateFilters, 2, false);
 
 		if (ImGui::MenuItem("Save State..."))
-			SDL_ShowSaveFileDialog(SaveStateCallback, nullptr, window, stateFilters, 1, nullptr);
+			ATUIShowSaveFileDialog('save', SaveStateCallback, nullptr, window, stateFilters, 1);
 
 		if (ImGui::MenuItem("Quick Load State", nullptr, false, g_pQuickSaveState != nullptr))
 			ATUIQuickLoadState();
@@ -685,10 +686,10 @@ static void RenderFileMenu(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 	// Secondary Cartridge submenu
 	if (ImGui::BeginMenu("Secondary Cartridge")) {
 		if (ImGui::MenuItem("Attach..."))
-			SDL_ShowOpenFileDialog([](void *, const char * const *fl, int) {
+			ATUIShowOpenFileDialog('cart', [](void *, const char * const *fl, int) {
 				if (fl && fl[0])
 					ATUIPushDeferred(kATDeferred_AttachSecondaryCartridge, fl[0]);
-			}, nullptr, window, kCartFilters, 2, nullptr, false);
+			}, nullptr, window, kCartFilters, 2, false);
 
 		if (ImGui::MenuItem("Detach", nullptr, false, sim.IsCartridgeAttached(1))) {
 			sim.UnloadCartridge(1);
@@ -700,7 +701,7 @@ static void RenderFileMenu(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 	}
 
 	if (ImGui::MenuItem("Attach Cartridge..."))
-		SDL_ShowOpenFileDialog(CartridgeAttachCallback, nullptr, window, kCartFilters, 2, nullptr, false);
+		ATUIShowOpenFileDialog('cart', CartridgeAttachCallback, nullptr, window, kCartFilters, 2, false);
 
 	if (ImGui::MenuItem("Detach Cartridge", nullptr, false, sim.IsCartridgeAttached(0))) {
 		if (sim.GetHardwareMode() == kATHardwareMode_5200)
@@ -720,10 +721,10 @@ static void RenderFileMenu(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 				{ "Raw cartridge image (*.bin, *.rom)", "bin;rom" },
 				{ "All Files", "*" },
 			};
-			SDL_ShowSaveFileDialog([](void *, const char * const *fl, int) {
+			ATUIShowSaveFileDialog('cart', [](void *, const char * const *fl, int) {
 				if (fl && fl[0])
 					ATUIPushDeferred(kATDeferred_SaveCartridge, fl[0]);
-			}, nullptr, window, cartSaveFilters, 3, nullptr);
+			}, nullptr, window, cartSaveFilters, 3);
 		}
 
 		if (ImGui::MenuItem("Save KMK/JZ IDE / SIDE / MyIDE II Main Flash...", nullptr, false,
@@ -731,10 +732,10 @@ static void RenderFileMenu(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 			static const SDL_DialogFileFilter fwFilters[] = {
 				{ "Firmware Images", "bin;rom" }, { "All Files", "*" },
 			};
-			SDL_ShowSaveFileDialog([](void *ud, const char * const *fl, int) {
+			ATUIShowSaveFileDialog('rom ', [](void *ud, const char * const *fl, int) {
 				if (fl && fl[0])
 					ATUIPushDeferred(kATDeferred_SaveFirmware, fl[0], (int)(intptr_t)ud);
-			}, (void *)(intptr_t)0, window, fwFilters, 2, nullptr);
+			}, (void *)(intptr_t)0, window, fwFilters, 2);
 		}
 
 		if (ImGui::MenuItem("Save KMK/JZ IDE SDX Flash...", nullptr, false,
@@ -742,10 +743,10 @@ static void RenderFileMenu(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 			static const SDL_DialogFileFilter fwFilters[] = {
 				{ "Firmware Images", "bin;rom" }, { "All Files", "*" },
 			};
-			SDL_ShowSaveFileDialog([](void *ud, const char * const *fl, int) {
+			ATUIShowSaveFileDialog('rom ', [](void *ud, const char * const *fl, int) {
 				if (fl && fl[0])
 					ATUIPushDeferred(kATDeferred_SaveFirmware, fl[0], (int)(intptr_t)ud);
-			}, (void *)(intptr_t)1, window, fwFilters, 2, nullptr);
+			}, (void *)(intptr_t)1, window, fwFilters, 2);
 		}
 
 		if (ImGui::MenuItem("Save Ultimate1MB Flash...", nullptr, false,
@@ -753,10 +754,10 @@ static void RenderFileMenu(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 			static const SDL_DialogFileFilter fwFilters[] = {
 				{ "Firmware Images", "bin;rom" }, { "All Files", "*" },
 			};
-			SDL_ShowSaveFileDialog([](void *ud, const char * const *fl, int) {
+			ATUIShowSaveFileDialog('rom ', [](void *ud, const char * const *fl, int) {
 				if (fl && fl[0])
 					ATUIPushDeferred(kATDeferred_SaveFirmware, fl[0], (int)(intptr_t)ud);
-			}, (void *)(intptr_t)2, window, fwFilters, 2, nullptr);
+			}, (void *)(intptr_t)2, window, fwFilters, 2);
 		}
 
 		if (ImGui::MenuItem("Save Rapidus Flash...", nullptr, false,
@@ -764,10 +765,10 @@ static void RenderFileMenu(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 			static const SDL_DialogFileFilter fwFilters[] = {
 				{ "Firmware Images", "bin;rom" }, { "All Files", "*" },
 			};
-			SDL_ShowSaveFileDialog([](void *ud, const char * const *fl, int) {
+			ATUIShowSaveFileDialog('rom ', [](void *ud, const char * const *fl, int) {
 				if (fl && fl[0])
 					ATUIPushDeferred(kATDeferred_SaveFirmware, fl[0], (int)(intptr_t)ud);
-			}, (void *)(intptr_t)3, window, fwFilters, 2, nullptr);
+			}, (void *)(intptr_t)3, window, fwFilters, 2);
 		}
 
 		ImGui::EndMenu();
@@ -939,20 +940,20 @@ static void RenderRecordMenu(ATSimulator &sim, SDL_Window *window) {
 		static const SDL_DialogFileFilter rawFilters[] = {
 			{ "Raw PCM Audio", "pcm" }, { "All Files", "*" },
 		};
-		SDL_ShowSaveFileDialog([](void *, const char * const *fl, int) {
+		ATUIShowSaveFileDialog('raud', [](void *, const char * const *fl, int) {
 			if (fl && fl[0])
 				ATUIPushDeferred(kATDeferred_StartRecordRaw, fl[0]);
-		}, nullptr, window, rawFilters, 1, nullptr);
+		}, nullptr, window, rawFilters, 1);
 	}
 
 	if (ImGui::MenuItem("Record Audio...", nullptr, false, !recording)) {
 		static const SDL_DialogFileFilter wavFilters[] = {
 			{ "WAV Audio", "wav" }, { "All Files", "*" },
 		};
-		SDL_ShowSaveFileDialog([](void *, const char * const *fl, int) {
+		ATUIShowSaveFileDialog('raud', [](void *, const char * const *fl, int) {
 			if (fl && fl[0])
 				ATUIPushDeferred(kATDeferred_StartRecordWAV, fl[0]);
-		}, nullptr, window, wavFilters, 1, nullptr);
+		}, nullptr, window, wavFilters, 1);
 	}
 
 	if (ImGui::MenuItem("Record Video...", nullptr, ATUIIsVideoRecording(), !recording))
@@ -962,20 +963,20 @@ static void RenderRecordMenu(ATSimulator &sim, SDL_Window *window) {
 		static const SDL_DialogFileFilter sapFilters[] = {
 			{ "SAP Files", "sap" }, { "All Files", "*" },
 		};
-		SDL_ShowSaveFileDialog([](void *, const char * const *fl, int) {
+		ATUIShowSaveFileDialog('rsap', [](void *, const char * const *fl, int) {
 			if (fl && fl[0])
 				ATUIPushDeferred(kATDeferred_StartRecordSAP, fl[0]);
-		}, nullptr, window, sapFilters, 1, nullptr);
+		}, nullptr, window, sapFilters, 1);
 	}
 
 	if (ImGui::MenuItem("Record VGM...", nullptr, false, !recording)) {
 		static const SDL_DialogFileFilter vgmFilters[] = {
 			{ "VGM Audio", "vgm" }, { "All Files", "*" },
 		};
-		SDL_ShowSaveFileDialog([](void *, const char * const *fl, int) {
+		ATUIShowSaveFileDialog('rvgm', [](void *, const char * const *fl, int) {
 			if (fl && fl[0])
 				ATUIPushDeferred(kATDeferred_StartRecordVGM, fl[0]);
-		}, nullptr, window, vgmFilters, 1, nullptr);
+		}, nullptr, window, vgmFilters, 1);
 	}
 
 	ImGui::Separator();
@@ -1052,7 +1053,7 @@ static void RenderToolsMenu(ATSimulator &sim, ATUIState &state, SDL_Window *wind
 			{ "SAP Music Files", "sap" },
 			{ "All Files", "*" },
 		};
-		SDL_ShowOpenFileDialog(SAPOpenCallback, window, window, kSAPFilters, 2, nullptr, false);
+		ATUIShowOpenFileDialog('sap ', SAPOpenCallback, window, window, kSAPFilters, 2, false);
 	}
 
 	if (ImGui::MenuItem("Export ROM set..."))
@@ -1063,7 +1064,7 @@ static void RenderToolsMenu(ATSimulator &sim, ATUIState &state, SDL_Window *wind
 			{ "Audio Files", "wav;flac" },
 			{ "All Files", "*" },
 		};
-		SDL_ShowOpenFileDialog(TapeAnalysisOpenCallback, window, window, kTapeFilters, 2, nullptr, false);
+		ATUIShowOpenFileDialog('cass', TapeAnalysisOpenCallback, window, window, kTapeFilters, 2, false);
 	}
 
 	ImGui::Separator();
@@ -1203,7 +1204,7 @@ void ATUIRenderMainMenu(ATSimulator &sim, SDL_Window *window, IDisplayBackend *b
 				{ "Atari Executable", "xex;obx;com" },
 				{ "All Files", "*" },
 			};
-			SDL_ShowSaveFileDialog(SAPSaveCallback, nullptr, window, kXEXFilters, 2, nullptr);
+			ATUIShowSaveFileDialog('sap ', SAPSaveCallback, nullptr, window, kXEXFilters, 2);
 		}
 		if (g_tapeNeedsSaveDialog) {
 			g_tapeNeedsSaveDialog = false;
@@ -1211,7 +1212,7 @@ void ATUIRenderMainMenu(ATSimulator &sim, SDL_Window *window, IDisplayBackend *b
 				{ "WAV Audio", "wav" },
 				{ "All Files", "*" },
 			};
-			SDL_ShowSaveFileDialog(TapeAnalysisSaveCallback, nullptr, window, kWAVFilters, 2, nullptr);
+			ATUIShowSaveFileDialog('casa', TapeAnalysisSaveCallback, nullptr, window, kWAVFilters, 2);
 		}
 	}
 }

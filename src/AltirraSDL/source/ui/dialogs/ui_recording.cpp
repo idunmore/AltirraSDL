@@ -4,6 +4,7 @@
 #include <stdafx.h>
 #include <SDL3/SDL.h>
 #include <imgui.h>
+#include "ui_file_dialog_sdl3.h"
 
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/registry.h>
@@ -494,10 +495,10 @@ void ATUIRenderVideoRecordingDialog(SDL_Window *window) {
 		// Capture encoding to pass through the callback
 		static ATVideoEncoding s_pendingEncoding;
 		s_pendingEncoding = g_videoRecEncoding;
-		SDL_ShowSaveFileDialog([](void *, const char * const *fl, int) {
+		ATUIShowSaveFileDialog('rvid', [](void *, const char * const *fl, int) {
 			if (fl && fl[0])
 				ATUIPushDeferred(kATDeferred_StartRecordVideo, fl[0], (int)s_pendingEncoding);
-		}, nullptr, window, aviFilters, 1, nullptr);
+		}, nullptr, window, aviFilters, 1);
 	}
 	ImGui::SameLine();
 	if (ImGui::Button("Cancel", ImVec2(120, 0)))

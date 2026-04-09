@@ -1098,6 +1098,12 @@ int main(int argc, char *argv[]) {
 	extern void ATRegistryLoadFromDisk();
 	ATRegistryLoadFromDisk();
 
+	// Load the per-dialog "last used directory" map from the registry so
+	// the file dialogs can remember where the user last navigated.  This
+	// uses the same "Saved filespecs" key Windows Altirra writes.
+	extern void VDLoadFilespecSystemData();
+	VDLoadFilespecSystemData();
+
 	// Capture whether the registry had any data before anything writes to it.
 	// Used later for first-run detection (matches Windows main.cpp:3371).
 	const bool registryHadAnything = VDRegistryAppKey("", false).isReady();
@@ -1919,6 +1925,10 @@ int main(int argc, char *argv[]) {
 		ATSaveSettings((ATSettingsCategory)(
 			kATSettingsCategory_All & ~kATSettingsCategory_FullScreen
 		));
+		// Persist the per-dialog "last used directory" map before the
+		// registry is flushed to settings.ini.
+		extern void VDSaveFilespecSystemData();
+		VDSaveFilespecSystemData();
 		ATRegistryFlushToDisk();
 	} catch (...) {
 		LOG_ERROR("Main", "failed to save settings on exit");

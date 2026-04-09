@@ -5,6 +5,7 @@
 #include <cmath>
 #include <SDL3/SDL.h>
 #include <imgui.h>
+#include "ui_file_dialog_sdl3.h"
 #include <imgui_internal.h>
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/VDString.h>
@@ -426,7 +427,7 @@ void ATImGuiTraceViewerPane::DoLoad() {
 		{ "Altirra Trace (*.at2trace)", "at2trace" },
 		{ "All Files", "*" },
 	};
-	SDL_ShowOpenFileDialog([](void *ud, const char * const *fl, int) {
+	ATUIShowOpenFileDialog('trce', [](void *ud, const char * const *fl, int) {
 		if (fl && fl[0]) {
 			auto *self = static_cast<ATImGuiTraceViewerPane *>(ud);
 			try {
@@ -437,14 +438,14 @@ void ATImGuiTraceViewerPane::DoLoad() {
 				LOG_ERROR("TraceViewer", "Load failed: %s", e.c_str());
 			}
 		}
-	}, this, g_pWindow, filters, 2, nullptr, false);
+	}, this, g_pWindow, filters, 2, false);
 }
 
 void ATImGuiTraceViewerPane::DoSave() {
 	static const SDL_DialogFileFilter filters[] = {
 		{ "Altirra Trace (*.at2trace)", "at2trace" },
 	};
-	SDL_ShowSaveFileDialog([](void *ud, const char * const *fl, int) {
+	ATUIShowSaveFileDialog('trce', [](void *ud, const char * const *fl, int) {
 		if (fl && fl[0]) {
 			auto *self = static_cast<ATImGuiTraceViewerPane *>(ud);
 			try {
@@ -454,7 +455,7 @@ void ATImGuiTraceViewerPane::DoSave() {
 				LOG_ERROR("TraceViewer", "Save failed: %s", e.c_str());
 			}
 		}
-	}, this, g_pWindow, filters, 1, nullptr);
+	}, this, g_pWindow, filters, 1);
 }
 
 void ATImGuiTraceViewerPane::DoImportA800() {
@@ -462,7 +463,7 @@ void ATImGuiTraceViewerPane::DoImportA800() {
 		{ "Atari800 Trace (*.txt)", "txt" },
 		{ "All Files", "*" },
 	};
-	SDL_ShowOpenFileDialog([](void *ud, const char * const *fl, int) {
+	ATUIShowOpenFileDialog('trce', [](void *ud, const char * const *fl, int) {
 		if (fl && fl[0]) {
 			auto *self = static_cast<ATImGuiTraceViewerPane *>(ud);
 			try {
@@ -473,14 +474,14 @@ void ATImGuiTraceViewerPane::DoImportA800() {
 				LOG_ERROR("TraceViewer", "Import failed: %s", e.c_str());
 			}
 		}
-	}, this, g_pWindow, filters, 2, nullptr, false);
+	}, this, g_pWindow, filters, 2, false);
 }
 
 void ATImGuiTraceViewerPane::DoExportChrome() {
 	static const SDL_DialogFileFilter filters[] = {
 		{ "Chrome Trace JSON (*.json)", "json" },
 	};
-	SDL_ShowSaveFileDialog([](void *ud, const char * const *fl, int) {
+	ATUIShowSaveFileDialog('ctrc', [](void *ud, const char * const *fl, int) {
 		if (fl && fl[0]) {
 			auto *self = static_cast<ATImGuiTraceViewerPane *>(ud);
 			try {
@@ -490,7 +491,7 @@ void ATImGuiTraceViewerPane::DoExportChrome() {
 				LOG_ERROR("TraceViewer", "Export failed: %s", e.c_str());
 			}
 		}
-	}, this, g_pWindow, filters, 1, nullptr);
+	}, this, g_pWindow, filters, 1);
 }
 
 // =========================================================================

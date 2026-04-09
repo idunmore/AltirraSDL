@@ -11,6 +11,7 @@
 #include <mutex>
 #include <SDL3/SDL.h>
 #include <imgui.h>
+#include "ui_file_dialog_sdl3.h"
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/VDString.h>
 #include <vd2/system/text.h>
@@ -406,7 +407,7 @@ void ATUIRenderTapeEditor(ATSimulator &sim, ATUIState &state, SDL_Window *window
 						{ "Cassette Images", "cas;wav;flac;ogg" },
 						{ "All Files", "*" },
 					};
-					SDL_ShowOpenFileDialog(TapeEditorFileCallback, (void*)(uintptr_t)TapeFileAction::Open, window, kFilters, 2, nullptr, false);
+					ATUIShowOpenFileDialog('cass', TapeEditorFileCallback, (void*)(uintptr_t)TapeFileAction::Open, window, kFilters, 2, false);
 				} else {
 					g_tapePendingAction = TapePendingAction::Open;
 					g_tapeDiscardPending = true;
@@ -431,7 +432,7 @@ void ATUIRenderTapeEditor(ATSimulator &sim, ATUIState &state, SDL_Window *window
 					static const SDL_DialogFileFilter kFilters[] = {
 						{ "Atari Cassette Image", "cas" },
 					};
-					SDL_ShowSaveFileDialog(TapeEditorFileCallback, (void*)(uintptr_t)TapeFileAction::SaveCAS, window, kFilters, 1, nullptr);
+					ATUIShowSaveFileDialog('cass', TapeEditorFileCallback, (void*)(uintptr_t)TapeFileAction::SaveCAS, window, kFilters, 1);
 				}
 			}
 
@@ -439,7 +440,7 @@ void ATUIRenderTapeEditor(ATSimulator &sim, ATUIState &state, SDL_Window *window
 				static const SDL_DialogFileFilter kFilters[] = {
 					{ "Waveform Audio", "wav" },
 				};
-				SDL_ShowSaveFileDialog(TapeEditorFileCallback, (void*)(uintptr_t)TapeFileAction::SaveWAV, window, kFilters, 1, nullptr);
+				ATUIShowSaveFileDialog('casa', TapeEditorFileCallback, (void*)(uintptr_t)TapeFileAction::SaveWAV, window, kFilters, 1);
 			}
 
 			ImGui::Separator();
@@ -542,7 +543,7 @@ void ATUIRenderTapeEditor(ATSimulator &sim, ATUIState &state, SDL_Window *window
 				static const SDL_DialogFileFilter kFilters[] = {
 					{ "All Files", "*" },
 				};
-				SDL_ShowSaveFileDialog(TapeEditorFileCallback, (void*)(uintptr_t)TapeFileAction::ExtractCFile, window, kFilters, 1, nullptr);
+				ATUIShowSaveFileDialog('tapx', TapeEditorFileCallback, (void*)(uintptr_t)TapeFileAction::ExtractCFile, window, kFilters, 1);
 			}
 
 			ImGui::EndMenu();
@@ -700,7 +701,7 @@ void ATUIRenderTapeEditor(ATSimulator &sim, ATUIState &state, SDL_Window *window
 					{ "Cassette Images", "cas;wav;flac;ogg" },
 					{ "All Files", "*" },
 				};
-				SDL_ShowOpenFileDialog(TapeEditorFileCallback, (void*)(uintptr_t)TapeFileAction::Open, window, kFilters, 2, nullptr, false);
+				ATUIShowOpenFileDialog('cass', TapeEditorFileCallback, (void*)(uintptr_t)TapeFileAction::Open, window, kFilters, 2, false);
 			} else {
 				g_tapePendingAction = TapePendingAction::Open;
 				g_tapeDiscardPending = true;
@@ -744,7 +745,7 @@ void ATUIRenderTapeEditor(ATSimulator &sim, ATUIState &state, SDL_Window *window
 							{ "Cassette Images", "cas;wav;flac;ogg" },
 							{ "All Files", "*" },
 						};
-						SDL_ShowOpenFileDialog(TapeEditorFileCallback, (void*)(uintptr_t)TapeFileAction::Open, window, kFilters, 2, nullptr, false);
+						ATUIShowOpenFileDialog('cass', TapeEditorFileCallback, (void*)(uintptr_t)TapeFileAction::Open, window, kFilters, 2, false);
 						break;
 					}
 					case TapePendingAction::Reload:
@@ -787,7 +788,7 @@ void ATUIRenderTapeEditor(ATSimulator &sim, ATUIState &state, SDL_Window *window
 			static const SDL_DialogFileFilter kFilters[] = {
 				{ "Atari Cassette Image", "cas" },
 			};
-			SDL_ShowSaveFileDialog(TapeEditorFileCallback, (void*)(uintptr_t)TapeFileAction::SaveCAS, window, kFilters, 1, nullptr);
+			ATUIShowSaveFileDialog('cass', TapeEditorFileCallback, (void*)(uintptr_t)TapeFileAction::SaveCAS, window, kFilters, 1);
 		}
 
 		ImGui::SameLine();

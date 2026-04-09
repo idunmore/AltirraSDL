@@ -6,6 +6,7 @@
 #include <mutex>
 #include <SDL3/SDL.h>
 #include <imgui.h>
+#include "ui_file_dialog_sdl3.h"
 
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/VDString.h>
@@ -356,8 +357,8 @@ void ATUIRenderCheater(ATSimulator &sim, ATUIState &state) {
 			{ "Altirra cheat set", "atcheats" },
 			{ "All Files", "*" },
 		};
-		SDL_ShowOpenFileDialog(LoadCheatsCallback, nullptr,
-			SDL_GetKeyboardFocus(), kCheatFilters, 2, nullptr, false);
+		ATUIShowOpenFileDialog('CHET', LoadCheatsCallback, nullptr,
+			SDL_GetKeyboardFocus(), kCheatFilters, 2, false);
 	}
 	ImGui::SameLine();
 	if (ImGui::Button("Save...")) {
@@ -365,8 +366,8 @@ void ATUIRenderCheater(ATSimulator &sim, ATUIState &state) {
 			{ "Altirra cheat set", "atcheats" },
 			{ "All Files", "*" },
 		};
-		SDL_ShowSaveFileDialog(SaveCheatsCallback, nullptr,
-			SDL_GetKeyboardFocus(), kCheatFilters, 2, nullptr);
+		ATUIShowSaveFileDialog('CHET', SaveCheatsCallback, nullptr,
+			SDL_GetKeyboardFocus(), kCheatFilters, 2);
 	}
 
 	// Edit cheat popup (modal)

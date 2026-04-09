@@ -3,6 +3,7 @@
 #include <stdafx.h>
 #include <SDL3/SDL.h>
 #include <imgui.h>
+#include "ui_file_dialog_sdl3.h"
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/VDString.h>
 #include <vd2/system/text.h>
@@ -678,7 +679,7 @@ void RenderCompatDBCategory(ATSimulator &) {
 			static const SDL_DialogFileFilter filter = {
 				"Compatibility Database", "*.atcpengine"
 			};
-			SDL_ShowOpenFileDialog(
+			ATUIShowOpenFileDialog('cpdc',
 				[](void *, const char * const *filelist, int) {
 					if (filelist && filelist[0]) {
 						// Callback may be called from a different thread on
@@ -687,7 +688,7 @@ void RenderCompatDBCategory(ATSimulator &) {
 						ATUIPushDeferred(kATDeferred_SetCompatDBPath, filelist[0]);
 					}
 				},
-				nullptr, nullptr, &filter, 1, nullptr, false);
+				nullptr, nullptr, &filter, 1, false);
 		}
 	}
 

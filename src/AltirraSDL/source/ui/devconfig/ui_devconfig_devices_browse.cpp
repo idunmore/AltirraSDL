@@ -5,6 +5,7 @@
 #include <stdafx.h>
 #include <SDL3/SDL.h>
 #include <imgui.h>
+#include "ui_file_dialog_sdl3.h"
 #include <mutex>
 #include <string>
 #include <vector>
@@ -63,8 +64,8 @@ void DevBrowseForFile(char *buf, int maxLen,
 	const SDL_DialogFileFilter *filters, int filterCount)
 {
 	auto *tgt = new DevBrowseTarget{buf, maxLen};
-	SDL_ShowOpenFileDialog(DevBrowseFileCallback, tgt,
-		SDL_GetKeyboardFocus(), filters, filterCount, nullptr, false);
+	ATUIShowOpenFileDialog('dvbr', DevBrowseFileCallback, tgt,
+		SDL_GetKeyboardFocus(), filters, filterCount, false);
 }
 
 void DevBrowseForFolder(char *buf, int maxLen) {
@@ -77,8 +78,8 @@ void DevBrowseForSaveFile(char *buf, int maxLen,
 	const SDL_DialogFileFilter *filters, int filterCount)
 {
 	auto *tgt = new DevBrowseTarget{buf, maxLen};
-	SDL_ShowSaveFileDialog(DevBrowseFileCallback, tgt,
-		SDL_GetKeyboardFocus(), filters, filterCount, nullptr);
+	ATUIShowSaveFileDialog('dvbr', DevBrowseFileCallback, tgt,
+		SDL_GetKeyboardFocus(), filters, filterCount);
 }
 
 bool InputTextWithBrowse(const char *label, char *buf, int bufSize, const char *browseId) {

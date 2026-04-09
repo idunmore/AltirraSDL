@@ -13,6 +13,7 @@
 #include <vector>
 #include <imgui.h>
 #include <SDL3/SDL.h>
+#include "ui_file_dialog_sdl3.h"
 #include <vd2/system/binary.h>
 #include <vd2/system/color.h>
 #include <vd2/system/file.h>
@@ -849,8 +850,8 @@ void ATImGuiPrinterOutputPaneImpl::RenderGraphicalOutput() {
 				SDL_DialogFileFilter filter;
 				filter.name = filterName;
 				filter.pattern = ext;
-				SDL_ShowSaveFileDialog(PrinterSaveFileCallback, nullptr,
-					g_pWindow, &filter, 1, nullptr);
+				ATUIShowSaveFileDialog('prnt', PrinterSaveFileCallback, nullptr,
+					g_pWindow, &filter, 1);
 			};
 
 			if (ImGui::MenuItem("PNG Image (96 DPI)"))

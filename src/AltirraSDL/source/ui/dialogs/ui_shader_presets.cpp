@@ -10,6 +10,7 @@
 #include <imgui.h>
 #include <SDL3/SDL.h>
 
+#include "ui_file_dialog_sdl3.h"
 #include "ui_main.h"
 #include "display_backend.h"
 #include "display_librashader.h"
@@ -634,8 +635,8 @@ void ATUIRenderShaderPresetMenu(IDisplayBackend *backend) {
 				startDir = defaultDir.c_str();
 			}
 
-			SDL_ShowOpenFileDialog(ShaderPresetFileCallback, nullptr,
-				g_pWindow, kFilters, 2, startDir, false);
+			ATUIShowOpenFileDialog('shdp', ShaderPresetFileCallback, nullptr,
+				g_pWindow, kFilters, 2, false, startDir);
 		}
 
 		// Recent presets

@@ -6,6 +6,7 @@
 #include <stdafx.h>
 #include <SDL3/SDL.h>
 #include <imgui.h>
+#include "ui_file_dialog_sdl3.h"
 #include <atomic>
 #include <mutex>
 #include <thread>
@@ -342,8 +343,8 @@ void ATUIRenderPaletteSolver(ATSimulator &sim, bool &open) {
 		static const SDL_DialogFileFilter kFilters[] = {
 			{ "Images (*.png;*.pal;*.act)", "png;pal;act" },
 		};
-		SDL_ShowOpenFileDialog(PaletteSolverLoadCallback,
-			nullptr, g_pWindow, kFilters, 1, nullptr, false);
+		ATUIShowOpenFileDialog('cref', PaletteSolverLoadCallback,
+			nullptr, g_pWindow, kFilters, 1, false);
 	}
 
 	if (s_solver.hasReference) {

@@ -6,6 +6,7 @@
 #include <stdafx.h>
 #include <SDL3/SDL.h>
 #include <imgui.h>
+#include "ui_file_dialog_sdl3.h"
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/VDString.h>
 #include <vd2/system/text.h>
@@ -586,17 +587,17 @@ static void RenderDiskDriveContextMenu(int driveIdx, ATDiskInterface& di,
 				}
 			} else {
 				// Not updatable — fall through to Save As (matches Windows)
-				SDL_ShowSaveFileDialog(DiskSaveAsCallback,
+				ATUIShowSaveFileDialog('disk', DiskSaveAsCallback,
 					(void *)(intptr_t)driveIdx, window,
-					kDiskSaveFilters, 3, nullptr);
+					kDiskSaveFilters, 3);
 			}
 		}
 	}
 
 	if (ImGui::MenuItem("Save disk as...", nullptr, false, haveNonDynamicDisk)) {
-		SDL_ShowSaveFileDialog(DiskSaveAsCallback,
+		ATUIShowSaveFileDialog('disk', DiskSaveAsCallback,
 			(void *)(intptr_t)driveIdx, window,
-			kDiskSaveFilters, 3, nullptr);
+			kDiskSaveFilters, 3);
 	}
 
 	if (ImGui::MenuItem("Explore disk...", nullptr, false, haveDisk)) {
@@ -710,9 +711,9 @@ static void RenderDiskDriveContextMenu(int driveIdx, ATDiskInterface& di,
 	if (ImGui::MenuItem("Extract boot sectors for virtual DOS 2 disk...", nullptr, false, haveDisk)) {
 		IATDiskImage *image = di.GetDiskImage();
 		if (image && image->GetBootSectorCount() == 3) {
-			SDL_ShowSaveFileDialog(BootSectorSaveCallback,
+			ATUIShowSaveFileDialog('btsc', BootSectorSaveCallback,
 				(void *)(intptr_t)driveIdx, window,
-				kBootSectorFilters, 2, nullptr);
+				kBootSectorFilters, 2);
 		} else {
 			LOG_INFO("UI", "Disk does not have standard DOS boot sectors.");
 		}
@@ -813,9 +814,9 @@ void ATUIRenderDiskManager(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 			// Browse button (matches Windows IDC_BROWSE)
 			ImGui::TableNextColumn();
 			if (ImGui::SmallButton("...")) {
-				SDL_ShowOpenFileDialog(DiskMountCallback,
+				ATUIShowOpenFileDialog('disk', DiskMountCallback,
 					(void *)(intptr_t)driveIdx, window,
-					kDiskFilters, 2, nullptr, false);
+					kDiskFilters, 2, false);
 			}
 
 			// Eject button (matches Windows IDC_EJECT)

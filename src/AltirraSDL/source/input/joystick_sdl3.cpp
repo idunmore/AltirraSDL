@@ -112,6 +112,7 @@ struct ATControllerSDL3 {
 	SDL_JoystickID mInstanceID = 0;
 	int mUnit = -1;			// ATInputManager unit ID
 	ATInputUnitIdentifier mId {};
+	bool mbMarked = false;	// mark-and-sweep flag for RescanForDevices()
 
 	// Previous frame state for delta detection
 	uint32 mLastButtons = 0;		// 11 button bits (XInput order)
@@ -287,11 +288,17 @@ void ATJoystickManagerSDL3Impl::RescanForDevices() {
 	// classifies as gamepads — so that generic HID joysticks (retro
 	// USB Atari-style pads, arcade sticks, no-name devices) can still
 	// be used. OpenDevice() dispatches to the appropriate path.
-	int count = 0;
-	SDL_JoystickID *ids = SDL_GetJoysticks(&count);
-	if (!ids)
-		return;
-
+	//
+	// We mark-and-sweep to mirror ATJoystickManager::RescanForDevices()
+	// in joystick.cpp:1163-1247: clear marks, re-enumerate and mark
+	// anything still present (opening newly-seen devices), then close
+	// anything left unmarked.  In normal operation hot-unplug is handled
+	// by SDL_EVENT_{GAMEPAD,JOYSTICK}_REMOVED routed through
+	// CloseGamepad(); the sweep here is a defensive fallback for the
+	// case where that event was lost (queue overflow, events suppressed
+	// during a modal, or a user-triggered "Rescan Input Devices" action
+	// on a platform that didn't deliver the removal notification).
+	//
 	// We intentionally do NOT reclassify already-tracked devices.
 	// SDL3 completes gamepad classification synchronously before
 	// firing SDL_EVENT_{GAMEPAD,JOYSTICK}_ADDED, so the first time we
@@ -302,12 +309,64 @@ void ATJoystickManagerSDL3Impl::RescanForDevices() {
 	// as the player-index of already-working devices changing on the
 	// fly. If a device ever does end up on the wrong codepath the
 	// user can recover by unplugging and replugging it.
+	for (auto *c : mControllers)
+		c->mbMarked = false;
+
+	int count = 0;
+	SDL_JoystickID *ids = SDL_GetJoysticks(&count);
+
+	// Distinguish "enumeration failed" (ids == NULL) from "legitimately
+	// empty" (ids != NULL, count == 0).  On failure we must NOT run the
+	// sweep — otherwise a transient SDL error would close every working
+	// controller.  Re-mark everything as alive and bail out; the next
+	// rescan will try again.
+	if (!ids) {
+		for (auto *c : mControllers)
+			c->mbMarked = true;
+		LOG_WARN("Joystick",
+			"SDL_GetJoysticks() failed (%s); keeping existing devices and "
+			"skipping rescan sweep",
+			SDL_GetError());
+		return;
+	}
+
 	for (int i = 0; i < count; ++i) {
-		if (!FindController(ids[i]))
+		if (auto *existing = FindController(ids[i])) {
+			existing->mbMarked = true;
+		} else {
+			const size_t before = mControllers.size();
 			OpenDevice(ids[i]);
+			// OpenDevice() appends on success; mark the new entry.
+			if (mControllers.size() > before)
+				mControllers.back()->mbMarked = true;
+		}
 	}
 
 	SDL_free(ids);
+
+	// Sweep: close anything that SDL no longer enumerates.
+	for (auto it = mControllers.begin(); it != mControllers.end(); ) {
+		ATControllerSDL3 *ctrl = *it;
+		if (ctrl->mbMarked) {
+			++it;
+			continue;
+		}
+
+		LOG_INFO("Joystick",
+			"Device pruned by rescan sweep (SDL no longer enumerates it): "
+			"unit=%d instance=%u (%s)",
+			ctrl->mUnit, (unsigned)ctrl->mInstanceID,
+			ctrl->mbIsGamepad ? "gamepad" : "raw joystick");
+
+		if (ctrl->mUnit >= 0 && mpInputManager)
+			mpInputManager->UnregisterInputUnit(ctrl->mUnit);
+		if (ctrl->mpGamepad)
+			SDL_CloseGamepad(ctrl->mpGamepad);
+		if (ctrl->mpJoystick)
+			SDL_CloseJoystick(ctrl->mpJoystick);
+		delete ctrl;
+		it = mControllers.erase(it);
+	}
 }
 
 void ATJoystickManagerSDL3Impl::OpenDevice(SDL_JoystickID id) {
@@ -431,7 +490,14 @@ ATControllerSDL3 *ATJoystickManagerSDL3Impl::FindController(SDL_JoystickID id) {
 }
 
 IATJoystickManager::PollResult ATJoystickManagerSDL3Impl::Poll() {
-	if (mControllers.empty())
+	// Mirror the Windows joystick.cpp behaviour: while the input-binding
+	// UI is capturing, the emulated joystick must not receive any button
+	// or axis events (otherwise the user would fire shots or move the
+	// Atari stick at the exact moment they press the button they want
+	// to bind).  PollForCapture() is the only path that may read devices
+	// during capture mode, and it reads live state — so we deliberately
+	// do not touch mLast* here.
+	if (mbCaptureMode || mControllers.empty())
 		return kPollResult_NoControllers;
 
 #ifdef ALTIRRA_MOBILE
@@ -606,17 +672,25 @@ void ATJoystickManagerSDL3Impl::ReadGamepadState(ATControllerSDL3& ctrl,
 	// --- Compute axis buttons (digital from analog) ---
 	// ConvertAnalogToDirectionMask expects positive-up Y (Windows convention).
 	// SDL3 Y-axis is positive-down, so we negate Y here.
+	//
+	// Deadzone note: we pass full-scale stick values (±65536) so the
+	// deadzone is used full-scale too — matching the Windows DirectInput
+	// path in joystick.cpp:979.  Do NOT halve the deadzone here; the
+	// Windows XInput path halves both the input (raw sThumbLX ≤ 32767)
+	// and the deadzone, preserving the 45% default ratio.  Halving only
+	// one side (as this code previously did) effectively cut the digital
+	// trigger distance in half versus the Windows reference.
 	axisButtonStates |= ConvertAnalogToDirectionMask(lx * 2, -ly * 2,
-		mTransforms.mStickDigitalDeadZone / 2);
+		mTransforms.mStickDigitalDeadZone);
 
 	// Left trigger pressed = bit 5 (SDL3 triggers are 0-32767, threshold is in 0-65536 space)
 	if (SDL_GetGamepadAxis(ctrl.mpGamepad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER) >
 		(mTransforms.mTriggerDigitalDeadZone >> 1))
 		axisButtonStates |= (1 << 5);
 
-	// Right stick = bits 6-9
+	// Right stick = bits 6-9 (full-scale deadzone, see note above)
 	axisButtonStates |= ConvertAnalogToDirectionMask(rx * 2, -ry * 2,
-		mTransforms.mStickDigitalDeadZone / 2) << 6;
+		mTransforms.mStickDigitalDeadZone) << 6;
 
 	// Right trigger pressed = bit 11
 	if (SDL_GetGamepadAxis(ctrl.mpGamepad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) >
@@ -671,12 +745,14 @@ void ATJoystickManagerSDL3Impl::ReadRawJoystickState(ATControllerSDL3& ctrl,
 	ConvertStick(deadVals + 3, rx * 2, ry * 2);
 
 	// Left stick digital direction — bits 0..3
+	// Full-scale input (±65536) paired with full-scale deadzone — matches
+	// the Windows DirectInput path (joystick.cpp:979).
 	axisButtonStates |= ConvertAnalogToDirectionMask(lx * 2, -ly * 2,
-		mTransforms.mStickDigitalDeadZone / 2);
+		mTransforms.mStickDigitalDeadZone);
 
 	// Right stick digital direction — bits 6..9
 	axisButtonStates |= ConvertAnalogToDirectionMask(rx * 2, -ry * 2,
-		mTransforms.mStickDigitalDeadZone / 2) << 6;
+		mTransforms.mStickDigitalDeadZone) << 6;
 
 	// --- Hat → d-pad axis-button bits 12..15 ---
 	// Use the first hat only; the Windows DirectInput path does the same.
@@ -769,6 +845,13 @@ bool ATJoystickManagerSDL3Impl::PollForCapture(int& unit, uint32& inputCode, uin
 }
 
 const ATJoystickState *ATJoystickManagerSDL3Impl::PollForCapture(uint32& n) {
+	// This is the "full-state snapshot" capture variant used by the
+	// advanced input-binding UI.  While capture mode is active, Poll()
+	// does not run, so the cached mLast* values are stale — we must
+	// re-read live device state here instead of returning the cache.
+	// This mirrors ATControllerXInput::PollForCapture(ATJoystickState&)
+	// in joystick.cpp:382-409, which also reads fresh state and updates
+	// its mLastState as a side effect.
 	mCaptureStates.clear();
 
 	for (auto *ctrl : mControllers) {
@@ -779,12 +862,30 @@ const ATJoystickState *ATJoystickManagerSDL3Impl::PollForCapture(uint32& n) {
 		if (!ctrl->mbIsGamepad && !ctrl->mpJoystick)
 			continue;
 
+		uint32 buttonStates = 0;
+		uint32 axisButtonStates = 0;
+		sint32 axisVals[6] {};
+		sint32 deadVals[6] {};
+		if (ctrl->mbIsGamepad)
+			ReadGamepadState(*ctrl, buttonStates, axisButtonStates, axisVals, deadVals);
+		else
+			ReadRawJoystickState(*ctrl, buttonStates, axisButtonStates, axisVals, deadVals);
+
+		// Update cache so that if the UI also calls the single-binding
+		// PollForCapture() variant in the same frame, its delta
+		// detection continues from the most recent observation — same
+		// invariant as the Windows version.
+		ctrl->mLastButtons = buttonStates;
+		ctrl->mLastAxisButtons = axisButtonStates;
+		memcpy(ctrl->mLastAxisVals, axisVals, sizeof(axisVals));
+		memcpy(ctrl->mLastDeadAxisVals, deadVals, sizeof(deadVals));
+
 		ATJoystickState state {};
 		state.mUnit = ctrl->mUnit;
-		state.mButtons = ctrl->mLastButtons;
-		state.mAxisButtons = ctrl->mLastAxisButtons;
-		memcpy(state.mAxisVals, ctrl->mLastAxisVals, sizeof(state.mAxisVals));
-		memcpy(state.mDeadifiedAxisVals, ctrl->mLastDeadAxisVals, sizeof(state.mDeadifiedAxisVals));
+		state.mButtons = buttonStates;
+		state.mAxisButtons = axisButtonStates;
+		memcpy(state.mAxisVals, axisVals, sizeof(state.mAxisVals));
+		memcpy(state.mDeadifiedAxisVals, deadVals, sizeof(state.mDeadifiedAxisVals));
 
 		mCaptureStates.push_back(state);
 	}
