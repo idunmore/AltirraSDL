@@ -284,6 +284,8 @@ static void HandleEvents() {
 					g_uiState.showVirtualKeyboard = !g_uiState.showVirtualKeyboard;
 					if (!g_uiState.showVirtualKeyboard)
 						ATUIVirtualKeyboard_ReleaseAll(g_sim);
+					else
+						ATTouchControls_ReleaseAll();  // hide touch controls cleanly
 					continue;
 				}
 				if (g_uiState.showVirtualKeyboard) {

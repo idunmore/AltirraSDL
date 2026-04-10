@@ -31,3 +31,6 @@ void ATUIVirtualKeyboard_ReleaseAll(ATSimulator &sim);
 // Returns the pixel insets the keyboard panel needs from the emulator viewport.
 // outBottom and outRight are set based on current placement mode.
 void ATUIVirtualKeyboard_GetDisplayInset(bool visible, int placement, float *outBottom, float *outRight);
+
+// Returns true if the native text input mode (mobile phone keyboard) is active.
+bool ATUIVirtualKeyboard_IsNativeTextInputActive();

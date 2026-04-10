@@ -24,6 +24,10 @@ extern float g_menuBarHeight;
 extern ATUIKeyboardOptions g_kbdOpts;
 extern IDisplayBackend *ATUIGetDisplayBackend();
 
+// Native text input mode — when active, the mobile phone's soft keyboard
+// is shown and typed characters are translated to Atari scancodes.
+static bool s_nativeTextInputActive = false;
+
 // ---------------------------------------------------------------------------
 // Texture state
 // ---------------------------------------------------------------------------
@@ -293,6 +297,13 @@ void ATUIVirtualKeyboard_ReleaseAll(ATSimulator &sim) {
 	if (s_consoleSelectHeld) { gtia.SetConsoleSwitch(0x02, false); s_consoleSelectHeld = false; }
 	if (s_consoleOptionHeld) { gtia.SetConsoleSwitch(0x04, false); s_consoleOptionHeld = false; }
 
+	// Turn off native text input mode when keyboard is dismissed.
+	// SDL_StopTextInput hides the Android soft keyboard.
+	if (s_nativeTextInputActive) {
+		s_nativeTextInputActive = false;
+		SDL_StopTextInput(g_pWindow);
+	}
+
 	s_touchActive = false;
 	s_focusedKey = -1;
 }
@@ -321,6 +332,56 @@ static void ComputeKeyboardRect(int placement, ImVec2 *outPos, ImVec2 *outSize) 
 
 	int resolved = ResolveAutoPlacement(placement);
 
+#ifdef __ANDROID__
+	// On mobile, account for safe-area insets (nav bar, status bar,
+	// display cutout) so the keyboard never sits under system UI.
+	ATSafeInsets insets = ATAndroid_GetSafeInsets();
+	float insetB = (float)insets.bottom;
+	float insetR = (float)insets.right;
+	float insetL = (float)insets.left;
+	float insetT = (float)insets.top;
+
+	if (resolved == kOSKPlacement_Right) {
+		// Landscape: 50/50 split between screen and keyboard.
+		float availH = (float)winH - menuH - insetT - insetB;
+		if (availH < 1.0f) availH = 1.0f;
+		float availW = (float)winW - insetL - insetR;
+		if (availW < 1.0f) availW = 1.0f;
+
+		// Keyboard occupies right 50% of usable width
+		float kbdW = availW * 0.5f;
+		float kbdH = kbdW / kKeyboardAspect;
+		// Clamp height to available
+		if (kbdH > availH) {
+			kbdH = availH;
+			kbdW = kbdH * kKeyboardAspect;
+		}
+
+		outPos->x = (float)winW - insetR - kbdW;
+		outPos->y = menuH + insetT + (availH - kbdH) * 0.5f;
+		outSize->x = kbdW;
+		outSize->y = kbdH;
+	} else {
+		// Portrait: keyboard placed directly below the emulator display,
+		// above the bottom safe area.  It gets up to 50% of usable height.
+		float availH = (float)winH - menuH - insetT - insetB;
+		if (availH < 1.0f) availH = 1.0f;
+		float availW = (float)winW - insetL - insetR;
+		if (availW < 1.0f) availW = 1.0f;
+
+		float kbdH = availW / kKeyboardAspect;
+		float maxH = availH * 0.50f;
+		if (kbdH > maxH) kbdH = maxH;
+		float kbdW = kbdH * kKeyboardAspect;
+
+		// Position above the bottom inset, not at absolute bottom
+		outPos->x = insetL + (availW - kbdW) * 0.5f;
+		outPos->y = (float)winH - insetB - kbdH;
+		outSize->x = kbdW;
+		outSize->y = kbdH;
+	}
+#else
+	// Desktop: original behavior
 	if (resolved == kOSKPlacement_Right) {
 		float availH = (float)winH - menuH;
 		float kbdW = availH * kKeyboardAspect;
@@ -343,6 +404,7 @@ static void ComputeKeyboardRect(int placement, ImVec2 *outPos, ImVec2 *outSize) 
 		outSize->x = kbdW;
 		outSize->y = kbdH;
 	}
+#endif
 }
 
 void ATUIVirtualKeyboard_GetDisplayInset(bool visible, int placement,
@@ -359,12 +421,17 @@ void ATUIVirtualKeyboard_GetDisplayInset(bool visible, int placement,
 	ImVec2 pos, size;
 	ComputeKeyboardRect(placement, &pos, &size);
 
+	int winW, winH;
+	SDL_GetWindowSize(g_pWindow, &winW, &winH);
+
 	int resolved = ResolveAutoPlacement(placement);
 	if (resolved == kOSKPlacement_Right) {
 		s_lastBottomInset = 0;
-		s_lastRightInset = size.x;
+		// Inset is distance from right edge of window to left edge of keyboard
+		s_lastRightInset = (float)winW - pos.x;
 	} else {
-		s_lastBottomInset = size.y;
+		// Inset is distance from bottom edge of window to top edge of keyboard
+		s_lastBottomInset = (float)winH - pos.y;
 		s_lastRightInset = 0;
 	}
 
@@ -420,17 +487,25 @@ static bool s_lastVisible = false;
 
 // Close button index — one past the last key
 static const int kCloseButtonIndex = 62;  // == kOSKKeyCount
+// Text input button index — one past close
+static const int kTextInputButtonIndex = 63;
 
-// Close button position in UV space (top-left empty area of keyboard)
-static const float kCloseBtnU0 = 0.005f, kCloseBtnV0 = 0.01f;
-static const float kCloseBtnU1 = 0.07f,  kCloseBtnV1 = 0.10f;
-
+// Close and text input buttons are drawn as overlays above the keyboard
+// image (not embedded in it).  On mobile they are sized to match the
+// console buttons (HELP/START); on desktop they use the original small size.
 static ImVec2 s_closeBtnMin = {0, 0};
 static ImVec2 s_closeBtnMax = {0, 0};
+static ImVec2 s_textInputBtnMin = {0, 0};
+static ImVec2 s_textInputBtnMax = {0, 0};
 
 static bool HitTestCloseButton(ImVec2 point) {
 	return point.x >= s_closeBtnMin.x && point.x < s_closeBtnMax.x
 	    && point.y >= s_closeBtnMin.y && point.y < s_closeBtnMax.y;
+}
+
+static bool HitTestTextInputButton(ImVec2 point) {
+	return point.x >= s_textInputBtnMin.x && point.x < s_textInputBtnMax.x
+	    && point.y >= s_textInputBtnMin.y && point.y < s_textInputBtnMax.y;
 }
 
 static bool s_wasVisible = false;
@@ -475,15 +550,28 @@ bool ATUIRenderVirtualKeyboard(ATSimulator &sim, bool visible, int placement) {
 		return false;
 	}
 
-	// Compute image size maintaining aspect ratio, centered in panel
+	// On mobile, reserve a toolbar row above the keyboard image for
+	// the CLOSE and ABC buttons.  On desktop the buttons overlay the
+	// image in the top-left corner so no extra space is needed.
+#ifdef __ANDROID__
+	float toolbarH = panelSize.y * 0.10f;
+	if (toolbarH < 44.0f) toolbarH = 44.0f;
+	float kbdAreaH = panelSize.y - toolbarH;
+#else
+	float toolbarH = 0.0f;
+	float kbdAreaH = panelSize.y;
+#endif
+
+	// Compute image size maintaining aspect ratio, centered in the
+	// keyboard area (below the toolbar on mobile).
 	float scaleX = panelSize.x / (float)s_texW;
-	float scaleY = panelSize.y / (float)s_texH;
+	float scaleY = kbdAreaH / (float)s_texH;
 	float scale = (scaleX < scaleY) ? scaleX : scaleY;
 
 	ImVec2 imgSize((float)s_texW * scale, (float)s_texH * scale);
 	ImVec2 imgPos = ImGui::GetCursorScreenPos();
 	imgPos.x += (panelSize.x - imgSize.x) * 0.5f;
-	imgPos.y += (panelSize.y - imgSize.y) * 0.5f;
+	imgPos.y += toolbarH + (kbdAreaH - imgSize.y) * 0.5f;
 
 	// Store for touch hit testing in HandleEvent
 	s_lastImgPos = imgPos;
@@ -496,43 +584,107 @@ bool ATUIRenderVirtualKeyboard(ATSimulator &sim, bool visible, int placement) {
 	ImVec2 mousePos = ImGui::GetMousePos();
 	bool mouseInWindow = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
 
-	// --- Close button (top-left empty area) ---
-	s_closeBtnMin = ImVec2(imgPos.x + kCloseBtnU0 * imgSize.x,
-	                        imgPos.y + kCloseBtnV0 * imgSize.y);
-	s_closeBtnMax = ImVec2(imgPos.x + kCloseBtnU1 * imgSize.x,
-	                        imgPos.y + kCloseBtnV1 * imgSize.y);
-
+	// --- Close button + Text Input button (above keyboard image) ---
+	// On mobile, these are sized to match HELP/START console buttons for
+	// comfortable touch targets.  On desktop they stay compact.
 	{
-		bool closeFocused = (s_focusedKey == kCloseButtonIndex);
-		bool closeHover = mouseInWindow && HitTestCloseButton(mousePos);
+#ifdef __ANDROID__
+		// Buttons sit in the toolbar row above the keyboard image.
+		// Sized to be comfortable touch targets (same height as toolbar).
+		float btnH = toolbarH * 0.80f;
+		float btnW = btnH * 2.2f;  // wider than tall for finger target
+		float btnGap = 8.0f;
+		float btnY0 = panelPos.y + (toolbarH - btnH) * 0.5f;
+		float btnY1 = btnY0 + btnH;
+		float btnX0 = panelPos.x + 8.0f;
+#else
+		// Desktop: small close button in top-left of keyboard area
+		float btnH = imgSize.y * 0.09f;
+		float btnW = imgSize.x * 0.065f;
+		float btnGap = 4.0f;
+		float btnY0 = imgPos.y + imgSize.y * 0.01f;
+		float btnY1 = btnY0 + btnH;
+		float btnX0 = imgPos.x + imgSize.x * 0.005f;
+#endif
 
-		// Background
-		ImU32 closeBg = IM_COL32(80, 80, 80, 160);
-		if (closeFocused)
-			closeBg = IM_COL32(60, 60, 80, 200);
-		else if (closeHover)
-			closeBg = IM_COL32(100, 100, 100, 180);
-		dl->AddRectFilled(s_closeBtnMin, s_closeBtnMax, closeBg, 4.0f);
+		s_closeBtnMin = ImVec2(btnX0, btnY0);
+		s_closeBtnMax = ImVec2(btnX0 + btnW, btnY1);
 
-		// "X" lines
-		float pad = (s_closeBtnMax.x - s_closeBtnMin.x) * 0.28f;
-		ImVec2 a0(s_closeBtnMin.x + pad, s_closeBtnMin.y + pad);
-		ImVec2 a1(s_closeBtnMax.x - pad, s_closeBtnMax.y - pad);
-		ImVec2 b0(s_closeBtnMax.x - pad, s_closeBtnMin.y + pad);
-		ImVec2 b1(s_closeBtnMin.x + pad, s_closeBtnMax.y - pad);
-		ImU32 xColor = IM_COL32(220, 220, 220, 240);
-		float thick = (s_closeBtnMax.x - s_closeBtnMin.x) * 0.08f;
-		if (thick < 1.5f) thick = 1.5f;
-		dl->AddLine(a0, a1, xColor, thick);
-		dl->AddLine(b0, b1, xColor, thick);
+		s_textInputBtnMin = ImVec2(btnX0 + btnW + btnGap, btnY0);
+		s_textInputBtnMax = ImVec2(btnX0 + btnW + btnGap + btnW, btnY1);
 
-		// Focus ring
-		if (closeFocused)
-			dl->AddRect(s_closeBtnMin, s_closeBtnMax, IM_COL32(0, 200, 255, 220), 4.0f, 0, 2.0f);
+		float rounding = btnH * 0.2f;
 
-		// Mouse click on close
-		if (mouseInWindow && closeHover && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
-			s_closeRequested = true;
+		// --- Close button ---
+		{
+			bool closeFocused = (s_focusedKey == kCloseButtonIndex);
+			bool closeHover = mouseInWindow && HitTestCloseButton(mousePos);
+
+			ImU32 closeBg = IM_COL32(80, 80, 80, 160);
+			if (closeFocused)
+				closeBg = IM_COL32(60, 60, 80, 200);
+			else if (closeHover)
+				closeBg = IM_COL32(100, 100, 100, 180);
+			dl->AddRectFilled(s_closeBtnMin, s_closeBtnMax, closeBg, rounding);
+
+			// "X" icon — centered in the button
+
+			float cx = (s_closeBtnMin.x + s_closeBtnMax.x) * 0.5f;
+			float cy = (s_closeBtnMin.y + s_closeBtnMax.y) * 0.5f;
+			float halfSz = btnH * 0.25f;
+			ImU32 xColor = IM_COL32(220, 220, 220, 240);
+			float thick = btnH * 0.08f;
+			if (thick < 1.5f) thick = 1.5f;
+			dl->AddLine(ImVec2(cx - halfSz, cy - halfSz), ImVec2(cx + halfSz, cy + halfSz), xColor, thick);
+			dl->AddLine(ImVec2(cx + halfSz, cy - halfSz), ImVec2(cx - halfSz, cy + halfSz), xColor, thick);
+
+			// Label
+			const char *closeLabel = "CLOSE";
+			ImVec2 textSize = ImGui::CalcTextSize(closeLabel);
+			float tx = cx + halfSz + 4.0f;
+			float ty = cy - textSize.y * 0.5f;
+			if (tx + textSize.x < s_closeBtnMax.x - 4.0f)
+				dl->AddText(ImVec2(tx, ty), IM_COL32(220, 220, 220, 240), closeLabel);
+
+			if (closeFocused)
+				dl->AddRect(s_closeBtnMin, s_closeBtnMax, IM_COL32(0, 200, 255, 220), rounding, 0, 2.0f);
+
+			if (mouseInWindow && closeHover && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+				s_closeRequested = true;
+		}
+
+		// --- Text Input button (opens native mobile keyboard) ---
+		{
+			bool tiFocused = (s_focusedKey == kTextInputButtonIndex);
+			bool tiHover = mouseInWindow && HitTestTextInputButton(mousePos);
+
+			ImU32 tiBg = s_nativeTextInputActive
+				? IM_COL32(40, 120, 40, 200)
+				: IM_COL32(80, 80, 80, 160);
+			if (tiFocused)
+				tiBg = IM_COL32(60, 60, 80, 200);
+			else if (tiHover)
+				tiBg = IM_COL32(100, 100, 100, 180);
+			dl->AddRectFilled(s_textInputBtnMin, s_textInputBtnMax, tiBg, rounding);
+
+			// "ABC" label to indicate typing mode
+			const char *tiLabel = s_nativeTextInputActive ? "ABC [ON]" : "ABC";
+			ImVec2 textSize = ImGui::CalcTextSize(tiLabel);
+			float tx = (s_textInputBtnMin.x + s_textInputBtnMax.x) * 0.5f - textSize.x * 0.5f;
+			float ty = (s_textInputBtnMin.y + s_textInputBtnMax.y) * 0.5f - textSize.y * 0.5f;
+			dl->AddText(ImVec2(tx, ty), IM_COL32(220, 220, 220, 240), tiLabel);
+
+			if (tiFocused)
+				dl->AddRect(s_textInputBtnMin, s_textInputBtnMax, IM_COL32(0, 200, 255, 220), rounding, 0, 2.0f);
+
+			if (mouseInWindow && tiHover && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+				s_nativeTextInputActive = !s_nativeTextInputActive;
+				if (s_nativeTextInputActive)
+					SDL_StartTextInput(g_pWindow);
+				else
+					SDL_StopTextInput(g_pWindow);
+			}
+		}
 	}
 
 	// --- Key overlays ---
@@ -620,10 +772,15 @@ bool ATUIVirtualKeyboard_HandleEvent(const SDL_Event &ev, ATSimulator &sim, bool
 				}
 
 				if (s_focusedKey == kCloseButtonIndex) {
-					// From close button: down → ESC (index 5), right → HELP (index 0)
+					// From close button: right → text input, down → ESC
 					if (dir == 3)       s_focusedKey = 5;   // down → ESC
-					else if (dir == 1)  s_focusedKey = 0;   // right → HELP
-					else if (dir == 0)  s_focusedKey = 5;   // left → ESC
+					else if (dir == 1)  s_focusedKey = kTextInputButtonIndex;  // right → text input
+					else if (dir == 0)  s_focusedKey = 5;   // left → wrap to ESC
+				} else if (s_focusedKey == kTextInputButtonIndex) {
+					// From text input button: left → close, down → HELP (index 0)
+					if (dir == 3)       s_focusedKey = 0;   // down → HELP
+					else if (dir == 0)  s_focusedKey = kCloseButtonIndex;  // left → close
+					else if (dir == 1)  s_focusedKey = 0;   // right → wrap to HELP
 				} else {
 					int next = kOSKKeys[s_focusedKey].nav[dir];
 					if (dir == 2 && next < 0) {
@@ -639,6 +796,14 @@ bool ATUIVirtualKeyboard_HandleEvent(const SDL_Event &ev, ATSimulator &sim, bool
 			case SDL_GAMEPAD_BUTTON_SOUTH:  // A — press focused key
 				if (s_focusedKey == kCloseButtonIndex) {
 					s_closeRequested = true;
+					return true;
+				}
+				if (s_focusedKey == kTextInputButtonIndex) {
+					s_nativeTextInputActive = !s_nativeTextInputActive;
+					if (s_nativeTextInputActive)
+						SDL_StartTextInput(g_pWindow);
+					else
+						SDL_StopTextInput(g_pWindow);
 					return true;
 				}
 				if (s_focusedKey >= 0 && s_focusedKey < kOSKKeyCount)
@@ -701,6 +866,19 @@ bool ATUIVirtualKeyboard_HandleEvent(const SDL_Event &ev, ATSimulator &sim, bool
 			return true;
 		}
 
+		// Check text input button
+		if (HitTestTextInputButton(touchPt)) {
+			s_nativeTextInputActive = !s_nativeTextInputActive;
+			if (s_nativeTextInputActive)
+				SDL_StartTextInput(g_pWindow);
+			else
+				SDL_StopTextInput(g_pWindow);
+#ifdef __ANDROID__
+			ATAndroid_Vibrate(10);
+#endif
+			return true;
+		}
+
 		int hit = HitTestKey(s_lastImgPos, s_lastImgSize, touchPt);
 		if (hit >= 0) {
 			s_touchFinger = ev.tfinger.fingerID;
@@ -726,4 +904,8 @@ bool ATUIVirtualKeyboard_HandleEvent(const SDL_Event &ev, ATSimulator &sim, bool
 	}
 
 	return false;
+}
+
+bool ATUIVirtualKeyboard_IsNativeTextInputActive() {
+	return s_nativeTextInputActive;
 }

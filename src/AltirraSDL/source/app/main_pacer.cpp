@@ -164,7 +164,7 @@ void FramePacer::WaitForNextFrame() {
 }
 
 FramePacer g_pacer;
-int g_desiredSwapInterval = 1;
+int g_desiredSwapInterval = 0;  // matches startup SDL_GL_SetSwapInterval(0)
 
 float ATUIGetMeasuredFPS() {
 	return g_pacer.measuredFPS;
@@ -254,7 +254,13 @@ void UpdatePacerRate() {
 		rateMatch = true;
 	}
 
-	g_desiredSwapInterval = rateMatch ? 1 : 0;
+	// Only enable blocking VSync (swap interval 1) when:
+	// - The user has VSync enabled in settings (GTIA mbVsyncEnabled), AND
+	// - The display refresh matches the target frame rate.
+	// This mirrors Windows where mbVsyncEnabled controls whether
+	// PresentVSync() or Present() is called (gtia.cpp:1940-1951,
+	// displaydrv3d.cpp:634-648).
+	g_desiredSwapInterval = (g_sim.GetGTIA().IsVsyncEnabled() && rateMatch) ? 1 : 0;
 
 	if (ATUIGetFrameRateVSyncAdaptive() && rateMatch) {
 		secsPerFrame = refreshPeriod;

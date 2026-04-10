@@ -513,8 +513,10 @@ void ATMobileUI_Render(ATSimulator &sim, ATUIState &uiState,
 
 	switch (mobileState.currentScreen) {
 	case ATMobileUIScreen::None:
-		// Render touch controls overlay
-		ATTouchControls_Render(mobileState.layout, mobileState.layoutConfig);
+		// Render touch controls overlay — but hide them when the virtual
+		// keyboard is visible so they don't overlap the keyboard keys.
+		if (!uiState.showVirtualKeyboard)
+			ATTouchControls_Render(mobileState.layout, mobileState.layoutConfig);
 
 		// If no game loaded, show a styled centered "Load Game" button
 		if (!mobileState.gameLoaded)
@@ -609,11 +611,15 @@ bool ATMobileUI_HandleEvent(const SDL_Event &ev, ATMobileUIState &mobileState) {
 	if (mobileState.currentScreen != ATMobileUIScreen::None)
 		return false;
 
-	// Route touch events to virtual keyboard first (if visible), then touch controls
+	// Route touch events to virtual keyboard first (if visible), then touch controls.
+	// When the virtual keyboard is showing, touch controls are hidden so we
+	// don't forward events to them — the keyboard owns the entire touch surface.
 	if (isFinger) {
 		if (g_uiState.showVirtualKeyboard) {
-			if (ATUIVirtualKeyboard_HandleEvent(ev, g_sim, true))
-				return true;
+			ATUIVirtualKeyboard_HandleEvent(ev, g_sim, true);
+			// Consume all touch events when keyboard is visible to prevent
+			// them from reaching touch controls (which are hidden).
+			return true;
 		}
 
 		bool consumed = ATTouchControls_HandleEvent(ev, mobileState.layout, mobileState.layoutConfig);

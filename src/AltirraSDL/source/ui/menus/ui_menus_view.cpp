@@ -162,22 +162,14 @@ void ATUIRenderViewMenu(ATSimulator &sim, ATUIState &state, SDL_Window *window, 
 
 	ImGui::Separator();
 
-	// VSync toggle — works with both GL and SDL_Renderer backends
+	// VSync toggle — mirrors Windows "View: Vertical sync" setting.
+	// The actual GL swap interval is managed dynamically by the main
+	// loop (via g_desiredSwapInterval) based on this setting AND
+	// whether the display refresh matches the emulation frame rate.
 	{
-		bool vsyncOn = false;
-		if (backend->GetType() == DisplayBackendType::OpenGL33) {
-			int interval = 0;
-			SDL_GL_GetSwapInterval(&interval);
-			vsyncOn = (interval != 0);
-			if (ImGui::MenuItem("Vertical Sync", nullptr, vsyncOn))
-				SDL_GL_SetSwapInterval(vsyncOn ? 0 : 1);
-		} else {
-			int vsync = 0;
-			SDL_GetRenderVSync(backend->GetSDLRenderer(), &vsync);
-			vsyncOn = (vsync != 0);
-			if (ImGui::MenuItem("Vertical Sync", nullptr, vsyncOn))
-				SDL_SetRenderVSync(backend->GetSDLRenderer(), vsyncOn ? 0 : 1);
-		}
+		bool vsyncOn = sim.GetGTIA().IsVsyncEnabled();
+		if (ImGui::MenuItem("Vertical Sync", nullptr, vsyncOn))
+			sim.GetGTIA().SetVsyncEnabled(!vsyncOn);
 	}
 
 	bool showFPS = ATUIGetShowFPS();
