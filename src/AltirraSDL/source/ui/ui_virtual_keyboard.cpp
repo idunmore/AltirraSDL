@@ -298,10 +298,15 @@ void ATUIVirtualKeyboard_ReleaseAll(ATSimulator &sim) {
 	if (s_consoleOptionHeld) { gtia.SetConsoleSwitch(0x04, false); s_consoleOptionHeld = false; }
 
 	// Turn off native text input mode when keyboard is dismissed.
-	// SDL_StopTextInput hides the Android soft keyboard.
+	// SDL_StopTextInput hides the Android soft keyboard.  On desktop
+	// we must re-enable text input so the cooked character path
+	// (SDL_EVENT_TEXT_INPUT for non-US layouts, dead keys, IME) keeps
+	// working for the physical keyboard.
 	if (s_nativeTextInputActive) {
 		s_nativeTextInputActive = false;
+#ifdef __ANDROID__
 		SDL_StopTextInput(g_pWindow);
+#endif
 	}
 
 	s_touchActive = false;
@@ -679,10 +684,12 @@ bool ATUIRenderVirtualKeyboard(ATSimulator &sim, bool visible, int placement) {
 
 			if (mouseInWindow && tiHover && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
 				s_nativeTextInputActive = !s_nativeTextInputActive;
+#ifdef __ANDROID__
 				if (s_nativeTextInputActive)
 					SDL_StartTextInput(g_pWindow);
 				else
 					SDL_StopTextInput(g_pWindow);
+#endif
 			}
 		}
 	}
@@ -800,10 +807,12 @@ bool ATUIVirtualKeyboard_HandleEvent(const SDL_Event &ev, ATSimulator &sim, bool
 				}
 				if (s_focusedKey == kTextInputButtonIndex) {
 					s_nativeTextInputActive = !s_nativeTextInputActive;
+#ifdef __ANDROID__
 					if (s_nativeTextInputActive)
 						SDL_StartTextInput(g_pWindow);
 					else
 						SDL_StopTextInput(g_pWindow);
+#endif
 					return true;
 				}
 				if (s_focusedKey >= 0 && s_focusedKey < kOSKKeyCount)
@@ -869,11 +878,11 @@ bool ATUIVirtualKeyboard_HandleEvent(const SDL_Event &ev, ATSimulator &sim, bool
 		// Check text input button
 		if (HitTestTextInputButton(touchPt)) {
 			s_nativeTextInputActive = !s_nativeTextInputActive;
+#ifdef __ANDROID__
 			if (s_nativeTextInputActive)
 				SDL_StartTextInput(g_pWindow);
 			else
 				SDL_StopTextInput(g_pWindow);
-#ifdef __ANDROID__
 			ATAndroid_Vibrate(10);
 #endif
 			return true;
