@@ -38,14 +38,20 @@ namespace {
 		ctx->userCb = cb;
 		ctx->userUd = ud;
 
-		// default_location is either the parent directory of the last
-		// selected file, or (if empty / file was in a root) the string
-		// itself.  VDFileSplitPathLeft strips the final path component.
 		const VDStringW lastPath = VDGetLastLoadSavePath(nKey);
 		if (!lastPath.empty()) {
-			VDStringW dir = VDFileSplitPathLeft(lastPath);
-			if (dir.empty())
+			VDStringW dir;
+
+			uint32 attrs = VDFileGetAttributes(lastPath.c_str());
+
+			if (attrs != kVDFileAttr_Invalid && (attrs & kVDFileAttr_Directory)) {
 				dir = lastPath;
+			} else {
+				dir = VDFileSplitPathLeft(lastPath);
+				if (dir.empty())
+					dir = lastPath;
+			}
+
 			ctx->defaultLocationUtf8 = VDTextWToU8(VDStringSpanW(dir));
 		} else if (fallback && *fallback) {
 			ctx->defaultLocationUtf8 = fallback;
