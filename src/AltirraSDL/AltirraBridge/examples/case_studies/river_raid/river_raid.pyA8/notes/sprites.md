@@ -180,24 +180,95 @@ don't waste the same time:
    All three are worth fixing as a separate bridge ergonomics task,
    but none were blockers once the workarounds were understood.
 
+## Live gameplay verification
+
+After fixing two bridge bugs (`SetFrameSkip(true)` so the simulator
+actually runs at real time, and using `--machine=800xl --no-basic
+--memory=64k` so the XEX actually loads — `--machine=800` is broken
+for XEX files in headless mode), I reached fully active player mode
+with the Activision logo + three jet icons at the bottom of the
+status bar (replacing the attract-mode `RIVER RAID by Carol Shaw`
+scroller). In that state, with fire held, the M1 DMA band behaved
+like this frame-by-frame:
+
+```
+frames 1-4:   $0BCC..$0BD5  (10 bytes) — at-rest bullet template
+frames 5-13:  $0BA9..$0BD5  (18 bytes) — bullet launched, top at $A9
+frames 14-20: $0BA3..$0BD5  (18 bytes) — bullet advanced, top at $A3
+```
+
+Top edge migrated $CC → $A9 → $A3 over 20 frames = **~2 scanlines
+per frame upward** = a visible bullet traveling from the jet toward
+the top of the screen. This is the final, empirical confirmation
+that the bullet is drawn as **M1**.
+
+Two observations from the motion data:
+
+1. The 10-byte at-rest template at `$0BCC-$0BD5` is always present
+   (even with fire released) and corresponds to `draw_bullet_pmg`
+   at `$B14B` writing the fixed `$0C` pattern. That's the muzzle /
+   chambered bullet sitting just above the jet.
+2. The in-flight bullet `$0BA9..$0BCB` area is emitted by a
+   **different draw path** (not yet traced) that writes at an
+   animated Y offset. The `$B14B` routine alone only writes the
+   fixed 10-byte at-rest block, so there must be a second writer
+   (probably keyed off a `bullet_alive` flag that is set on fire
+   press and decrements the in-flight bullet's Y each frame).
+
 ## Open questions
 
-- **What actually happens when the player dies or the plane reaches
-  a new section?** The game was repeatedly observed in a "waiting to
-  launch" state (status bar drawn, playfield black) rather than active
-  gameplay with river scrolling and enemies visible. Either the input
-  sequence to fully enter gameplay is more complex than
-  `START → wait → FIRE`, or some state preconditions are not met
-  after `a.boot()`. Need a clean reboot with clearly-confirmed active
-  gameplay (jet visible mid-river, enemies moving) before re-probing.
-- **What `$39` actually represents** given that it's not the bullet X.
-- **What `$3C` does outside the gameplay state** where it might be
-  non-zero.
-- **Whether any code path ever writes non-zero data into P1 DMA**
-  during a gameplay state we haven't reached. The watchpoint on
-  `$0D00/$0D40/$0D80/$0DC0` for 4 s each caught no writes, but in
-  the "waiting to launch" state.
-- **M1PL / M1PF collision reads** — if the game checks bullet-hits
-  via M1's collision registers (the only ones that track missile
-  collisions independently of the parent player), where exactly is
-  that read? No watch has been set on those registers yet.
+- **Where is the in-flight bullet draw code?** `$B14B` only produces
+  the at-rest 10-byte block; another path must be writing the
+  upward-moving M1 bytes at `$0BA9` and below. Setting a write
+  watchpoint on `$0BA8` during active fire is the next step.
+- **`$0024`** is not actually the game-state machine — runtime
+  values (`$00/$48/$80`) don't match the 0/1/2/3 semantics in the
+  old project.json comment, and the attract → player transition
+  happens without `$24` changing. The real play-state variable is
+  somewhere else and needs to be located.
+- **What `$39` actually represents** given that it's not the bullet
+  X (bullet X comes from `HPOSM1 = ($5B>>3)+$5C` at `$B52C`). The
+  `HPOSP1 ← $39` store at `$B54F` appears to be vestigial / dead
+  since P1's bitmap is never populated.
+- **M1PL / M1PF collision reads** — the hardware collision bit for
+  bullet-hit-terrain should come through `M1PF` ($D001 read), not
+  `P1PF` as the old `$1A-$22` fan-out suggested. The DLI doesn't
+  currently read `$D001`; where does the bullet-vs-terrain check
+  actually happen?
+- **What `$3C` does outside the attract state** where it's
+  consistently `0`. It's probably the terrain scroll accumulator
+  (per the `terrain_bank_update` comment at `$A652`) but I haven't
+  captured non-zero values during active scrolling.
+
+## Bridge configuration that actually works
+
+For anyone re-running this investigation from scratch, these are
+the prerequisites that took way more time than they should have to
+nail down:
+
+1. **Bridge binary**: use
+   `src/AltirraBridgeServer/AltirraBridgeServer` from the repo build,
+   not an older copy. The older builds don't support the CLI flags
+   below.
+2. **CLI flags**:
+   `--bridge=tcp:127.0.0.1:0 --no-basic --machine=800xl --memory=64k`.
+   `--machine=800` has a boot bug in headless mode (XEX files do not
+   load — all RAM stays at the uninitialised `ff 00` pattern) that
+   `800xl` does not. I did not trace the root cause; `800xl` is the
+   documented-working combination.
+3. **Settings.ini**: because `InitSimulator()` calls `g_sim.LoadROMs()`
+   *before* `ATSettingsLoadLastProfile()`, any BASIC / kernel /
+   memory setting in `~/.config/altirra/settings.ini` gets applied
+   too late and silently has no effect at runtime. CLI flags run
+   after settings and trigger a proper `ColdReset()`, so they are
+   the reliable configuration path. This ordering is a latent
+   bridge-server bug worth fixing separately.
+4. **`SetFrameSkip(true)`** in `main_bridge.cpp:325` — without this
+   the simulator runs at ~5% of real time because nothing drains
+   the null display's `PostBuffer` queue, so GTIA stalls every
+   frame. This was fixed as part of this investigation.
+5. **Timing**: at real sim speed, River Raid needs **roughly 20-35
+   real seconds** of wall clock between cold boot and active player
+   mode (attract intro plays the `RIVER RAID by Carol Shaw` banner
+   for a long time before the state machine accepts START). Any
+   script that allocates "3 seconds per stage" is too impatient.

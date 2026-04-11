@@ -144,7 +144,14 @@ mode (DMACTL bit 4 set). Each P/M slot is 256 bytes:
 GRACTL = `$03` (both players and missiles enabled).
 PRIOR = `$01` (players have priority over playfield).
 
-The bullet is drawn by the routine at `$B14B-$B15C`:
+Active-player-mode bullet motion is empirically confirmed: with fire
+held, the M1 DMA band top edge migrates from `$0BCC → $0BA9 → $0BA3`
+at roughly 2 scanlines per frame, i.e. the bullet visibly travels
+upward from the jet toward the top of the screen. The `$B14B` routine
+only writes the 10-byte at-rest template; a second writer (not yet
+traced) emits the in-flight bullet at a descending Y offset each frame.
+
+The at-rest bullet is drawn by the routine at `$B14B-$B15C`:
 ```
 $B14B  ldx #$09
 $B14D  ldy #$09
