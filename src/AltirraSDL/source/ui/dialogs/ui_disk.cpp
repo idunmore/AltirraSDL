@@ -19,6 +19,7 @@
 #include <at/atio/diskfsutil.h>
 
 #include "ui_main.h"
+#include "ui_confirm_dialog.h"
 #include "simulator.h"
 #include "diskinterface.h"
 #include "disk.h"
@@ -349,21 +350,89 @@ static const ConvertEntry kConvertTable[] = {
 static constexpr int kNumConvertFormats = (int)(sizeof(kConvertTable) / sizeof(kConvertTable[0]));
 
 // =========================================================================
-// Reinterleave helper (matches Windows ATDiskDriveDialog::Reinterleave)
+// Confirm-if-dirty helper — matches Windows ATDiskDriveDialog::ConfirmEject().
+// If the drive holds a dirty disk image, show a confirmation asking the
+// user whether to discard the unsaved changes; otherwise run onProceed
+// immediately.  Used by:
+//   - the Eject button            (unload the disk)
+//   - the "Off" write-mode entry  (unload the disk)
+//   - the "..." Browse button     (open load-image dialog)
+//   - "New disk..." menu item     (open create-disk sub-dialog)
+//   - "Mount folder..." items     (open folder picker)
+//
+// The confirmation is asynchronous — onProceed runs only after the user
+// confirms (or immediately if the disk is not dirty / no disk loaded).
 // =========================================================================
 
-static void Reinterleave(ATDiskInterface& diskIf, ATDiskInterleave interleave) {
+static void ConfirmDiscardIfDirty(int driveIdx, std::function<void()> onProceed) {
+	ATDiskInterface& diskIf = g_sim.GetDiskInterface(driveIdx);
+
+	if (!diskIf.IsDiskLoaded() || !diskIf.IsDirty()) {
+		if (onProceed) onProceed();
+		return;
+	}
+
+	char msg[192];
+	snprintf(msg, sizeof(msg),
+		"The modified disk image in D%d: has not been saved and will be discarded. Are you sure?",
+		driveIdx + 1);
+
+	ATUIConfirmOptions opts;
+	opts.title        = "Discard disk image";
+	opts.message      = msg;
+	opts.confirmLabel = "Discard";
+	opts.cancelLabel  = "Cancel";
+	opts.destructive  = true;        // default focus on Cancel
+	opts.onConfirm    = std::move(onProceed);
+	ATUIShowConfirm(std::move(opts));
+}
+
+// Convenience wrapper: eject the disk in the given drive, prompting first
+// if it is dirty.
+static void ConfirmAndEject(int driveIdx) {
+	ConfirmDiscardIfDirty(driveIdx, [driveIdx]() {
+		g_sim.GetDiskInterface(driveIdx).UnloadDisk();
+	});
+}
+
+// =========================================================================
+// Reinterleave helper (matches Windows ATDiskDriveDialog::Reinterleave).
+//
+// Takes the drive index rather than an ATDiskInterface& because the
+// callback is deferred: we want to re-resolve the drive interface and
+// its disk image at confirmation time, so a stray image swap between
+// "open dialog" and "user confirms" can't lead us to poke a stale
+// pointer.  g_sim.GetDiskInterface(idx) is the single source of truth.
+// =========================================================================
+
+static void Reinterleave(int driveIdx, ATDiskInterleave interleave) {
+	ATDiskInterface& diskIf = g_sim.GetDiskInterface(driveIdx);
 	IATDiskImage *img = diskIf.GetDiskImage();
 	if (!img)
 		return;
 
-	if (!img->IsSafeToReinterleave()) {
-		// TODO: confirmation dialog for protected disks
-		LOG_WARN("UI", "reinterleaving disk that may not work correctly with reordered sectors");
+	auto doReinterleave = [driveIdx, interleave]() {
+		ATDiskInterface& di = g_sim.GetDiskInterface(driveIdx);
+		IATDiskImage *inner = di.GetDiskImage();
+		if (!inner)
+			return;
+		inner->Reinterleave(interleave);
+		di.OnDiskModified();
+	};
+
+	if (img->IsSafeToReinterleave()) {
+		doReinterleave();
+		return;
 	}
 
-	img->Reinterleave(interleave);
-	diskIf.OnDiskModified();
+	ATUIConfirmOptions opts;
+	opts.title        = "Reinterleaving disk";
+	opts.message      = "This disk image may not work correctly with its sectors reordered. Are you sure?";
+	opts.confirmLabel = "Reinterleave";
+	opts.cancelLabel  = "Cancel";
+	opts.destructive  = true;
+	opts.onConfirm    = std::move(doReinterleave);
+	ATUIShowConfirm(std::move(opts));
 }
 
 // =========================================================================
@@ -567,8 +636,12 @@ static void RenderDiskDriveContextMenu(int driveIdx, ATDiskInterface& di,
 
 	// --- Disk operations (matches Windows RC layout) ---
 	if (ImGui::MenuItem("New disk...", nullptr, false, true)) {
-		g_createDiskState.show = true;
-		g_createDiskState.targetDrive = driveIdx;
+		// Windows prompts before opening the create dialog if the
+		// current image is dirty (uidisk.cpp ID_CONTEXT_NEWDISK).
+		ConfirmDiscardIfDirty(driveIdx, [driveIdx]() {
+			g_createDiskState.show = true;
+			g_createDiskState.targetDrive = driveIdx;
+		});
 	}
 
 	// Save Disk: enabled when non-dynamic disk loaded (matches Windows).
@@ -647,39 +720,39 @@ static void RenderDiskDriveContextMenu(int driveIdx, ATDiskInterface& di,
 	// --- Change Interleave submenu (with group separators matching Windows RC) ---
 	if (ImGui::BeginMenu("Change interleave", haveNonDynamicDisk)) {
 		if (ImGui::MenuItem("Default"))
-			Reinterleave(di, kATDiskInterleave_Default);
+			Reinterleave(driveIdx, kATDiskInterleave_Default);
 		if (ImGui::MenuItem("1:1"))
-			Reinterleave(di, kATDiskInterleave_1_1);
+			Reinterleave(driveIdx, kATDiskInterleave_1_1);
 
 		ImGui::Separator();  // SD group
 		if (ImGui::MenuItem("12:1 (810 rev. B SD)"))
-			Reinterleave(di, kATDiskInterleave_SD_12_1);
+			Reinterleave(driveIdx, kATDiskInterleave_SD_12_1);
 		if (ImGui::MenuItem("9:1 (SD)"))
-			Reinterleave(di, kATDiskInterleave_SD_9_1);
+			Reinterleave(driveIdx, kATDiskInterleave_SD_9_1);
 		if (ImGui::MenuItem("9:1 (SD improved)"))
-			Reinterleave(di, kATDiskInterleave_SD_9_1_REV);
+			Reinterleave(driveIdx, kATDiskInterleave_SD_9_1_REV);
 		if (ImGui::MenuItem("5:1 (US Doubler SD fast)"))
-			Reinterleave(di, kATDiskInterleave_SD_5_1);
+			Reinterleave(driveIdx, kATDiskInterleave_SD_5_1);
 		if (ImGui::MenuItem("4:1 (Indus GT SuperSynchromesh)"))
-			Reinterleave(di, kATDiskInterleave_SD_4_1);
+			Reinterleave(driveIdx, kATDiskInterleave_SD_4_1);
 		if (ImGui::MenuItem("2:1 (SD)"))
-			Reinterleave(di, kATDiskInterleave_SD_2_1);
+			Reinterleave(driveIdx, kATDiskInterleave_SD_2_1);
 
 		ImGui::Separator();  // ED group
 		if (ImGui::MenuItem("13:1 (ED)"))
-			Reinterleave(di, kATDiskInterleave_ED_13_1);
+			Reinterleave(driveIdx, kATDiskInterleave_ED_13_1);
 		if (ImGui::MenuItem("12:1 (ED improved)"))
-			Reinterleave(di, kATDiskInterleave_ED_12_1);
+			Reinterleave(driveIdx, kATDiskInterleave_ED_12_1);
 
 		ImGui::Separator();  // DD group
 		if (ImGui::MenuItem("16:1 (815 DD)"))
-			Reinterleave(di, kATDiskInterleave_DD_16_1);
+			Reinterleave(driveIdx, kATDiskInterleave_DD_16_1);
 		if (ImGui::MenuItem("15:1 (XF551 DD)"))
-			Reinterleave(di, kATDiskInterleave_DD_15_1);
+			Reinterleave(driveIdx, kATDiskInterleave_DD_15_1);
 		if (ImGui::MenuItem("9:1 (XF551 DD fast)"))
-			Reinterleave(di, kATDiskInterleave_DD_9_1);
+			Reinterleave(driveIdx, kATDiskInterleave_DD_9_1);
 		if (ImGui::MenuItem("7:1 (US Doubler DD fast)"))
-			Reinterleave(di, kATDiskInterleave_DD_7_1);
+			Reinterleave(driveIdx, kATDiskInterleave_DD_7_1);
 
 		ImGui::EndMenu();
 	}
@@ -697,15 +770,21 @@ static void RenderDiskDriveContextMenu(int driveIdx, ATDiskInterface& di,
 
 	// --- Virtual disk operations ---
 	// MountFolder() internally calls UnloadDisk(), so no pre-eject needed.
-	// The folder dialog is async — don't eject until the user actually picks a folder.
+	// The folder dialog is async — don't eject until the user actually
+	// picks a folder.  Windows does prompt if the current image is dirty
+	// (uidisk.cpp ID_CONTEXT_MOUNTFOLDERDOS2/SDFS).
 	if (ImGui::MenuItem("Mount folder as virtual DOS 2 disk...")) {
-		auto *info = new MountFolderInfo{driveIdx, false};
-		SDL_ShowOpenFolderDialog(MountFolderCallback, info, window, nullptr, false);
+		ConfirmDiscardIfDirty(driveIdx, [driveIdx, window]() {
+			auto *info = new MountFolderInfo{driveIdx, false};
+			SDL_ShowOpenFolderDialog(MountFolderCallback, info, window, nullptr, false);
+		});
 	}
 
 	if (ImGui::MenuItem("Mount folder as virtual SpartaDOS disk...")) {
-		auto *info = new MountFolderInfo{driveIdx, true};
-		SDL_ShowOpenFolderDialog(MountFolderCallback, info, window, nullptr, false);
+		ConfirmDiscardIfDirty(driveIdx, [driveIdx, window]() {
+			auto *info = new MountFolderInfo{driveIdx, true};
+			SDL_ShowOpenFolderDialog(MountFolderCallback, info, window, nullptr, false);
+		});
 	}
 
 	if (ImGui::MenuItem("Extract boot sectors for virtual DOS 2 disk...", nullptr, false, haveDisk)) {
@@ -804,25 +883,32 @@ void ATUIRenderDiskManager(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 			ImGui::SetNextItemWidth(-FLT_MIN);
 			if (ImGui::Combo("##wm", &wmIdx, kWriteModeLabels, 5)) {
 				if (wmIdx == 0) {
-					// "Off" = eject
-					if (loaded) di.UnloadDisk();
+					// "Off" = eject.  Prompt if dirty (matches Windows
+					// ATDiskDriveDialog::OnSelChanged -> ConfirmEject).
+					if (loaded)
+						ConfirmAndEject(driveIdx);
 				} else if (loaded) {
 					di.SetWriteMode(kWriteModeValues[wmIdx]);
 				}
 			}
 
-			// Browse button (matches Windows IDC_BROWSE)
+			// Browse button (matches Windows IDC_BROWSE).  Windows
+			// ATDiskDriveDialog checks ConfirmEject() before opening
+			// the file picker so unsaved changes aren't silently
+			// replaced by the new image.
 			ImGui::TableNextColumn();
 			if (ImGui::SmallButton("...")) {
-				ATUIShowOpenFileDialog('disk', DiskMountCallback,
-					(void *)(intptr_t)driveIdx, window,
-					kDiskFilters, 2, false);
+				ConfirmDiscardIfDirty(driveIdx, [driveIdx, window]() {
+					ATUIShowOpenFileDialog('disk', DiskMountCallback,
+						(void *)(intptr_t)driveIdx, window,
+						kDiskFilters, 2, false);
+				});
 			}
 
-			// Eject button (matches Windows IDC_EJECT)
+			// Eject button (matches Windows IDC_EJECT).  Prompts if dirty.
 			ImGui::TableNextColumn();
 			if (ImGui::SmallButton("Eject") && loaded)
-				di.UnloadDisk();
+				ConfirmAndEject(driveIdx);
 
 			// More button (context menu — matches Windows IDC_MORE / "+")
 			ImGui::TableNextColumn();

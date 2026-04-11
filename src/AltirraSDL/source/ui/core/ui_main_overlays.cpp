@@ -11,6 +11,7 @@
 #include <vd2/system/filesys.h>
 #include "ui_main.h"
 #include "ui_main_internal.h"
+#include "ui_confirm_dialog.h"
 #include "simulator.h"
 #include "uitypes.h"
 #include "diskinterface.h"
@@ -26,9 +27,14 @@ extern ATSimulator g_sim;
 
 // =========================================================================
 // Exit confirmation dialog
+//
+// Delegates to the reusable ATUIConfirm helper so the user gets full
+// keyboard navigation (Left/Right/Tab, Enter, Escape) with visual focus
+// highlight — matching Windows MessageBox behavior.
 // =========================================================================
 
-// Persistent message string — built when the dialog opens, displayed until closed.
+// Persistent message string — outlives the call stack of ATUIRenderExitConfirm
+// because the helper captures `.message` as a const char*.
 static VDStringA g_exitConfirmMsgUtf8;
 
 // Build the dirty-storage message, matching Windows ATUIConfirmDiscardAllStorageGetMessage().
@@ -100,70 +106,40 @@ static VDStringA BuildDirtyStorageMessage(ATSimulator &sim) {
 }
 
 void ATUIRenderExitConfirm(ATSimulator &sim, ATUIState &state) {
-	// First frame: build the message.
-	if (g_exitConfirmMsgUtf8.empty()) {
-		g_exitConfirmMsgUtf8 = BuildDirtyStorageMessage(sim);
-
-		// Windows Altirra always confirms on exit:
-		// - If dirty storage: lists dirty items + memory warning
-		// - If nothing dirty: still warns about emulation memory loss
-		if (g_exitConfirmMsgUtf8.empty())
-			g_exitConfirmMsgUtf8 = "Any unsaved work in emulation memory will be lost.\n\nAre you sure you want to exit?";
-	}
-
-	ImGui::SetNextWindowSize(ImVec2(440, 0), ImGuiCond_Appearing);
-	ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(),
-		ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-
-	bool open = state.showExitConfirm;
-	if (!ImGui::Begin("Confirm Exit", &open,
-			ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize
-			| ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
-		if (!open) {
-			state.showExitConfirm = false;
-			g_exitConfirmMsgUtf8.clear();
-		}
-		ImGui::End();
+	// Only queue the helper once per invocation cycle.  showExitConfirm
+	// is set true by the close handler; we flip it false immediately
+	// after queuing so the per-frame render call doesn't requeue.
+	if (!state.showExitConfirm)
 		return;
-	}
 
-	// User closed via title bar X button or ESC
-	if (!open || ATUICheckEscClose()) {
-		state.showExitConfirm = false;
-		g_exitConfirmMsgUtf8.clear();
-		ImGui::End();
+	state.showExitConfirm = false;
+
+	// Guard against the user mashing Close while a confirmation is
+	// already up — don't stack duplicate exit prompts.
+	if (ATUIIsConfirmDialogActive())
 		return;
-	}
 
-	ImGui::TextWrapped("%s", g_exitConfirmMsgUtf8.c_str());
-	ImGui::Separator();
+	g_exitConfirmMsgUtf8 = BuildDirtyStorageMessage(sim);
 
-	float buttonWidth = 120.0f;
-	float spacing = ImGui::GetStyle().ItemSpacing.x;
-	float totalWidth = buttonWidth * 2 + spacing;
-	ImGui::SetCursorPosX((ImGui::GetWindowWidth() - totalWidth) * 0.5f);
+	// Windows Altirra always confirms on exit:
+	// - If dirty storage: lists dirty items + memory warning
+	// - If nothing dirty: still warns about emulation memory loss
+	if (g_exitConfirmMsgUtf8.empty())
+		g_exitConfirmMsgUtf8 = "Any unsaved work in emulation memory will be lost.\n\nAre you sure you want to exit?";
 
-	if (ImGui::Button("OK", ImVec2(buttonWidth, 0))) {
-		state.showExitConfirm = false;
+	ATUIConfirmOptions opts;
+	opts.title        = "Confirm Exit";
+	opts.message      = g_exitConfirmMsgUtf8.c_str();
+	opts.confirmLabel = "Exit";
+	opts.cancelLabel  = "Cancel";
+	opts.destructive  = true;        // default focus on Cancel
+	opts.onConfirm    = [&state]() {
 		state.exitConfirmed = true;
-		g_exitConfirmMsgUtf8.clear();
-		ImGui::End();
-
-		// Push quit event so the main loop exits.
 		SDL_Event quit{};
 		quit.type = SDL_EVENT_QUIT;
 		SDL_PushEvent(&quit);
-		return;
-	}
-	ImGui::SameLine();
-	if (ImGui::Button("Cancel", ImVec2(buttonWidth, 0))) {
-		state.showExitConfirm = false;
-		g_exitConfirmMsgUtf8.clear();
-		ImGui::End();
-		return;
-	}
-
-	ImGui::End();
+	};
+	ATUIShowConfirm(std::move(opts));
 }
 
 // =========================================================================

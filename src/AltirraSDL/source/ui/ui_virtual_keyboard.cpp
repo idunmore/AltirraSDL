@@ -314,6 +314,73 @@ void ATUIVirtualKeyboard_ReleaseAll(ATSimulator &sim) {
 }
 
 // ---------------------------------------------------------------------------
+// Key bounding box — computed once from kOSKKeys.  Used to crop the
+// photographic border out of the keyboard BMP so the usable key area
+// fills the panel edge-to-edge on Android.
+// ---------------------------------------------------------------------------
+static bool s_keyBoundsInited = false;
+static float s_keyU0 = 0.0f, s_keyV0 = 0.0f;
+static float s_keyU1 = 1.0f, s_keyV1 = 1.0f;
+static float s_croppedAspect = 1024.0f / 448.0f;
+
+static void EnsureKeyBounds() {
+	if (s_keyBoundsInited)
+		return;
+	s_keyBoundsInited = true;
+
+	float u0 = 1.0f, v0 = 1.0f, u1 = 0.0f, v1 = 0.0f;
+	for (int i = 0; i < kOSKKeyCount; i++) {
+		const ATOSKKeyDef &k = kOSKKeys[i];
+		if (k.u0 < u0) u0 = k.u0;
+		if (k.v0 < v0) v0 = k.v0;
+		if (k.u1 > u1) u1 = k.u1;
+		if (k.v1 > v1) v1 = k.v1;
+	}
+
+	// Small safety margin so the outermost key borders aren't clipped.
+	const float kMargin = 0.003f;
+	u0 -= kMargin; if (u0 < 0.0f) u0 = 0.0f;
+	v0 -= kMargin; if (v0 < 0.0f) v0 = 0.0f;
+	u1 += kMargin; if (u1 > 1.0f) u1 = 1.0f;
+	v1 += kMargin; if (v1 > 1.0f) v1 = 1.0f;
+
+	s_keyU0 = u0;
+	s_keyV0 = v0;
+	s_keyU1 = u1;
+	s_keyV1 = v1;
+
+	// Cropped aspect ratio, computed against the reference texture
+	// size.  The generated BMP (tools/bake_keyboard.py) is always
+	// 1024 x 448, so this is a stable compile-time constant pair and
+	// does NOT depend on the texture having been loaded yet.  This
+	// matters because ATUIVirtualKeyboard_GetDisplayInset() — which
+	// drives the emulator viewport — is called from the main loop
+	// BEFORE the first ATUIRenderVirtualKeyboard() that would trigger
+	// EnsureTexture().
+	const float kTexW = 1024.0f;
+	const float kTexH = 448.0f;
+	float cw = (u1 - u0) * kTexW;
+	float ch = (v1 - v0) * kTexH;
+	if (ch > 0.0f)
+		s_croppedAspect = cw / ch;
+}
+
+// Toolbar height (Android only) — scaled by the window display scale
+// so CLOSE/ABC buttons stay comfortably finger-sized on high-DPI
+// phones.  Returns 0 on desktop.  Shared between ComputeKeyboardRect
+// (which reserves this space in the panel) and ATUIRenderVirtualKeyboard
+// (which positions the buttons inside it).
+static float GetToolbarHeight() {
+#ifdef __ANDROID__
+	float scale = SDL_GetWindowDisplayScale(g_pWindow);
+	if (scale < 1.0f) scale = 1.0f;
+	return 56.0f * scale;
+#else
+	return 0.0f;
+#endif
+}
+
+// ---------------------------------------------------------------------------
 // Placement / layout computation
 // ---------------------------------------------------------------------------
 static const float kKeyboardAspect = 1024.0f / 448.0f;  // reference aspect ratio
@@ -346,6 +413,14 @@ static void ComputeKeyboardRect(int placement, ImVec2 *outPos, ImVec2 *outSize) 
 	float insetL = (float)insets.left;
 	float insetT = (float)insets.top;
 
+	// Cropped aspect ratio (key bounding box) gives us a tighter panel
+	// that isn't padded by the photo's empty border.  Falls back to the
+	// raw keyboard aspect until the texture has loaded and bounds have
+	// been computed.
+	EnsureKeyBounds();
+	const float aspect = s_croppedAspect;
+	const float kToolbarH = GetToolbarHeight();
+
 	if (resolved == kOSKPlacement_Right) {
 		// Landscape: 50/50 split between screen and keyboard.
 		float availH = (float)winH - menuH - insetT - insetB;
@@ -353,40 +428,53 @@ static void ComputeKeyboardRect(int placement, ImVec2 *outPos, ImVec2 *outSize) 
 		float availW = (float)winW - insetL - insetR;
 		if (availW < 1.0f) availW = 1.0f;
 
-		// Keyboard occupies right 50% of usable width
-		float kbdW = availW * 0.5f;
-		float kbdH = kbdW / kKeyboardAspect;
-		// Clamp height to available
-		if (kbdH > availH) {
-			kbdH = availH;
-			kbdW = kbdH * kKeyboardAspect;
+		// Keyboard occupies right 50% of usable width.  The keyboard
+		// image area is sized by the *cropped* aspect so the keys fill
+		// the panel edge to edge; toolbar chrome sits above it.
+		float panelW = availW * 0.5f;
+		float kbdAreaH = panelW / aspect;
+		float panelH = kbdAreaH + kToolbarH;
+		if (panelH > availH) {
+			panelH = availH;
+			kbdAreaH = panelH - kToolbarH;
+			if (kbdAreaH < 1.0f) kbdAreaH = 1.0f;
+			panelW = kbdAreaH * aspect;
 		}
 
-		outPos->x = (float)winW - insetR - kbdW;
-		outPos->y = menuH + insetT + (availH - kbdH) * 0.5f;
-		outSize->x = kbdW;
-		outSize->y = kbdH;
+		outPos->x = (float)winW - insetR - panelW;
+		outPos->y = menuH + insetT + (availH - panelH) * 0.5f;
+		outSize->x = panelW;
+		outSize->y = panelH;
 	} else {
 		// Portrait: keyboard placed directly below the emulator display,
-		// above the bottom safe area.  It gets up to 50% of usable height.
+		// above the bottom safe area.  Keyboard image area gets the
+		// cropped aspect; toolbar chrome adds extra height on top.
 		float availH = (float)winH - menuH - insetT - insetB;
 		if (availH < 1.0f) availH = 1.0f;
 		float availW = (float)winW - insetL - insetR;
 		if (availW < 1.0f) availW = 1.0f;
 
-		float kbdH = availW / kKeyboardAspect;
+		float panelW = availW;
+		float kbdAreaH = panelW / aspect;
+		float panelH = kbdAreaH + kToolbarH;
+
 		float maxH = availH * 0.50f;
-		if (kbdH > maxH) kbdH = maxH;
-		float kbdW = kbdH * kKeyboardAspect;
+		if (panelH > maxH) {
+			panelH = maxH;
+			kbdAreaH = panelH - kToolbarH;
+			if (kbdAreaH < 1.0f) kbdAreaH = 1.0f;
+			panelW = kbdAreaH * aspect;
+		}
 
 		// Position above the bottom inset, not at absolute bottom
-		outPos->x = insetL + (availW - kbdW) * 0.5f;
-		outPos->y = (float)winH - insetB - kbdH;
-		outSize->x = kbdW;
-		outSize->y = kbdH;
+		outPos->x = insetL + (availW - panelW) * 0.5f;
+		outPos->y = (float)winH - insetB - panelH;
+		outSize->x = panelW;
+		outSize->y = panelH;
 	}
 #else
-	// Desktop: original behavior
+	// Desktop: original behavior — full image (no crop) with the
+	// baked keyboard aspect ratio.
 	if (resolved == kOSKPlacement_Right) {
 		float availH = (float)winH - menuH;
 		float kbdW = availH * kKeyboardAspect;
@@ -447,12 +535,38 @@ void ATUIVirtualKeyboard_GetDisplayInset(bool visible, int placement,
 // ---------------------------------------------------------------------------
 // Hit testing
 // ---------------------------------------------------------------------------
+//
+// Map a key's texture UV (as baked in kOSKKeys) into pixel coordinates
+// within the displayed image.  On Android the image shows only the
+// cropped sub-region [s_keyU0..s_keyU1] x [s_keyV0..s_keyV1] stretched
+// to imgSize; on desktop the image shows the full [0..1] UV range.
+static inline void KeyUVToPixels(float ku0, float kv0, float ku1, float kv1,
+	ImVec2 imgPos, ImVec2 imgSize,
+	float &x0, float &y0, float &x1, float &y1)
+{
+#ifdef __ANDROID__
+	float uRange = s_keyU1 - s_keyU0;
+	float vRange = s_keyV1 - s_keyV0;
+	if (uRange < 1e-6f) uRange = 1.0f;
+	if (vRange < 1e-6f) vRange = 1.0f;
+	x0 = imgPos.x + (ku0 - s_keyU0) / uRange * imgSize.x;
+	y0 = imgPos.y + (kv0 - s_keyV0) / vRange * imgSize.y;
+	x1 = imgPos.x + (ku1 - s_keyU0) / uRange * imgSize.x;
+	y1 = imgPos.y + (kv1 - s_keyV0) / vRange * imgSize.y;
+#else
+	x0 = imgPos.x + ku0 * imgSize.x;
+	y0 = imgPos.y + kv0 * imgSize.y;
+	x1 = imgPos.x + ku1 * imgSize.x;
+	y1 = imgPos.y + kv1 * imgSize.y;
+#endif
+}
+
 static int HitTestKey(ImVec2 imgPos, ImVec2 imgSize, ImVec2 point) {
 	for (int i = 0; i < kOSKKeyCount; i++) {
-		float x0 = imgPos.x + kOSKKeys[i].u0 * imgSize.x;
-		float y0 = imgPos.y + kOSKKeys[i].v0 * imgSize.y;
-		float x1 = imgPos.x + kOSKKeys[i].u1 * imgSize.x;
-		float y1 = imgPos.y + kOSKKeys[i].v1 * imgSize.y;
+		float x0, y0, x1, y1;
+		KeyUVToPixels(kOSKKeys[i].u0, kOSKKeys[i].v0,
+			kOSKKeys[i].u1, kOSKKeys[i].v1,
+			imgPos, imgSize, x0, y0, x1, y1);
 
 		if (point.x >= x0 && point.x < x1 && point.y >= y0 && point.y < y1)
 			return i;
@@ -558,32 +672,47 @@ bool ATUIRenderVirtualKeyboard(ATSimulator &sim, bool visible, int placement) {
 	// On mobile, reserve a toolbar row above the keyboard image for
 	// the CLOSE and ABC buttons.  On desktop the buttons overlay the
 	// image in the top-left corner so no extra space is needed.
+	//
+	// On mobile we also crop the keyboard BMP to the actual key
+	// bounding box so the photographic border (and the blank "Atari"
+	// logo strip on the top-left) don't steal panel area.  The cropped
+	// region is stretched to fill panelW x kbdAreaH exactly, since the
+	// panel was sized by ComputeKeyboardRect using s_croppedAspect.
 #ifdef __ANDROID__
-	float toolbarH = panelSize.y * 0.10f;
-	if (toolbarH < 44.0f) toolbarH = 44.0f;
+	EnsureKeyBounds();
+	const float toolbarH = GetToolbarHeight();
 	float kbdAreaH = panelSize.y - toolbarH;
-#else
-	float toolbarH = 0.0f;
-	float kbdAreaH = panelSize.y;
-#endif
+	if (kbdAreaH < 1.0f) kbdAreaH = 1.0f;
 
-	// Compute image size maintaining aspect ratio, centered in the
-	// keyboard area (below the toolbar on mobile).
+	// Image fills the full panel width and the keyboard area below
+	// the toolbar.  Panel was sized with s_croppedAspect so this ratio
+	// matches the visible UV region and avoids distortion.
+	ImVec2 imgSize(panelSize.x, kbdAreaH);
+	ImVec2 imgPos(panelPos.x, panelPos.y + toolbarH);
+
+	// Crop UV range — only the actual key area of the texture.
+	ImVec2 uv0(s_keyU0, s_keyV0);
+	ImVec2 uv1(s_keyU1, s_keyV1);
+#else
+	// Desktop: full-texture (no crop), centered with aspect-fit.
 	float scaleX = panelSize.x / (float)s_texW;
-	float scaleY = kbdAreaH / (float)s_texH;
+	float scaleY = panelSize.y / (float)s_texH;
 	float scale = (scaleX < scaleY) ? scaleX : scaleY;
 
 	ImVec2 imgSize((float)s_texW * scale, (float)s_texH * scale);
-	ImVec2 imgPos = ImGui::GetCursorScreenPos();
-	imgPos.x += (panelSize.x - imgSize.x) * 0.5f;
-	imgPos.y += toolbarH + (kbdAreaH - imgSize.y) * 0.5f;
+	ImVec2 imgPos(panelPos.x + (panelSize.x - imgSize.x) * 0.5f,
+	              panelPos.y + (panelSize.y - imgSize.y) * 0.5f);
+
+	ImVec2 uv0(0.0f, 0.0f);
+	ImVec2 uv1(1.0f, 1.0f);
+#endif
 
 	// Store for touch hit testing in HandleEvent
 	s_lastImgPos = imgPos;
 	s_lastImgSize = imgSize;
 
 	ImGui::SetCursorScreenPos(imgPos);
-	ImGui::Image(texID, imgSize);
+	ImGui::Image(texID, imgSize, uv0, uv1);
 
 	ImDrawList *dl = ImGui::GetWindowDrawList();
 	ImVec2 mousePos = ImGui::GetMousePos();
@@ -596,30 +725,28 @@ bool ATUIRenderVirtualKeyboard(ATSimulator &sim, bool visible, int placement) {
 #ifdef __ANDROID__
 		// Buttons sit in the toolbar row above the keyboard image.
 		// Sized to be comfortable touch targets (same height as toolbar).
-		float btnH = toolbarH * 0.80f;
-		float btnW = btnH * 2.2f;  // wider than tall for finger target
-		float btnGap = 8.0f;
-		float btnY0 = panelPos.y + (toolbarH - btnH) * 0.5f;
-		float btnY1 = btnY0 + btnH;
-		float btnX0 = panelPos.x + 8.0f;
-#else
-		// Desktop: small close button in top-left of keyboard area
-		float btnH = imgSize.y * 0.09f;
-		float btnW = imgSize.x * 0.065f;
-		float btnGap = 4.0f;
-		float btnY0 = imgPos.y + imgSize.y * 0.01f;
-		float btnY1 = btnY0 + btnH;
-		float btnX0 = imgPos.x + imgSize.x * 0.005f;
-#endif
+		const float btnH = toolbarH * 0.80f;
+		const float btnW = btnH * 2.2f;  // wider than tall for finger target
+		const float btnGap = 8.0f;
+		const float btnY0 = panelPos.y + (toolbarH - btnH) * 0.5f;
+		const float btnY1 = btnY0 + btnH;
+		const float btnX0 = panelPos.x + 8.0f;
 
 		s_closeBtnMin = ImVec2(btnX0, btnY0);
 		s_closeBtnMax = ImVec2(btnX0 + btnW, btnY1);
-
-#ifdef __ANDROID__
 		s_textInputBtnMin = ImVec2(btnX0 + btnW + btnGap, btnY0);
 		s_textInputBtnMax = ImVec2(btnX0 + btnW + btnGap + btnW, btnY1);
 #else
-		// No text input button on desktop — zero rect so hit test never matches
+		// Desktop: small close button in top-left of keyboard area.
+		// No text input button — zero rect so hit test never matches.
+		const float btnH = imgSize.y * 0.09f;
+		const float btnW = imgSize.x * 0.065f;
+		const float btnY0 = imgPos.y + imgSize.y * 0.01f;
+		const float btnY1 = btnY0 + btnH;
+		const float btnX0 = imgPos.x + imgSize.x * 0.005f;
+
+		s_closeBtnMin = ImVec2(btnX0, btnY0);
+		s_closeBtnMax = ImVec2(btnX0 + btnW, btnY1);
 		s_textInputBtnMin = s_textInputBtnMax = ImVec2(0, 0);
 #endif
 
@@ -706,10 +833,12 @@ bool ATUIRenderVirtualKeyboard(ATSimulator &sim, bool visible, int placement) {
 		s_hoverKey = HitTestKey(imgPos, imgSize, mousePos);
 
 	for (int i = 0; i < kOSKKeyCount; i++) {
-		ImVec2 keyMin(imgPos.x + kOSKKeys[i].u0 * imgSize.x,
-		              imgPos.y + kOSKKeys[i].v0 * imgSize.y);
-		ImVec2 keyMax(imgPos.x + kOSKKeys[i].u1 * imgSize.x,
-		              imgPos.y + kOSKKeys[i].v1 * imgSize.y);
+		float x0, y0, x1, y1;
+		KeyUVToPixels(kOSKKeys[i].u0, kOSKKeys[i].v0,
+			kOSKKeys[i].u1, kOSKKeys[i].v1,
+			imgPos, imgSize, x0, y0, x1, y1);
+		ImVec2 keyMin(x0, y0);
+		ImVec2 keyMax(x1, y1);
 
 		bool isPressed = (s_pressedKey == i);
 		bool isFocused = (s_focusedKey == i);

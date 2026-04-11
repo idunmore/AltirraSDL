@@ -37,6 +37,7 @@
 #include "ui_testmode.h"
 #include "ui_progress.h"
 #include "ui_emuerror.h"
+#include "ui_confirm_dialog.h"
 #include "ui_virtual_keyboard.h"
 #include "display_sdl3_impl.h"
 #include "simulator.h"
@@ -1080,6 +1081,10 @@ void ATUIRenderFrame(ATSimulator &sim, VDVideoDisplaySDL3 &display,
 
 	// Drag-and-drop visual feedback overlay
 	ATUIRenderDragDropOverlay();
+
+	// Reusable confirmation dialogs — drawn last so they sit above
+	// every other window.  Also re-centers and captures keyboard focus.
+	ATUIRenderConfirmDialogs();
 
 	ImGui::Render();
 	if (s_usingGLBackend) {

@@ -73,6 +73,7 @@ target_sources(AltirraSDL PRIVATE
     source/ui/core/ui_main_aboutdialogs.cpp
     source/ui/core/ui_main_compat.cpp
     source/ui/core/ui_main_overlays.cpp
+    source/ui/core/ui_confirm_dialog.cpp
     source/ui/core/ui_indicators.cpp
     source/ui/core/ui_fonts.cpp
 
