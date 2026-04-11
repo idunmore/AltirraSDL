@@ -7,6 +7,34 @@ android {
     compileSdk 36
     ndkVersion '28.2.13676358'
 
+    // Override the default debug signing config to use a stable,
+    // repo-committed keystore instead of AGP's auto-generated
+    // ~/.android/debug.keystore.
+    //
+    // AGP's default keystore is machine-local and fresh on every CI
+    // runner, so every GitHub Actions build used to produce an APK
+    // with a different signer — installing a new nightly over the
+    // previous one would then fail with INSTALL_FAILED_UPDATE_INCOMPATIBLE
+    // ("Update failed / package signatures do not match") and force
+    // the user to uninstall first.  Committing a single well-known
+    // debug keystore (android/app/debug.keystore) makes every build
+    // across every machine and every CI run share the same signer,
+    // so `adb install -r` and sideloaded nightly updates keep working.
+    //
+    // This is a *debug* keystore — the credentials are intentionally
+    // public and hard-coded.  Do NOT use it to sign Play Store
+    // releases; it is a developer convenience equivalent to AGP's
+    // own debug keystore, which ships with the same public password
+    // ("android") across every Android Studio install.
+    signingConfigs {
+        debug {
+            storeFile file('debug.keystore')
+            storePassword 'altirra-debug'
+            keyAlias 'altirra'
+            keyPassword 'altirra-debug'
+        }
+    }
+
     defaultConfig {
         applicationId "org.altirra.app"
         minSdk 24           // Android 7.0 — covers 99%+ of active devices
@@ -33,13 +61,18 @@ android {
         debug {
             debuggable true
             jniDebuggable true
+            // Explicit for clarity — matches the default, but makes it
+            // obvious that debug uses the project-owned keystore (the
+            // signingConfigs.debug override above redirects it away
+            // from AGP's machine-local ~/.android/debug.keystore).
+            signingConfig signingConfigs.debug
         }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt')
-            // Sign release builds with the debug keystore so we can
-            // install them directly on a developer device via adb
-            // without provisioning a production keystore.
+            // Sign release builds with the same project-owned keystore
+            // as debug so both variants share a signer and can upgrade
+            // each other on-device without requiring an uninstall.
             signingConfig signingConfigs.debug
         }
     }

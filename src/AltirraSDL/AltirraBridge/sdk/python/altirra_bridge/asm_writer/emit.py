@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 import subprocess
-from typing import Optional, TYPE_CHECKING
+from typing import Dict, Optional, TYPE_CHECKING
 
 from . import code as _code
 from . import data as _data
@@ -159,11 +159,26 @@ def write_equates(
     Scans segment bytes for operand addresses, collects OS/HW names
     from the official Atari XL OS symbol table, and emits equate
     definitions grouped by category.
+
+    Project labels win over OS symbols at overlapping addresses: the
+    SDK's ``write_segment`` pipeline substitutes project names for
+    Altirra's OS names in the disassembly, so emitting the OS name
+    here as well would produce a dead equate that nothing uses. Any
+    address that has a project label is suppressed from the OS-name
+    emission below, and the project label is emitted in its place.
     """
     from .._analyzer_tables import OPCODES, HW_READ, HW_WRITE
     from ..symbols import get_os_symbols
 
     os_syms = get_os_symbols()  # {addr: (name, comment)}
+
+    # Addresses that the project has renamed. The project label
+    # always wins, so these are suppressed from OS-symbol emission.
+    project_label_addrs = set()
+    for a in proj.labels.keys():
+        if isinstance(a, str):
+            a = int(a.lstrip("$"), 16)
+        project_label_addrs.add(a)
 
     # Build set of addresses within segments (these become code labels, not equates)
     seg_addrs = set()
@@ -204,6 +219,11 @@ def write_equates(
     for addr in sorted(referenced):
         if addr in seg_addrs:
             continue  # will be a code/data label
+        # Project label wins — skip any OS name at this address.
+        # The project label is emitted later in the game-variable
+        # block so disassembly ``stx entity_timer`` resolves.
+        if addr in project_label_addrs and not (0xD000 <= addr <= 0xD40F):
+            continue
 
         # HW registers — emit both read and write names
         if 0xD000 <= addr <= 0xD01F:
@@ -253,11 +273,26 @@ def write_equates(
         categories[cat][1].append(line)
         emitted_names.add(name)
 
-    # Add ALL base OS symbols that could appear in Altirra's DISASM
-    # output (Altirra resolves any address to SYMBOL+offset).
-    # Without these equates, MADS would fail on "nop FR1+3" etc.
+    # Add the hardware-register and OS-ROM OS symbols even if the
+    # scan above didn't flag them — the segment-emit pipeline may
+    # substitute them into operands (e.g. ``sta NMIEN``) and MADS
+    # would otherwise fail on "Undeclared label". Zero-page and
+    # page-2 OS symbols are intentionally NOT bulk-added anymore:
+    # the new code-emission path never substitutes those, so
+    # emitting them here would just be dead-weight equates.
     for addr, (name, comment) in sorted(os_syms.items()):
         if addr in seg_addrs or name in emitted_names:
+            continue
+        if addr in project_label_addrs and not (0xD000 <= addr <= 0xD40F):
+            continue
+        hw_or_rom = (
+            (0xD000 <= addr <= 0xD01F)
+            or (0xD200 <= addr <= 0xD20F)
+            or (0xD300 <= addr <= 0xD303)
+            or (0xD400 <= addr <= 0xD40F)
+            or (addr >= 0xE400)
+        )
+        if not hw_or_rom:
             continue
         # Only emit base symbols (not aliases at the same address)
         if 0xD000 <= addr <= 0xD01F:
@@ -367,8 +402,49 @@ def write_segment(
 
     # Build labels: all project labels for operand resolution,
     # but only emit definitions for labels within this segment.
-    all_labels = dict(proj.labels)
-    emit_labels = {a: n for a, n in all_labels.items()
+    #
+    # Operand resolution also uses the OS/HW symbol database so
+    # references like ``sta WSYNC`` appear even when the project
+    # didn't explicitly alias those addresses. Project labels
+    # override OS names at overlapping addresses. OS symbols whose
+    # address falls inside any segment are skipped — those are
+    # in-program locations and should be named by the project or
+    # by a synthesised ``loc_`` label instead.
+    from ..symbols import get_os_symbols
+    os_syms = get_os_symbols()  # {addr: (name, comment)}
+    seg_ranges = [(s.start, s.end) for s in image.segments]
+
+    def _in_any_segment(a: int) -> bool:
+        return any(s <= a <= e for s, e in seg_ranges)
+
+    def _is_equatable(a: int) -> bool:
+        # Hardware register range and OS ROM entry points have
+        # fixed hardware meaning — always safe to name. Zero-page
+        # and page-2 locations are usually repurposed by games for
+        # their own variables, so those addresses are intentionally
+        # left to project labels only (raw hex is more honest than
+        # an OS name that misdescribes a game variable).
+        if 0xD000 <= a <= 0xD01F:
+            return True
+        if 0xD200 <= a <= 0xD20F:
+            return True
+        if 0xD300 <= a <= 0xD303:
+            return True
+        if 0xD400 <= a <= 0xD40F:
+            return True
+        if a >= 0xE400:
+            return True
+        return False
+
+    all_labels: Dict[int, str] = {}
+    for a, (n, _c) in os_syms.items():
+        if _in_any_segment(a):
+            continue
+        if not _is_equatable(a):
+            continue
+        all_labels[a] = n
+    all_labels.update(proj.labels)
+    emit_labels = {a: n for a, n in proj.labels.items()
                    if start <= a <= end}
 
     # Build region map

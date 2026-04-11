@@ -225,6 +225,32 @@ fi
 info "NDK: $ANDROID_NDK_HOME"
 
 # =========================================================================
+# Step 3.5: Verify project-owned signing keystore is present
+# =========================================================================
+#
+# android/app/build.gradle overrides signingConfigs.debug to use a
+# stable, repo-committed keystore at android/app/debug.keystore.  The
+# key point is that every build — local, CI, every machine — signs
+# with the same cert, so `adb install -r` and sideloaded nightly
+# updates keep working instead of failing with "Update failed /
+# package signatures do not match".
+#
+# AGP's default keystore (~/.android/debug.keystore) is machine-local
+# and regenerated on each GitHub runner, which is why we override it.
+#
+# The keystore is committed to the repo (checked in via git), so it
+# should always be present — we only guard against a corrupt or
+# missing checkout here.
+
+KEYSTORE="$ANDROID_DIR/app/debug.keystore"
+if [ ! -f "$KEYSTORE" ]; then
+    die "Debug keystore missing: $KEYSTORE
+The keystore should be committed to the repo.  Restore it with:
+  git checkout -- android/app/debug.keystore"
+fi
+info "Debug keystore: $KEYSTORE"
+
+# =========================================================================
 # Step 4: SDL3 source + Gradle wrapper
 # =========================================================================
 
@@ -361,8 +387,14 @@ Common fixes:
   - Java errors: ensure JAVA_HOME points to JDK $MIN_JAVA_VERSION+"
 
 # =========================================================================
-# Step 6: Sign APK (optional, --sign flag)
+# Step 6: Locate output APK
 # =========================================================================
+#
+# Gradle signs with ~/.altirra-debug.jks during assembleDebug /
+# assembleRelease (see android/app/build.gradle signingConfigs.debug),
+# so no post-build resign step is needed.  The legacy --sign flag is
+# still accepted on the command line for backward compatibility but is
+# a no-op: every build is now signed with the project keystore.
 
 if [ "$BUILD_TYPE" = "release" ]; then
     APK_DIR="$ANDROID_DIR/app/build/outputs/apk/release"
@@ -378,62 +410,8 @@ fi
 APK_PATH=$(ls "$APK_DIR"/*.apk 2>/dev/null | head -1)
 APK_NAME=$(basename "${APK_PATH:-app-${BUILD_TYPE}.apk}")
 
-if [ "${SIGN_APK:-0}" = "1" ] && [ -f "$APK_PATH" ]; then
-    KEYSTORE="$HOME/.altirra-debug.jks"
-    KS_PASS="altirra-debug"
-    KS_ALIAS="altirra"
-
-    # ── Find apksigner in build-tools ────────────────────────────────
-    APKSIGNER=""
-    for bt_dir in $(ls -d "$ANDROID_HOME/build-tools/"* 2>/dev/null | sort -V -r); do
-        if [ -x "$bt_dir/apksigner" ]; then
-            APKSIGNER="$bt_dir/apksigner"
-            break
-        fi
-    done
-    if [ -z "$APKSIGNER" ]; then
-        die "apksigner not found in $ANDROID_HOME/build-tools/*/
-Install build-tools: sdkmanager --install 'build-tools;${REQUIRED_BUILD_TOOLS}'"
-    fi
-
-    # ── Find keytool ─────────────────────────────────────────────────
-    KEYTOOL=""
-    if command -v keytool &>/dev/null; then
-        KEYTOOL="keytool"
-    elif [ -n "${JAVA_HOME:-}" ] && [ -x "$JAVA_HOME/bin/keytool" ]; then
-        KEYTOOL="$JAVA_HOME/bin/keytool"
-    fi
-    if [ -z "$KEYTOOL" ]; then
-        die "keytool not found. Ensure Java JDK is installed and on PATH."
-    fi
-
-    # ── Generate debug keystore if it doesn't exist ──────────────────
-    if [ ! -f "$KEYSTORE" ]; then
-        info "Generating debug keystore at $KEYSTORE ..."
-        "$KEYTOOL" -genkey -v \
-            -keystore "$KEYSTORE" \
-            -keyalg RSA -keysize 2048 \
-            -validity 10000 \
-            -alias "$KS_ALIAS" \
-            -storepass "$KS_PASS" \
-            -keypass "$KS_PASS" \
-            -dname "CN=Altirra Debug,O=Altirra,C=US" \
-            2>&1 | tail -1
-        ok "Debug keystore created"
-    fi
-
-    # ── Sign the APK ─────────────────────────────────────────────────
-    info "Signing APK..."
-    "$APKSIGNER" sign \
-        --ks "$KEYSTORE" \
-        --ks-pass "pass:$KS_PASS" \
-        --ks-key-alias "$KS_ALIAS" \
-        --key-pass "pass:$KS_PASS" \
-        "$APK_PATH" \
-        || die "APK signing failed"
-
-    # apksigner signs in place — APK_PATH/APK_NAME are unchanged.
-    ok "APK signed (debug keystore)"
+if [ "${SIGN_APK:-0}" = "1" ]; then
+    info "--sign is a no-op — APK is already signed by Gradle with $KEYSTORE"
 fi
 
 # =========================================================================
