@@ -33,7 +33,7 @@ AltirraSDL is a fork that replaces the Win32-based frontend with SDL3 for graphi
 
 ## Current status
 
-**Work in progress.** Core emulation works. The ImGui-based UI covers most of functionality, but also many elements aren't finished, or have poor performance in comparison to original emulator.
+**Work in progress.** Core emulation works. The ImGui-based UI covers most of functionality, but some elements aren't finished.
 
 ## AI disclosure
 
