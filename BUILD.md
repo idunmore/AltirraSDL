@@ -49,6 +49,7 @@ The `build.sh` script automates the CMake workflow on all platforms.
 |------|----------|
 | `build/<preset>/src/AltirraSDL/AltirraSDL` | Executable |
 | `build/<preset>/AltirraSDL-<ver>-<platform>.zip` | Binary distribution (with `--package`) |
+| `build/<preset>/AltirraSDL-<ver>-macos.dmg` | macOS disk image (with `--package`, macOS only) |
 | `build/<preset>/AltirraSDL-<ver>-src.tar.gz` | Source archive (with `--source`) |
 
 The binary archive follows Altirra's distribution convention:
@@ -437,7 +438,90 @@ instructions if anything is missing. Common issues:
 - **NDK version mismatch** — install the NDK version shown in the error
   via `sdkmanager --install 'ndk;<version>'`.
 
-See [PORTING/BUILD.md](PORTING/BUILD.md) for detailed internals.
+---
+
+## macOS Distribution
+
+The macOS build path has two distinct modes — **dev mode** (fast
+iteration against a system SDL3) and **distribution mode** (a
+self-contained `.app` bundle + `.dmg`).
+
+### Dev mode — fast iteration
+
+```bash
+brew install cmake sdl3 sdl3_image
+./build.sh
+open build/macos-release/src/AltirraSDL/AltirraSDL.app
+```
+
+`./build.sh` without `--package` links the executable against the
+Homebrew-installed SDL3 (via `find_package`). The `.app` runs fine on
+your machine but is **not** redistributable — the Mach-O load commands
+reference absolute Homebrew paths (`/opt/homebrew/opt/sdl3/lib/...`),
+so copying the `.app` to another Mac may fail at launch with "Library
+not loaded" (unless that Mac happens to have Homebrew SDL3 installed
+at the same prefix). The CMake configure step prints a `[macOS]`
+warning block reminding you of this when a system SDL3 is detected.
+
+### Distribution mode — self-contained .app + DMG
+
+```bash
+./build.sh --release --librashader --package
+```
+
+On macOS `--package` automatically sets `-DALTIRRA_FETCH_SDL3=ON` so
+SDL3 is built from source alongside AltirraSDL (see the "Packaging
+implies a self-contained build" block in `build.sh`). Source-built
+SDL3 has `@rpath/libSDL3.0.dylib` install names, which resolve
+correctly against the bundled dylib at runtime.
+
+Outputs in `build/macos-release/`:
+
+| File | Contents |
+|------|----------|
+| `AltirraSDL-<ver>-macos.zip` | Portable archive — unzip anywhere |
+| `AltirraSDL-<ver>-macos.dmg` | Drag-to-Applications disk image |
+
+Both archives contain the exact same `AltirraSDL-<ver>/` folder:
+
+```
+AltirraSDL-<ver>/
+    AltirraSDL.app/
+        Contents/
+            Info.plist              (NSGameControllerUsageDescription, etc.)
+            MacOS/
+                AltirraSDL          (Mach-O executable, ad-hoc codesigned)
+                libSDL3.0.dylib     (bundled, @rpath install name)
+                libSDL3_image.0.dylib
+                librashader.dylib   (if built with --librashader)
+                fonts/
+            Resources/
+    extras/
+        customeffects/
+        sampledevices/
+        deviceserver/
+    Copying
+```
+
+The `.app` is ad-hoc codesigned by the `package_altirra` CMake target
+so macOS 14+ grants `GameController.framework` access (required for
+USB / Bluetooth / MFi / DualShock / DualSense / Xbox pad enumeration).
+Users still see the standard Gatekeeper "unidentified developer"
+prompt on first launch — right-click → Open to bypass. For notarized
+releases a paid Apple Developer ID would be required; the nightly and
+tagged releases are ad-hoc signed only.
+
+### What the CI does
+
+`.github/workflows/macos.yml` runs `./build.sh --release --librashader
+--package` on `macos-14` (Apple Silicon), then verifies both archives
+with sanity checks: the zip is inspected with `cmake -E tar tf` and
+the DMG is mounted with `hdiutil attach` to confirm the
+`AltirraSDL.app/Contents/MacOS/AltirraSDL` binary and
+`libSDL3.0.dylib` are present inside the bundle. If either check
+fails the build fails. Both archives are uploaded as a single artifact
+and attached to the rolling `nightly` prerelease (on push to `main`)
+or the tagged release (on `v*` tag push).
 
 ---
 
@@ -507,10 +591,3 @@ On Windows, you can build both:
 The `windows-libs-only` preset builds just the core emulation libraries
 via CMake, which can be useful for testing that the core compiles with
 different compilers (GCC/Clang on Windows).
-
----
-
-## Detailed Build Documentation
-
-For internals (conditional compilation, SIMD selection, compatibility
-shims, test mode), see [PORTING/BUILD.md](PORTING/BUILD.md).

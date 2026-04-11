@@ -315,6 +315,113 @@ for the bridge built into the AltirraSDL APK.
 
 ---
 
+## 11. Reverse engineer a XEX to labelled MADS source
+
+**Goal**: take an unknown `game.xex`, build up labels and
+comments, export it as reassemblable MADS source with real
+routine labels, inline comments, and `.proc` blocks.
+
+This playbook covers both cases: games that load at their runtime
+address (straightforward) and games that self-relocate (need
+`reconstructed=True` mode).
+
+```python
+from altirra_bridge import AltirraBridge, Project, load_xex
+from altirra_bridge.asm_writer import write_all, verify
+from altirra_bridge.analyzer import recursive_descent, build_procedures
+
+# 1. Open the XEX and a fresh project
+img = load_xex("/path/to/game.xex")
+p   = Project.new("game", source_path="../game.xex")  # relative → portable
+# A simple code region covering the game's runtime range is often
+# enough to seed recursive descent — refine as you discover data.
+p.add_region(0xA000, 0xBFFF, "code", label="game_code")
+
+# 2. Boot the emulator and let it settle into attract mode
+a = AltirraBridge.from_token_file("/tmp/altirra-bridge-12345.token")
+a.boot("/path/to/game.xex")
+a.frame(300)
+a.pause()
+
+# 3. Declare the game's known entry points as labels (fill in
+#    from findings: RUN address, cold start, VBI/DLI vectors,
+#    state-machine dispatch, etc.)
+p.label(0xA000, "cold_start")
+p.label(0xB2A5, "vbi_handler")
+p.label(0xB500, "dli_handler")
+# ... one label per routine you identify; add comments too:
+p.comment(0xA000, "Disable NMI/IRQ, zero HW regs, enter game loop")
+
+# 4. Push labels to Altirra so bridge DISASM output uses them
+p.save("/path/to/game.pyA8/project.json")
+p.export_lab("/path/to/game.pyA8/_project.lab")
+a.sym_load("/path/to/game.pyA8/_project.lab")
+
+# 5a. Byte-exact export (games that load at runtime address)
+print(write_all(a, img, p, "/path/to/game.pyA8/exports"))
+print(verify(p, "/path/to/game.pyA8/exports"))
+# → "VERIFIED: byte-exact match (N bytes)"
+```
+
+For **self-relocating** games (very common on Atari 8-bit),
+byte-exact mode leaves the real game code labelled only with
+synthetic `loc_XXXX:` because the walker sees XEX-file addresses
+while project labels live at runtime addresses. Declare the
+relocation and switch to reconstructed mode:
+
+```python
+# The XEX holds the game code at $4100-$60FF; the relocator at
+# $4086 copies it to $A000-$BFFF at boot. Tell the exporter:
+p.mark_copy_source(
+    xex_start=0x4100,
+    xex_end=0x60FF,
+    runtime_start=0xA000,
+    copy_routine=0x4086,
+    runtime_entry=0xA000,
+)
+
+# Drop bootstrap code that becomes vestigial once the runtime
+# bytes are emitted directly at $A000:
+p.exclude_from_reconstructed(0x4080, 0x40FF)  # relocator body
+p.exclude_from_reconstructed(0x0400, 0x0419)  # init segment
+p.exclude_from_reconstructed(0x02E2, 0x02E3)  # INITAD vector
+p.save()
+
+# 5b. Reconstructed export
+print(write_all(a, img, p, "/path/to/game.pyA8/exports",
+                reconstructed=True))
+# → exports now contain seg_00_run_A000.asm with real labels
+#    and inline comments on the game code, plus automatic
+#    .proc name / .endp blocks around analyzer-safe routines
+```
+
+**Assemble + smoke-boot the reconstructed XEX:**
+
+```sh
+cd /path/to/game.pyA8/exports && mads main.asm -o:/tmp/game_recon.xex
+```
+
+Then boot the reconstructed XEX under the bridge to prove it
+actually runs:
+
+```python
+a.boot("/tmp/game_recon.xex")
+a.frame(300)
+open("boot.png", "wb").write(a.screenshot())
+```
+
+If the reconstructed XEX doesn't boot, the most common cause is
+a missing `exclude_from_reconstructed` — check what the original
+INITAD sequence does and exclude the ranges whose targets aren't
+loaded anymore.
+
+**Iterate**: re-run `write_all()` every time you add labels,
+comments, or region classifications to the project. The ASM
+output is **the analysis deliverable**; project.json is the
+source of truth that drives it.
+
+---
+
 ## Common pitfalls
 
 - **Don't disassemble in Python.** `a.disasm()` already wraps

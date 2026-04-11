@@ -284,8 +284,10 @@ Use `BridgeError` as a catch-all if you don't care which.
 
 ## Higher-level Python tools
 
+### XEX parsing + project state
+
 ```python
-from altirra_bridge import parse_xex, load_xex, Project
+from altirra_bridge import load_xex, Project
 
 # XEX parsing — pure local file work
 img = load_xex("/path/to/game.xex")
@@ -298,18 +300,81 @@ p = Project.new("my game", source_path="/path/to/game.xex")
 p.label(0x6000, "main_loop")
 p.comment(0x6000, "called from VBI")
 p.add_note(0x6000, 0x6020, "input handling")
+p.add_region(0x6000, 0x63FF, "code")
+p.add_region(0x6800, 0x6FFF, "data", hint="bytes")
 p.save("/path/to/project.json")
+
+# Push labels into Altirra so bridge DISASM uses them
 p.export_lab("/path/to/labels.lab")
+a.sym_load("/path/to/labels.lab")
+
 # ... then in another session:
 p2 = Project.load("/path/to/project.json")
 ```
 
+### MADS source export (`asm_writer.write_all`)
+
+The exporter is a single call: it writes `main.asm`, `equates.asm`,
+and per-segment `.asm` files into `output_dir`. Internally it runs
+the analyzer (`recursive_descent` → `build_procedures`) on a 64 KB
+memory view of the program and wraps safe procedures in MADS
+`.proc`/`.endp` blocks automatically.
+
 ```python
-# MADS source export — combines bridge DISASM with project labels
-from altirra_bridge import asm_writer
-with open("game.s", "w") as f:
-    asm_writer.emit_xex(f, bridge, img, project)
+from altirra_bridge.asm_writer import write_all, verify
+
+a.boot("/path/to/game.xex")
+a.pause()
+
+# Byte-exact mode (default): segments at their XEX load addresses.
+# verify() then reassembles and proves round-trip equality.
+print(write_all(a, img, p, "game.pyA8/exports"))
+print(verify(p, "game.pyA8/exports"))   # → "VERIFIED: byte-exact match (N bytes)"
 ```
+
+**Self-relocating games** — the ones where a bootstrap segment
+loads game code at some XEX address (say `$4100`) and a relocator
+copies it to a different runtime address (`$A000`) at boot — have
+a structural problem in byte-exact mode: project labels live at
+runtime addresses but the walker iterates XEX-file addresses, so
+the real game code comes out with only synthetic `loc_XXXX:` labels
+and no inline comments. Fix: declare the relocation and use
+**reconstructed mode**.
+
+```python
+# Tell the exporter where the game code actually runs.
+p.mark_copy_source(
+    xex_start=0x4100,
+    xex_end=0x60FF,
+    runtime_start=0xA000,
+    copy_routine=0x4086,    # informational — the relocator itself
+    runtime_entry=0xA000,   # where execution actually begins
+)
+
+# Drop bootstrap ranges that become vestigial once the runtime
+# code is emitted directly at its runtime address. Typical set:
+p.exclude_from_reconstructed(0x4080, 0x40FF)   # relocator body
+p.exclude_from_reconstructed(0x0400, 0x0419)   # init segment (JSRs relocator)
+p.exclude_from_reconstructed(0x02E2, 0x02E3)   # INITAD vector → init
+p.save()
+
+# Reconstructed mode — auto-enabled when copy_sources is non-empty,
+# but you can force it explicitly. The generated seg_00_run_A000.asm
+# now has real labels and inline comments on the game code.
+print(write_all(a, img, p, "game.pyA8/exports", reconstructed=True))
+```
+
+The reconstructed XEX is **not** byte-identical to the original
+(different segment layout, no relocator, RUN set to
+`runtime_entry`) but it boots and the asm source finally carries
+every label and comment the project declared. Use byte-exact mode
+when you want round-trip verification; use reconstructed mode when
+you want the exported asm to be readable.
+
+Pass `emit_procs=False` to `write_all()` to skip the analyzer pass
+entirely — useful when project labels are speculative and you
+don't want `build_procedures` tracing from addresses that might
+point into data.
 
 ## Threading
 

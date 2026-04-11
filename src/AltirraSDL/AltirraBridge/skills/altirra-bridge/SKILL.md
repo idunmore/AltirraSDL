@@ -154,27 +154,58 @@ formats, versioning, threat model), the canonical reference is
 `docs/PROTOCOL.md` — read it directly when SDK methods don't
 expose what you need.
 
-## Higher-level Python tools
+## Higher-level Python tools (reverse engineering)
 
-The `altirra_bridge` package also ships three local-only modules
-that complement the bridge for reverse-engineering work:
+The `altirra_bridge` package ships a complete RE toolkit that
+takes a raw `.xex`, drives a persistent project through the
+bridge, analyzes the program structure, and emits labelled,
+commented MADS source:
 
-- **`altirra_bridge.loader`** — XEX file parser. Parses Atari
-  binary segments + INITAD/RUNAD vectors. Pure local file work,
-  no bridge needed.
-- **`altirra_bridge.project`** — persistent RE project state:
-  labels, comments, notes, JSON-on-disk. Round-trips with the
-  bridge's symbol loader via `Project.export_lab()` /
-  `Project.import_from_bridge()`.
-- **`altirra_bridge.asm_writer`** — MADS source exporter. Combines
-  bridge `DISASM` output with project labels/comments to produce
-  reassemblable MADS source.
+- **`altirra_bridge.loader.load_xex(path)`** → `XexImage` —
+  XEX parser: segments, `$FFFF` marker positions, INITAD
+  vectors, RUN address. Pure local file work; no bridge needed.
+- **`altirra_bridge.Project`** — persistent project state on
+  disk. Carries `labels`, `comments`, `regions`, `notes`, plus
+  two fields that describe self-relocating XEXes:
+  `copy_sources` (via `proj.mark_copy_source(…)`) and
+  `reconstructed_excludes` (via `proj.exclude_from_reconstructed(…)`).
+  Round-trips to the bridge's symbol loader via
+  `proj.export_lab()` + `bridge.sym_load()`.
+- **`altirra_bridge.analyzer`** — split into `analyzer.disasm`
+  (`recursive_descent`), `analyzer.procedures` (`build_procedures`,
+  `call_graph_context`, `detect_subsystems`,
+  `suggest_name_from_graph`), `analyzer.subroutines`
+  (`analyze_subroutine`), `analyzer.variables`,
+  `analyzer.patterns`, `analyzer.hw`, `analyzer.sampling`
+  (the only live-bridge-required submodule), and
+  `analyzer.adapter.BridgeEmu`.
+- **`altirra_bridge.asm_writer.write_all(bridge, image, proj, out_dir, *, reconstructed=None, emit_procs=True)`**
+  — MADS exporter. One call; writes `main.asm`, `equates.asm`,
+  per-segment files. Runs the analyzer pass internally and
+  wraps safe procedures in MADS `.proc`/`.endp` blocks.
+  Two modes:
+    * **Byte-exact** (default) — each XEX segment emitted at
+      its load address. `verify(proj, out_dir)` then reassembles
+      with MADS and checks byte-exact equality with the original
+      XEX.
+    * **Reconstructed** (`reconstructed=True`, or auto-enabled
+      when `proj.copy_sources` is non-empty) — copy-source byte
+      ranges are re-emitted at their **runtime** addresses so
+      project labels and comments (which are typically keyed to
+      runtime, not XEX-file, addresses) finally line up with the
+      generated asm. Use this whenever the game relocates itself
+      at boot. The output XEX boots but isn't byte-identical to
+      the original; call `exclude_from_reconstructed()` to drop
+      stale bootstrap code (relocator body, init segment, INITAD
+      vector) so the reconstructed XEX loads cleanly.
 
-These exist because the bridge cannot do them server-side (file
-parsing, persistence) but they were obvious omissions otherwise.
 Any other "should I write a Python helper?" decision should default
 to *no* — most things you'd want a helper for are already a single
 bridge command call away.
+
+For a concrete end-to-end RE workflow (boot → analyze → label →
+export labelled asm), see
+`references/workflows.md` playbook **11**.
 
 ## Things to avoid
 

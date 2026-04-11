@@ -11,12 +11,17 @@ name: macOS build
 # or a real Intel runner if Apple/GitHub bring it back) can be added
 # back as a single line.
 #
-# The output is a .zip containing AltirraSDL.app (a real macOS bundle
-# with Info.plist + NSGameControllerUsageDescription, ad-hoc codesigned
-# so GameController.framework will enumerate USB / Bluetooth / MFi /
+# The outputs are:
+#   - AltirraSDL-<ver>-macos-arm64.zip  (portable archive)
+#   - AltirraSDL-<ver>-macos-arm64.dmg  (drag-to-Applications disk image)
+# Both contain the same AltirraSDL.app bundle (Info.plist +
+# NSGameControllerUsageDescription, ad-hoc codesigned so
+# GameController.framework will enumerate USB / Bluetooth / MFi /
 # Xbox / DualShock / DualSense pads).  Users still see the standard
 # Gatekeeper "unidentified developer" prompt on first launch
-# (right-click → Open to bypass).
+# (right-click → Open to bypass).  The DMG is produced by hdiutil
+# from scripts/build/package.sh after the zip step, from the exact
+# same $PKG_DIR contents, so the two archives are interchangeable.
 #
 # Triggers:
 #   - push to main       → updates the rolling "nightly" prerelease
@@ -119,18 +124,31 @@ jobs:
           # artifact and "shaders silently missing" is a bad surprise.
           ./build.sh --release --librashader --package
 
-      - name: Rename zip with arch suffix
+      - name: Rename + verify zip and dmg
         run: |
           set -e
-          ORIG=$(ls build/macos-release/AltirraSDL-*-macos.zip | head -1)
-          echo "Produced: $ORIG"
-          BASENAME=$(basename "$ORIG" .zip)
-          NEW="build/macos-release/${BASENAME}-${{ matrix.arch }}.zip"
-          mv "$ORIG" "$NEW"
-          echo "Renamed to: $NEW"
-          ls -lh "$NEW"
+
+          # ── Rename zip ────────────────────────────────────────────────
+          ORIG_ZIP=$(ls build/macos-release/AltirraSDL-*-macos.zip | head -1)
+          echo "Produced zip: $ORIG_ZIP"
+          ZIP_BASE=$(basename "$ORIG_ZIP" .zip)
+          NEW_ZIP="build/macos-release/${ZIP_BASE}-${{ matrix.arch }}.zip"
+          mv "$ORIG_ZIP" "$NEW_ZIP"
+          echo "Renamed zip to: $NEW_ZIP"
+          ls -lh "$NEW_ZIP"
+
+          # ── Rename dmg (produced by package.sh hdiutil step) ──────────
+          ORIG_DMG=$(ls build/macos-release/AltirraSDL-*-macos.dmg | head -1)
+          echo "Produced dmg: $ORIG_DMG"
+          DMG_BASE=$(basename "$ORIG_DMG" .dmg)
+          NEW_DMG="build/macos-release/${DMG_BASE}-${{ matrix.arch }}.dmg"
+          mv "$ORIG_DMG" "$NEW_DMG"
+          echo "Renamed dmg to: $NEW_DMG"
+          ls -lh "$NEW_DMG"
+
+          # ── Verify zip contents (self-contained .app bundle) ─────────
           # macOS runners do have `unzip`, but cmake -E tar is more portable.
-          LISTING=$(cmake -E tar tf "$NEW")
+          LISTING=$(cmake -E tar tf "$NEW_ZIP")
           echo "$LISTING"
           echo "$LISTING" | grep -qE 'AltirraSDL\.app/Contents/MacOS/AltirraSDL$' \
             || { echo "ERROR: AltirraSDL.app bundle missing from zip"; exit 1; }
@@ -153,11 +171,36 @@ jobs:
           echo "$LISTING" | grep -qE 'AltirraSDL\.app/Contents/MacOS/librashader.*\.dylib$' \
             || { echo "ERROR: librashader.dylib missing from .app bundle"; exit 1; }
 
+          # ── Verify dmg is mountable and contains the .app ────────────
+          # Attach read-only, nobrowse so it doesn't pop in Finder, then
+          # check for the Mach-O binary inside the bundle, then detach.
+          # A broken DMG would fail hdiutil attach and exit non-zero.
+          #
+          # Trap is installed BEFORE hdiutil attach (with `|| true` so
+          # the trap itself never fails) so that an attach failure still
+          # runs detach cleanup on the (possibly partially-attached)
+          # mountpoint, and set -e still propagates the original error.
+          MOUNT_DIR=$(mktemp -d)
+          trap "hdiutil detach '$MOUNT_DIR' -quiet >/dev/null 2>&1 || true; rm -rf '$MOUNT_DIR' 2>/dev/null || true" EXIT
+          hdiutil attach "$NEW_DMG" -readonly -nobrowse -noautoopen \
+                  -mountpoint "$MOUNT_DIR" >/dev/null
+          test -x "$MOUNT_DIR/AltirraSDL.app/Contents/MacOS/AltirraSDL" \
+            || { echo "ERROR: DMG is missing the AltirraSDL.app executable"; exit 1; }
+          test -f "$MOUNT_DIR/AltirraSDL.app/Contents/MacOS/libSDL3.0.dylib" \
+            || { echo "ERROR: DMG is missing libSDL3.0.dylib inside the bundle"; exit 1; }
+          hdiutil detach "$MOUNT_DIR" -quiet
+          rm -rf "$MOUNT_DIR"
+          trap - EXIT
+
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
         with:
           name: AltirraSDL-macos-${{ matrix.arch }}
-          path: build/macos-release/AltirraSDL-*-macos-${{ matrix.arch }}.zip
+          # Upload both the zip and the dmg as a single artifact so the
+          # publish jobs below download one bundle and attach both files.
+          path: |
+            build/macos-release/AltirraSDL-*-macos-${{ matrix.arch }}.zip
+            build/macos-release/AltirraSDL-*-macos-${{ matrix.arch }}.dmg
           if-no-files-found: error
           retention-days: 30
 
@@ -175,14 +218,16 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Attach macOS zips to rolling nightly release
+      - name: Attach macOS zips + dmgs to rolling nightly release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: nightly
           name: "Nightly build"
           prerelease: true
           draft: false
-          files: dist/*.zip
+          files: |
+            dist/*.zip
+            dist/*.dmg
           fail_on_unmatched_files: true
 
   publish-release:
@@ -199,10 +244,12 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Attach macOS zips to tagged release
+      - name: Attach macOS zips + dmgs to tagged release
         uses: softprops/action-gh-release@v2
         with:
           draft: false
           prerelease: false
-          files: dist/*.zip
+          files: |
+            dist/*.zip
+            dist/*.dmg
           fail_on_unmatched_files: true

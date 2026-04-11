@@ -68,14 +68,33 @@ class Project:
     are plain ``int``.
     """
 
-    name:        str            = "untitled"
-    source_path: Optional[str]  = None
-    labels:      Dict[int, str] = field(default_factory=dict)
-    comments:    Dict[int, str] = field(default_factory=dict)
-    regions:     List[dict]     = field(default_factory=list)
-    notes:       List[Note]     = field(default_factory=list)
-    metadata:    dict           = field(default_factory=dict)
-    _path:       Optional[str]  = None  # populated by load() / save()
+    name:         str            = "untitled"
+    source_path:  Optional[str]  = None
+    labels:       Dict[int, str] = field(default_factory=dict)
+    comments:     Dict[int, str] = field(default_factory=dict)
+    regions:      List[dict]     = field(default_factory=list)
+    notes:        List[Note]     = field(default_factory=list)
+    metadata:     dict           = field(default_factory=dict)
+    # Copy-source relocations for self-relocating XEX files.
+    # Each entry describes a range of XEX bytes that the program
+    # copies to a different runtime address at boot. The reconstructed
+    # export mode re-emits these ranges at their runtime addresses so
+    # labels and comments (which are typically keyed at runtime addrs)
+    # line up with the generated asm.
+    #
+    # Each entry: {"xex_start", "xex_end", "runtime_start",
+    #              "copy_routine"?, "runtime_entry"?}
+    # where addresses are stored as "$xxxx" hex strings on disk and
+    # int at runtime.
+    copy_sources: List[dict]     = field(default_factory=list)
+    # XEX byte ranges to drop entirely from reconstructed-mode export.
+    # Use this to eliminate bootstrap code whose job becomes moot once
+    # the runtime code is emitted directly at its runtime address —
+    # typically the relocator itself, the init routine that calls it,
+    # and the INITAD vector that triggers the init routine. Each entry
+    # is ``{"start", "end"}`` as ``"$xxxx"`` hex strings on disk.
+    reconstructed_excludes: List[dict] = field(default_factory=list)
+    _path:        Optional[str]  = None  # populated by load() / save()
 
     # ------------------------------------------------------------------
     # Construction
@@ -103,6 +122,8 @@ class Project:
             regions=doc.get("regions", []),
             notes=[Note(**n) for n in doc.get("notes", [])],
             metadata=doc.get("metadata", {}),
+            copy_sources=doc.get("copy_sources", []),
+            reconstructed_excludes=doc.get("reconstructed_excludes", []),
         )
         proj._path = path
         return proj
@@ -113,13 +134,15 @@ class Project:
         if target is None:
             raise ValueError("project has no path; pass one explicitly")
         doc = {
-            "name":        self.name,
-            "source_path": self.source_path,
-            "labels":      {f"${k:04x}": v for k, v in sorted(self.labels.items())},
-            "comments":    {f"${k:04x}": v for k, v in sorted(self.comments.items())},
-            "regions":     self.regions,
-            "notes":       [asdict(n) for n in self.notes],
-            "metadata":    self.metadata,
+            "name":         self.name,
+            "source_path":  self.source_path,
+            "labels":       {f"${k:04x}": v for k, v in sorted(self.labels.items())},
+            "comments":     {f"${k:04x}": v for k, v in sorted(self.comments.items())},
+            "regions":      self.regions,
+            "notes":        [asdict(n) for n in self.notes],
+            "metadata":     self.metadata,
+            "copy_sources": self.copy_sources,
+            "reconstructed_excludes": self.reconstructed_excludes,
         }
         # Ensure target dir exists for newly-created projects.
         d = os.path.dirname(target)
@@ -210,6 +233,87 @@ class Project:
             if s <= addr <= e:
                 return r
         return None
+
+    # ------------------------------------------------------------------
+    # Copy-source relocations
+    # ------------------------------------------------------------------
+
+    def mark_copy_source(self, xex_start: int, xex_end: int,
+                         runtime_start: int,
+                         copy_routine: Optional[int] = None,
+                         runtime_entry: Optional[int] = None) -> None:
+        """Declare that ``[xex_start..xex_end]`` in the XEX file is a
+        block the program relocates to ``runtime_start`` at boot.
+
+        The offset is constant: ``runtime = xex - xex_start + runtime_start``.
+        In reconstructed export mode (:func:`asm_writer.write_all` with
+        ``reconstructed=True``) this block is re-emitted as a separate
+        segment at ``org $runtime_start`` so labels and comments keyed
+        at runtime addresses line up with the generated asm.
+
+        :param xex_start: first XEX address of the copy source.
+        :param xex_end:   last XEX address of the copy source (inclusive).
+        :param runtime_start: destination start address at runtime.
+        :param copy_routine: address of the copy routine itself (optional,
+                             informational — not used by the writer).
+        :param runtime_entry: actual entry point after the copy runs
+                              (optional). If set, reconstructed mode uses
+                              this as the XEX RUN address so the output
+                              boots straight into the relocated code.
+        """
+        self.copy_sources.append({
+            "xex_start":     f"${xex_start:04x}",
+            "xex_end":       f"${xex_end:04x}",
+            "runtime_start": f"${runtime_start:04x}",
+            "copy_routine":  f"${copy_routine:04x}"  if copy_routine  is not None else None,
+            "runtime_entry": f"${runtime_entry:04x}" if runtime_entry is not None else None,
+        })
+
+    def exclude_from_reconstructed(self, start: int, end: int) -> None:
+        """Drop ``[start..end]`` (XEX addresses, inclusive) from
+        reconstructed-mode export. Use this to eliminate bootstrap
+        code whose job becomes moot once the runtime slices are
+        emitted directly — typically the relocator body, the init
+        routine that calls it, and the INITAD vector that triggers
+        it. Affects :func:`asm_writer.write_all` when
+        ``reconstructed=True``. Byte-exact mode ignores it.
+        """
+        self.reconstructed_excludes.append({
+            "start": f"${start:04x}",
+            "end":   f"${end:04x}",
+        })
+
+    def iter_reconstructed_excludes(self) -> Iterator[tuple]:
+        """Yield ``(start, end)`` int pairs for all exclusion ranges."""
+        def _to_int(v):
+            if isinstance(v, int):
+                return v
+            return int(str(v).lstrip("$"), 16)
+        for ex in self.reconstructed_excludes:
+            yield _to_int(ex["start"]), _to_int(ex["end"])
+
+    def iter_copy_sources(self) -> Iterator[dict]:
+        """Yield copy-source entries with addresses as plain ``int``.
+
+        Each dict has ``xex_start``, ``xex_end``, ``runtime_start``
+        as ints and ``copy_routine`` / ``runtime_entry`` as ints or
+        ``None``. The stored form uses ``"$xxxx"`` hex strings; this
+        helper does the conversion.
+        """
+        def _to_int(v):
+            if v is None:
+                return None
+            if isinstance(v, int):
+                return v
+            return int(str(v).lstrip("$"), 16)
+        for cs in self.copy_sources:
+            yield {
+                "xex_start":     _to_int(cs.get("xex_start")),
+                "xex_end":       _to_int(cs.get("xex_end")),
+                "runtime_start": _to_int(cs.get("runtime_start")),
+                "copy_routine":  _to_int(cs.get("copy_routine")),
+                "runtime_entry": _to_int(cs.get("runtime_entry")),
+            }
 
     # ------------------------------------------------------------------
     # Bridge integration

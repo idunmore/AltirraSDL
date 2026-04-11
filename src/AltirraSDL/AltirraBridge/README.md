@@ -175,6 +175,134 @@ Compile:
 cc -std=c99 -Isdk/c myclient.c sdk/c/altirra_bridge.c -o myclient
 ```
 
+## Reverse-engineering toolkit (Python only)
+
+The Python SDK isn't just an emulator-scripting client — it ships a
+complete reverse-engineering toolkit that takes a raw `.xex`, builds
+a persistent analysis project, runs an analyzer pass, and emits
+labelled, commented MADS source that round-trips back to an
+assemblable binary. Three layers:
+
+- **`altirra_bridge.loader.load_xex(path)`** — parses the XEX
+  container, returns an `XexImage` with segments, `FFFF` marker
+  positions, INITAD vectors, and the RUN address.
+- **`altirra_bridge.Project`** — JSON-on-disk project storage with
+  `labels`, `comments`, `regions`, `notes`, `copy_sources`, and
+  `reconstructed_excludes`. Addresses are stored as `"$xxxx"` hex
+  strings so the file is hand-readable.
+- **`altirra_bridge.asm_writer.write_all(bridge, image, proj, out_dir)`**
+  — emits `main.asm`, `equates.asm`, and per-segment `.asm` files
+  using the bridge's DISASM for instruction text and the project's
+  labels, comments, and region classifications to shape the output.
+
+```python
+from altirra_bridge import AltirraBridge
+from altirra_bridge.project import Project
+from altirra_bridge.loader import load_xex
+from altirra_bridge.asm_writer import write_all, verify
+
+proj  = Project.load("game.pyA8/project.json")
+image = load_xex("game.xex")
+
+with AltirraBridge.from_token_file("/tmp/altirra-bridge-12345.token") as br:
+    br.boot("game.xex")
+    br.pause()
+    print(write_all(br, image, proj, "game.pyA8/exports"))
+    print(verify(proj, "game.pyA8/exports"))
+```
+
+The exporter has **two modes**:
+
+### Byte-exact mode (default)
+
+Each XEX segment is emitted at its load address. Reassembling with
+MADS gives you back the **same bytes** as the original XEX, down
+to the `$FFFF` markers and the trailing sector padding. Use this
+when your goal is round-trip verification — if `verify()` reports
+`"VERIFIED: byte-exact match"` you know every label substitution,
+addressing-mode choice, and operand encoding matches the original.
+
+### Reconstructed mode (`reconstructed=True`)
+
+Classic mode has one limitation: **self-relocating games** (the
+kind where a bootstrap segment loads the game code at one XEX
+address and a relocator copies it to a different runtime address
+at boot) can't have proper labels on their game code. Project
+labels live at *runtime* addresses, but the walker iterates
+*XEX-file* addresses, so the two never meet and you end up with
+nothing but synthetic `loc_XXXX` labels and no comments next to
+the real code.
+
+Reconstructed mode fixes that. You tell the exporter about the
+relocation once:
+
+```python
+proj.mark_copy_source(
+    xex_start=0x4100,
+    xex_end=0x60FF,
+    runtime_start=0xA000,
+    copy_routine=0x4086,    # informational; the relocator body
+    runtime_entry=0xA000,   # where the code actually starts running
+)
+
+# Optional: drop bootstrap code whose job becomes moot once the
+# runtime slice is emitted directly. For a typical relocator:
+proj.exclude_from_reconstructed(0x4080, 0x40FF)  # relocator body
+proj.exclude_from_reconstructed(0x0400, 0x0419)  # init segment
+proj.exclude_from_reconstructed(0x02E2, 0x02E3)  # INITAD vector
+proj.save()
+```
+
+Then call `write_all(..., reconstructed=True)` (or just leave
+`reconstructed=None` — it auto-enables when `copy_sources` is
+non-empty). The exporter splits each segment around the declared
+copy-source ranges and emits the copy-source bytes at their
+runtime address (`org $A000`), with the project regions shifted
+into runtime space so code/data classification follows. The XEX
+RUN address is replaced with `runtime_entry` so the reconstructed
+XEX boots straight into the relocated code without running the
+now-vestigial relocator.
+
+Trade-off: the output XEX is **not** byte-identical to the
+original (different segment layout, no relocator, no INITAD
+bootstrap), but it **does** boot and the generated `.asm` finally
+has real labels and inline comments on the game code.
+
+### `.proc` / `.endp` emission
+
+The exporter runs the analyzer pass
+(`recursive_descent` → `build_procedures`) on the program memory
+before writing segments. Procedures that pass a safety filter
+(clean `rts`/`rti` exit, no fall-through, body entirely in one
+segment, no external branches to mid-body addresses, no overlap
+with other procs, must have a project-label name) are wrapped in
+MADS `.proc name` / `.endp` blocks automatically. Unsafe procs
+fall back to flat labels.
+
+Pass `emit_procs=False` to `write_all()` to skip the analyzer
+pass entirely — useful for speculative label sets where the
+walker can't safely trace procedure bodies.
+
+### Analyzer submodules (`altirra_bridge.analyzer`)
+
+If you want to build your own tooling on top of the primitives
+the exporter uses, the analyzer is factored into focused
+submodules:
+
+| Module | Purpose | Needs live bridge? |
+|---|---|:---:|
+| `analyzer.hw` | HW register classification, PORTB decode, auto-labelling | no |
+| `analyzer.disasm` | Recursive-descent disassembler (`recursive_descent`) | no |
+| `analyzer.patterns` | Gap/data classification, address-table scanning | no |
+| `analyzer.variables` | Variable cross-ref and reporting | no |
+| `analyzer.subroutines` | Single-sub deep analysis, name/comment inference | no |
+| `analyzer.procedures` | `build_procedures`, `call_graph_context`, `detect_subsystems` | no |
+| `analyzer.sampling` | PC sampling, DLI chain, PORTB monitor, memory diff | **yes** |
+| `analyzer.adapter` | `BridgeEmu` wrapper so analyzers get a uniform memory view | — |
+
+All public names re-export from `altirra_bridge.analyzer`. Worked
+examples live in `examples/case_studies/`.
+
 ## Writing your own client — Free Pascal
 
 A full Free Pascal SDK ships in `sdk/pascal/`. Stdlib only — no

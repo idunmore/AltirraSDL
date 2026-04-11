@@ -66,6 +66,45 @@ fi
 SIZE=$(du -h "$ARCHIVE_PATH" | cut -f1)
 ok "Binary package: ${C_BOLD}${ARCHIVE_PATH}${C_RESET} ($SIZE)"
 
+# ── macOS: also produce a .dmg disk image ────────────────────────────────
+#
+# hdiutil ships with macOS so no extra tooling is required.  We produce a
+# UDZO (zlib-compressed) DMG containing AltirraSDL.app alongside the extras
+# folder and Copying file — same layout as the zip, so users who prefer
+# drag-to-Applications get a native experience and users who prefer the
+# zip are unaffected.
+#
+# The DMG is built from $PKG_DIR (the already-populated package directory
+# under $BUILD_DIR), so it includes every post-build step that ran against
+# the zip: bundled libSDL3*.dylib, librashader.dylib, and the ad-hoc
+# codesign from the package_altirra target.  hdiutil preserves the code
+# signature — no re-signing needed.
+#
+# Guarded by command -v hdiutil so this is safe to leave unconditional on
+# the package.sh path: Linux / Windows CI runners don't have hdiutil and
+# simply skip this step without failing the package run.
+if [ "${PLATFORM}" = "macos" ] && command -v hdiutil &>/dev/null; then
+    DMG_PATH="$BUILD_DIR/${ARCHIVE_NAME}.dmg"
+    info "Creating DMG: ${ARCHIVE_NAME}.dmg"
+
+    # -volname is the Finder label when the DMG is mounted.
+    # -srcfolder is the already-populated package directory.
+    # -format UDZO is zlib-compressed (good balance of size vs. mount speed).
+    # -ov overwrites any existing file at the destination (from previous run).
+    # -quiet suppresses hdiutil's progress bars in CI logs, but not errors.
+    hdiutil create \
+        -volname "AltirraSDL ${VERSION}" \
+        -srcfolder "$PKG_DIR" \
+        -format UDZO \
+        -ov \
+        -quiet \
+        "$DMG_PATH" \
+        || die "hdiutil create failed"
+
+    SIZE=$(du -h "$DMG_PATH" | cut -f1)
+    ok "Disk image:     ${C_BOLD}${DMG_PATH}${C_RESET} ($SIZE)"
+fi
+
 # ── Source archive (optional, enabled by SOURCE_ARCHIVE=1) ────────────────
 
 if [ "${SOURCE_ARCHIVE:-0}" = "1" ]; then

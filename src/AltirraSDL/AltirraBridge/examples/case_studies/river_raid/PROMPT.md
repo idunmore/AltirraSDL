@@ -43,39 +43,46 @@ observation.
 
 The task is **not done** until all of these are true:
 
-1. **Byte-perfect MADS round-trip.** The reassembled binary must
-   be identical to the original. Verify by comparing cryptographic
-   hashes. Pick whichever of these works on your OS — they all
-   produce the same SHA-256:
+1. **Byte-perfect MADS round-trip (byte-exact mode) OR successful
+   reconstructed-mode export (self-relocating games).** Two paths:
 
-   Linux / macOS / Git Bash on Windows:
+   **(a) Byte-exact mode** — if the game's XEX already loads its
+   code at the runtime address, `asm_writer.verify(proj, exports)`
+   must report `"VERIFIED: byte-exact match (N bytes)"`. Under the
+   hood it reassembles with MADS and compares SHA-256 hashes.
 
-       sha256sum river_raid.xex river_raid_rebuilt.xex
+   **(b) Reconstructed mode** — river_raid's code lives at
+   `$4100-$60FF` in the XEX but runs at `$A000-$BFFF` after the
+   relocator at `$4086` copies it. For this kind of self-relocating
+   XEX, declare the relocation via `proj.mark_copy_source(…)` and
+   use `write_all(..., reconstructed=True)`. The reconstructed
+   output XEX is **not** byte-identical to the original — it
+   drops the relocator, drops the init segment, and replaces the
+   RUN vector with `runtime_entry`. The success criterion instead
+   is: MADS assembles the output cleanly AND the reconstructed XEX
+   boots to the title screen in the emulator. The point of
+   reconstructed mode is a **readable** asm deliverable with real
+   labels and comments on the game code, not a bit-for-bit copy.
 
-   Cross-platform (CMake is on every developer box that can build
-   this project):
+   For river_raid specifically, use reconstructed mode — it's
+   the only way the game-code segment (`seg_00_run_A000.asm`)
+   can carry all the project labels and comments you authored.
+   Byte-exact mode would leave the game code with only synthetic
+   `loc_XXXX:` labels.
 
-       cmake -E sha256sum river_raid.xex river_raid_rebuilt.xex
+   Either way, verify that the relevant MADS call completes
+   without errors and the output XEX actually boots. For the
+   reconstructed path:
 
-   Windows Command Prompt:
+   ```python
+   a.boot("/tmp/river_raid_recon.xex")
+   a.frame(300)
+   # Title screen should appear in the screenshot
+   open("boot.png", "wb").write(a.screenshot())
+   ```
 
-       certutil -hashfile river_raid.xex       SHA256
-       certutil -hashfile river_raid_rebuilt.xex SHA256
-
-   Or raw byte compare, also OS-independent:
-
-       cmake -E compare_files river_raid.xex river_raid_rebuilt.xex
-
-   Windows `fc /b` also works for the byte compare:
-
-       fc /b river_raid.xex river_raid_rebuilt.xex
-
-   Pure-Python fallback (no shell tools needed):
-
-       python -c "import hashlib; print(hashlib.sha256(open('river_raid.xex','rb').read()).hexdigest())"
-
-   Anything less than a full match — even a one-byte mismatch — is
-   failure. Keep iterating until the comparison passes.
+   Anything less — MADS errors, missing labels, a black-screen
+   boot — is failure. Keep iterating.
 
 2. **100% byte coverage** in `regions.json`. Every byte in every
    loaded segment is classified as code, procedure, data, or one
@@ -222,25 +229,36 @@ You have three kinds of tools:
 
 2. **`altirra_bridge` Python package modules.** Use them rather
    than reimplementing:
-   - `altirra_bridge.loader.parse_xex` — XEX segment parser.
-   - `altirra_bridge.Project` — persistent project state (labels,
-     comments, notes).
-   - `altirra_bridge.asm_writer.emit_xex` — MADS source exporter
-     that uses bridge `DISASM` for the instruction text.
+   - `altirra_bridge.loader.load_xex` — returns an `XexImage` with
+     segments, `$FFFF` marker positions, INITAD vectors, and
+     RUN address. Pure local file work.
+   - `altirra_bridge.Project` — persistent project state: labels,
+     comments, regions, notes, plus two fields that describe
+     self-relocating XEXes: `copy_sources` and
+     `reconstructed_excludes`.
+   - `altirra_bridge.analyzer` — `recursive_descent`,
+     `build_procedures`, `analyze_subroutine`, `analyze_variables`,
+     `detect_subsystems`, `suggest_name_from_graph`, and friends.
+     All pure-local, no live-bridge requirement (except
+     `analyzer.sampling.*`).
+   - `altirra_bridge.asm_writer.write_all(bridge, image, proj, out_dir, *, reconstructed=None, emit_procs=True)`
+     — MADS source exporter. One call writes `main.asm`,
+     `equates.asm`, and per-segment `.asm` files. Runs the
+     analyzer pass internally and wraps safe procedures in
+     `.proc`/`.endp` blocks automatically. See the "How to
+     export" section below for the two modes.
+   - `altirra_bridge.asm_writer.verify(proj, out_dir)` — reassembles
+     with MADS and compares to the original XEX. Byte-exact
+     matching is expected in classic mode.
 
-   The reference implementation to aspire to is
-   `/home/ilm/Documents/GitHub/pyA8/asm_writer.py` (the original
-   pyA8 toolkit for the Atari800 emulator). That asm_writer:
-   - Emits **real 6502 mnemonics** for code regions (not `.byte`)
-   - Emits `.byte`/`.word`/`.ds` directives for data regions
-   - Uses `opt h-` with bracket ORG notation for byte-exact XEX
-     headers (including `$FFFF` marker placement)
-   - Generates per-segment files with `icl` includes
-   - Wraps procedures in `.proc`/`.endp`
-   - Has built-in MADS verification (`verify()`)
-   If the `altirra_bridge.asm_writer` doesn't support a feature
-   you need, **extend it** — don't work around it by emitting
-   raw bytes manually.
+   All of these are reference-implementation complete — the
+   exporter emits real 6502 mnemonics for code regions,
+   `.byte`/`.word`/`.ds` for data regions, uses `opt h-` with
+   bracket ORG notation for byte-exact `$FFFF` marker placement,
+   per-segment files with `icl`, `.proc`/`.endp` wrapping, and
+   built-in MADS verification. **Do not re-port from pyA8.**
+   If a feature you need doesn't exist, extend the `altirra_bridge`
+   package directly in `sdk/python/altirra_bridge/`.
 
 3. **Your own Python helper script** — create it at
    `examples/case_studies/river_raid/deep_analyze.py` (mirroring
@@ -349,14 +367,17 @@ optional `hint`. The kinds used by the reference case studies:
 
 - `{"type": "code"}` — instructions, reachable by the
   disassembler.
-- `{"type": "proc", "name": "..."}` — a **procedure region**:
-  a contiguous range that forms one logical subroutine or system.
-  Use this to group related code so `asm_writer` emits a single
-  labelled block and a reader sees the procedure as a unit. This
-  is the analog of pyA8's `.proc` — if the current
-  `altirra_bridge.Project` helper doesn't provide a method for
-  it, add one (it's a thin wrapper; just a list of
-  `{start, end, name}` records).
+- `{"type": "code"}` with an accompanying project label at
+  the entry — the asm_writer's analyzer pass
+  (`_compute_procedures` → `build_procedures`) auto-detects
+  procedures from the call graph and wraps them in MADS
+  `.proc`/`.endp` blocks when they pass the safety filter
+  (clean `rts`/`rti` exit, no fall-through, no external
+  branches to mid-body addresses, no overlap, has a project
+  label). You don't need to mark procedure regions by hand —
+  the exporter does it for you. If a routine isn't being
+  wrapped, check that it has a project label at the entry
+  and that nothing outside the body branches into its middle.
 - `{"type": "data", "hint": "bytes"}` — unstructured data.
 - `{"type": "data", "hint": "string"}` — ASCII / ATASCII text.
 - `{"type": "data", "hint": "charset"}` — an ANTIC character set
@@ -650,25 +671,70 @@ Hardware registers and variables use symbolic equates.
    `bridge.sym_load()` so Altirra's DISASM output uses your
    labels in operands.
 
-2. **Generate the ASM using `asm_writer`.** The current
-   `altirra_bridge.asm_writer.emit_xex()` calls `bridge.disasm()`
-   per instruction and merges labels/comments from the Project.
+2. **Generate the ASM using `asm_writer.write_all()`.** The
+   exporter is a single call that writes `main.asm`,
+   `equates.asm`, and per-segment `.asm` files into the
+   output directory, runs the analyzer pass internally, and
+   wraps safe procedures in `.proc`/`.endp`.
 
-   If the asm_writer doesn't handle your game's XEX structure
-   (e.g. inter-segment `$FFFF` markers, self-relocating code,
-   INITAD vectors), **extend the asm_writer or write a custom
-   export script** that:
-   - Uses `opt h-` and bracket ORG notation for byte-exact XEX
-     headers: `org [a($FFFF),a($start),a($end)],$start`
-   - Calls `bridge.disasm()` for code regions (real mnemonics)
-   - Emits `.byte` for data regions (using `regions.json` hints)
-   - Wraps procedures in `.proc`/`.endp`
-   - Generates equates only for addresses actually referenced
+   ```python
+   from altirra_bridge.asm_writer import write_all, verify
+   print(write_all(bridge, image, proj, "river_raid.pyA8/exports"))
+   print(verify(proj, "river_raid.pyA8/exports"))
+   ```
 
-   The reference implementation is
-   `/home/ilm/Documents/GitHub/pyA8/asm_writer.py` — study
-   `write_all()`, `write_main()`, `_emit_mixed()`, and
-   `write_equates()` for the full pattern.
+   The exporter has two modes. Which one you use depends on
+   whether river_raid loads its game code at the runtime
+   address or relocates itself at boot:
+
+   **Byte-exact mode** (default, or `reconstructed=False`) —
+   each XEX segment is emitted at its load address. Use this
+   when the game code in the XEX is ALREADY at its runtime
+   address. `verify()` will report
+   `"VERIFIED: byte-exact match"` on success.
+
+   **Reconstructed mode** (`reconstructed=True`, or auto-
+   enabled when `proj.copy_sources` is non-empty) — needed for
+   self-relocating games. River raid is one: the XEX loads
+   its game code at `$4100-$60FF` and a relocator at `$4086`
+   copies it to `$A000-$BFFF` at boot. In byte-exact mode,
+   the walker iterates XEX-file addresses (`$4100+`) but
+   project labels and comments live at runtime addresses
+   (`$A000+`) — the two never meet and the real game code
+   ends up with nothing but synthetic `loc_XXXX:` labels.
+
+   Declare the relocation once:
+
+   ```python
+   proj.mark_copy_source(
+       xex_start=0x4100,
+       xex_end=0x60FF,
+       runtime_start=0xA000,
+       copy_routine=0x4086,
+       runtime_entry=0xA000,
+   )
+   # Drop bootstrap that becomes vestigial once the runtime
+   # bytes are emitted directly at $A000:
+   proj.exclude_from_reconstructed(0x4080, 0x40FF)  # relocator
+   proj.exclude_from_reconstructed(0x0400, 0x0419)  # init segment
+   proj.exclude_from_reconstructed(0x02E2, 0x02E3)  # INITAD vector
+   proj.save()
+   ```
+
+   After that, `write_all()` auto-selects reconstructed mode
+   and the generated `seg_00_run_A000.asm` carries real label
+   definitions (`cold_start:`, `handle_bullet_fire:`,
+   `dli_playfield_kernel:`, …) and inline comments on the
+   game code, plus automatic `.proc`/`.endp` blocks around
+   the safe routines.
+
+   Trade-off: the reconstructed XEX is **not** byte-identical
+   to the original (different segment layout, relocator
+   dropped, RUN replaced with `runtime_entry`) — but it boots
+   and the asm output is actually readable. Use byte-exact
+   mode when the goal is round-trip verification, reconstructed
+   mode when the goal is a labelled source deliverable. For
+   river_raid specifically, reconstructed is the right choice.
 
 3. Run MADS:
 
@@ -741,8 +807,14 @@ Hardware registers and variables use symbolic equates.
 - **Don't name variables before observing them.** A name is a
   hypothesis; confirm with `WATCH_SET` that the byte changes
   when the event occurs before committing the name.
-- **Don't stop at "looks reasonable".** Success criterion #1 is
-  byte-perfect reassembly. A 99.9% match is still a failure.
+- **Don't stop at "looks reasonable".** For river_raid
+  specifically, the target is a reconstructed-mode export
+  where MADS assembles cleanly, the output XEX boots to the
+  title screen, and the generated `seg_00_run_A000.asm`
+  carries your full label set + comments + analyzer-detected
+  `.proc`/`.endp` blocks on the game code. A reconstructed
+  XEX that boots to a black screen, or an asm file still
+  full of `loc_XXXX:` synthetic labels, is still a failure.
 - **Don't try to use `SIO_TRACE`, `VERIFIER_REPORT`, or
   tracepoint format strings.** These are deferred items
   (Phase 5c in the bridge roadmap) and not in the v1 protocol.

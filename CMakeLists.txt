@@ -195,6 +195,20 @@ if(ALTIRRA_SDL3 OR NOT WIN32)
             if(_sdl3_loc)
                 message(STATUS "  │ Library: ${_sdl3_loc}")
             endif()
+            # On macOS, a system-installed SDL3 (e.g. Homebrew) has an
+            # absolute install_name like /opt/homebrew/opt/sdl3/lib/
+            # libSDL3.0.dylib.  That's fine for local dev — the binary
+            # runs directly out of the build tree — but the resulting
+            # .app bundle is NOT self-contained and may fail to launch
+            # on another Mac.  ./build.sh --package forces FetchContent
+            # SDL3 automatically (see BUILD.md "macOS Distribution").
+            if(APPLE)
+                message(STATUS "  │")
+                message(STATUS "  │ NOTE: OK for local dev, but the resulting .app is")
+                message(STATUS "  │       NOT redistributable.  For a redistributable")
+                message(STATUS "  │       bundle + DMG run:  ./build.sh --package")
+                message(STATUS "  │       (forces FetchContent SDL3 with @rpath names)")
+            endif()
             message(STATUS "  └────────────────────────────────────────────")
             message(STATUS "")
         else()

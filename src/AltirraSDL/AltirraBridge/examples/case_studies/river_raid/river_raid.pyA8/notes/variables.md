@@ -30,9 +30,9 @@ completely different purposes.
 | $31 | temp_score | 1 | Temporary score accumulator |
 | $32 | fuel_drain_ctr | 1 | Fuel drain counter (decrements, triggers fuel decrement on wrap) |
 | $38 | fuel_state | 1 | Fuel tank state (bit 7 = refueling at depot) |
-| $39 | bullet_x | 1 | Bullet horizontal position |
+| $39 | bullet_x | 1 | Bullet horizontal position. Loaded into HPOSP1 at $B54D as the playfield DLI's P1 baseline — P1's bitmap (initialised at $0818-$0887) spans the bullet's vertical travel range, so bullet_x stays fixed during flight while the bullet "moves up" by shifting which bytes in the P1 column are non-zero. Range-checked against `entity_xpos_tbl` at $A500/$A535 for bullet-hit-entity detection. |
 | $3A | scroll_position | 1 | Coarse scroll position (advances with terrain) |
-| $3B | bullet_state | 1 | Bullet active/animation state |
+| $3B | fuel_gauge_idx | 1 | Fuel-gauge row index: ASL'd at $AF0F to index fuel_gauge_ptrs ($BAB7) for per-row blits. (Was mislabelled `bullet_state`; it's never written as a bullet flag.) |
 | $40 | entity_timer | 1 | Entity spawn/update timer |
 | $41 | sound_flags | 1 | Sound engine flags |
 | $42-$43 | sound_freq | 2 | Sound frequency parameter |

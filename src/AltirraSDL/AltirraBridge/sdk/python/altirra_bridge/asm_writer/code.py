@@ -254,6 +254,7 @@ def emit_code_range(
     *,
     procedure_starts: Optional[Set[int]] = None,
     resolve_labels: Optional[Dict[int, str]] = None,
+    proc_info: Optional[Dict[int, dict]] = None,
 ) -> List[str]:
     """Disassemble [start, end] via bridge and return MADS source lines.
 
@@ -272,6 +273,7 @@ def emit_code_range(
     from .._analyzer_tables import OPCODES
     _deresolver.set_bridge(bridge)
     procedure_starts = procedure_starts or set()
+    proc_info = proc_info or {}
     # ``labels`` holds in-range entries that should be printed as
     # "NAME:" when the walker reaches their address. ``resolve``
     # holds ALL known labels (including zero-page / out-of-range
@@ -300,19 +302,47 @@ def emit_code_range(
     lines: List[str] = []
     pc = start
     first = True
+    # --- .proc tracking ---
+    # Open a ``.proc name`` when ``pc`` reaches a proc entry, close
+    # with ``.endp`` when ``pc`` passes its declared end. A ``.proc``
+    # block implicitly defines its own name as a label, so we SUPPRESS
+    # the usual ``name:`` line at the entry when we're emitting it via
+    # ``.proc`` instead.
+    in_proc_end: Optional[int] = None
+
     while pc <= end:
-        # Label
-        if pc in labels:
-            # Blank-line separator before each procedure entry
-            # (skip the very first line of the range so we don't
-            # stack a blank on top of an existing region header).
-            if pc in procedure_starts and not first:
+        # Close an open .proc when we've moved past its body.
+        if in_proc_end is not None and pc > in_proc_end:
+            lines.append(".endp")
+            lines.append("")
+            in_proc_end = None
+
+        # Open a .proc when reaching an entry the analyzer flagged as
+        # safe to wrap. Suppress the normal label line since .proc
+        # already emits the name.
+        proc = proc_info.get(pc) if in_proc_end is None else None
+        if proc is not None:
+            if not first:
                 lines.append("")
-            lines.append(f"{labels[pc]}:")
-        # Comment
-        if pc in comments:
-            lines.append(f"    ; {comments[pc]}")
-        first = False
+            lines.append(f".proc {proc['name']}")
+            in_proc_end = proc["end"]
+            # Comment (if any) follows the .proc line
+            if pc in comments:
+                lines.append(f"    ; {comments[pc]}")
+            first = False
+        else:
+            # Label
+            if pc in labels:
+                # Blank-line separator before each procedure entry
+                # (skip the very first line of the range so we don't
+                # stack a blank on top of an existing region header).
+                if pc in procedure_starts and not first:
+                    lines.append("")
+                lines.append(f"{labels[pc]}:")
+            # Comment
+            if pc in comments:
+                lines.append(f"    ; {comments[pc]}")
+            first = False
 
         opcode = _b(pc)
         entry = OPCODES.get(opcode)
@@ -364,6 +394,11 @@ def emit_code_range(
         line = format_instruction(mnem, mode, pc, operand_bytes, resolve)
         lines.append(f"    {line}")
         pc += size
+
+    # If we end inside a .proc, close it out — the walker may stop
+    # exactly at the proc's last instruction or at a region boundary.
+    if in_proc_end is not None:
+        lines.append(".endp")
 
     return lines
 
@@ -481,6 +516,7 @@ def emit_mixed(
     region_map: Dict[int, dict],
     emit_labels: Dict[int, str],
     all_labels: Dict[int, str],
+    proc_info: Optional[Dict[int, dict]] = None,
 ) -> str:
     """Emit mixed code/data content respecting region boundaries.
 
@@ -492,7 +528,15 @@ def emit_mixed(
     JMP targets. Any target that lacks a project label gets a
     synthetic ``loc_XXXX`` label so the generated source reads like
     hand-written code instead of jumping through raw hex addresses.
+
+    ``proc_info`` (optional) is a dict ``{entry_addr → {name, end, …}}``
+    of procedures that are safe to wrap in MADS ``.proc``/``.endp``
+    blocks. When a code walker reaches one of these addresses it
+    opens a ``.proc`` block; it closes with ``.endp`` once ``pc``
+    passes the procedure's ``end``. This is opt-in: pass ``None`` to
+    keep the walker's current flat-label layout.
     """
+    proc_info = proc_info or {}
     # --- Pre-pass: synthesise ``loc_XXXX`` labels for branch targets.
     synth_labels: Dict[int, str] = {}
     existing = set(all_labels.keys())
@@ -546,7 +590,8 @@ def emit_mixed(
                 bridge, addr, block_end,
                 local_emit_labels, proj.comments,
                 procedure_starts=procedure_starts,
-                resolve_labels=local_all_labels)
+                resolve_labels=local_all_labels,
+                proc_info=proc_info)
             lines.extend(code_lines)
             addr = block_end + 1
 
@@ -580,7 +625,8 @@ def emit_mixed(
                 bridge, addr, gap_end,
                 local_emit_labels, proj.comments,
                 procedure_starts=procedure_starts,
-                resolve_labels=local_all_labels)
+                resolve_labels=local_all_labels,
+                proc_info=proc_info)
             lines.extend(code_lines)
             addr = gap_end + 1
 

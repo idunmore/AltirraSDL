@@ -35,15 +35,26 @@ The Python SDK includes `altirra_bridge.analyzer`, a built-in reverse-engineerin
 | Module | Purpose | Needs live emu? |
 |--------|---------|:---:|
 | `analyzer.hw` | Hardware register classification, PORTB decode, auto-labelling | no |
-| `analyzer.disasm` | Recursive-descent disassembler | no |
+| `analyzer.disasm` | Recursive-descent disassembler (`recursive_descent`) | no |
 | `analyzer.patterns` | Gap/data classification, address-table scanning | no |
 | `analyzer.variables` | Variable cross-ref and reporting | no |
 | `analyzer.subroutines` | Single-subroutine deep analysis, name/comment inference | no |
-| `analyzer.procedures` | Call-graph building, subsystem detection | no |
+| `analyzer.procedures` | `build_procedures`, `call_graph_context`, `detect_subsystems`, `suggest_name_from_graph` | no |
 | `analyzer.sampling` | PC sampling, DLI chain, PORTB monitor, memory diff | **yes** |
 | `analyzer.adapter` | `BridgeEmu` — wraps `AltirraBridge` as the emu interface | — |
 
 All public names re-export from `altirra_bridge.analyzer` for convenience. See `sdk/python/README.md` for usage examples. `examples/case_studies/` contains worked reverse-engineering walkthroughs that use this toolkit.
+
+## MADS source exporter — `altirra_bridge.asm_writer`
+
+`asm_writer.write_all(bridge, image, proj, output_dir, *, reconstructed=None, emit_procs=True)` is the top-level entry point. It writes `main.asm`, `equates.asm`, and per-segment source files. The analyzer pass runs automatically (one `recursive_descent` + one `build_procedures` over a 64 KB unified memory view) and feeds a per-segment `_build_proc_info()` filter that wraps safe procedures in MADS `.proc`/`.endp` blocks. Pass `emit_procs=False` to skip the analyzer pass (useful for speculative label sets).
+
+The exporter has two modes:
+
+- **Byte-exact mode** (default, or `reconstructed=False`): each XEX segment is emitted at its load address. `verify(proj, output_dir)` reassembles with MADS and compares the result to the original XEX — on success it reports `"VERIFIED: byte-exact match"`.
+- **Reconstructed mode** (`reconstructed=True`, auto-enabled when `proj.copy_sources` is non-empty): re-emits copy-source byte ranges at their **runtime** addresses using `proj.copy_sources` metadata (populated via `proj.mark_copy_source(xex_start, xex_end, runtime_start, copy_routine=, runtime_entry=)`). Project labels and comments that live at runtime addresses now line up with the generated asm, so the game-code segments finally get real label definitions and inline comments instead of just `loc_XXXX:` synthetics. Bootstrap ranges (relocator body, init segments, stale INITAD vectors) can be dropped with `proj.exclude_from_reconstructed(start, end)`. The output XEX is **not** byte-identical to the original, but it boots — the RUN vector is replaced with `runtime_entry` so it enters the relocated code directly.
+
+When choosing which mode: use byte-exact when the XEX is already laid out at runtime addresses and you want `verify()` to prove round-trip. Use reconstructed when the game relocates itself at boot (init-segment + relocator pattern) and you want the exported asm to carry project labels on the game-code segments.
 
 ## Protocol (the actual contract)
 
