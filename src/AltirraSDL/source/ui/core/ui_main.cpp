@@ -34,6 +34,9 @@
 #include "ui_main_internal.h"
 #include "ui_mobile.h"
 #include "ui_debugger.h"
+#include "ui_textselection.h"
+#include "accel_sdl3.h"
+#include "inputmanager.h"
 #include "ui_testmode.h"
 #include "ui_progress.h"
 #include "ui_emuerror.h"
@@ -67,6 +70,11 @@
 
 extern ATSimulator g_sim;
 extern ATUIKeyboardOptions g_kbdOpts;
+
+// Clipboard availability check — defined in win32_stubs.cpp (SDL3 bridge
+// using SDL_HasClipboardText).  Used by the main-display right-click
+// context menu to enable/disable the Paste item.
+bool ATUIClipIsTextAvailable();
 
 // Display backend accessor — ui_rewind.cpp and ui_screenfx.cpp use this
 // to create preview textures.  Returns nullptr until the backend is wired.
@@ -906,6 +914,98 @@ static void RenderStatusOverlay(ATSimulator &sim) {
 }
 
 // =========================================================================
+// Main display text selection — Windows parity for mouse-drag selection and
+// right-click context menu on the Atari frame.
+// =========================================================================
+//
+// Unlike the debugger Display pane (which hosts the Atari texture inside an
+// ImGui window and handles selection there), the main display is drawn
+// directly to the SDL framebuffer by the backend.  Mouse events still flow
+// through ImGui (SDL events are forwarded to ImGui by ATUIProcessEvent()),
+// so we can piggy-back on ImGui::IsMouseClicked()/IsMouseDown() for the
+// drag and on OpenPopup()/BeginPopup() for the context menu.  The highlight
+// overlay is drawn into the viewport background draw list so it appears
+// above the Atari frame but below any ImGui window that opens on top.
+//
+// Mirrors Windows ATDisplayPane::OnDisplayContextMenu() (uidisplay.cpp:1949)
+// and IDR_DISPLAY_CONTEXT_MENU (Altirra.rc:239).
+
+void ATUIRenderMainDisplayTextSelection() {
+	// When the debugger is open the main display is not drawn; the debugger
+	// Display pane renders its own Atari texture and runs its own selection
+	// handler inside that window.  Skip here to avoid double-handling.
+	if (ATUIDebuggerIsOpen())
+		return;
+
+	float rx, ry, rw, rh;
+	if (!ATGetMainDisplayRect(rx, ry, rw, rh))
+		return;
+
+	const ImVec2 imagePos(rx, ry);
+	const ImVec2 imageSize(rw, rh);
+
+	ATInputManager *im = g_sim.GetInputManager();
+	const bool mouseRoutedToInput = im && im->IsMouseMapped()
+		&& (ATUIIsMouseCaptured() || im->IsMouseAbsoluteMode());
+
+	const bool uiConsumesMouse = ImGui::GetIO().WantCaptureMouse;
+
+	// Pan/Zoom tool owns LMB drag and Ctrl+LMB (zoom).  SDL events are
+	// forwarded to ImGui unconditionally, so IsMouseClicked(LMB) still
+	// fires when pan/zoom is consuming the click — without this guard
+	// the tool and text selection would race on the same drag.
+	const bool panZoomActive = ATUIIsPanZoomToolActive();
+
+	// Drag handling — only when the click wouldn't otherwise be consumed by
+	// the input manager, pan/zoom, or an ImGui window.  The handler itself
+	// gates on the mouse being inside the display rect, so we don't
+	// duplicate that.  Always call through when a drag is already in
+	// progress so that a mouse-up (even on an ImGui window that popped
+	// open mid-drag) still finalizes the selection and clears mbDragActive.
+	ATTextSelectionState& sel = ATUIGetTextSelection();
+	if (sel.mbDragActive || (!uiConsumesMouse && !mouseRoutedToInput && !panZoomActive))
+		ATUITextSelectionHandleMouse(imagePos, imageSize);
+
+	// Right-click context menu — opens at the cursor when the click is
+	// inside the display rect and not consumed elsewhere.  Matches Windows
+	// ATDisplayPane which shows the menu on WM_CONTEXTMENU over the display.
+	const ImVec2 mouse = ImGui::GetMousePos();
+	const bool inDisplay = mouse.x >= imagePos.x && mouse.x < imagePos.x + imageSize.x
+	                    && mouse.y >= imagePos.y && mouse.y < imagePos.y + imageSize.y;
+
+	if (!uiConsumesMouse && !mouseRoutedToInput && !panZoomActive && inDisplay
+		&& ImGui::IsMouseClicked(ImGuiMouseButton_Right))
+	{
+		ImGui::OpenPopup("##DisplayContextMenu");
+	}
+
+	if (ImGui::BeginPopup("##DisplayContextMenu")) {
+		const bool hasSelection = ATUIIsTextSelected();
+		const bool hasClipText  = ATUIClipIsTextAvailable();
+
+		// Items match IDR_DISPLAY_CONTEXT_MENU in Altirra.rc:239-247.
+		if (ImGui::MenuItem("Copy Text",
+				ATUIGetShortcutStringForCommand("Edit.CopyText"), false, hasSelection))
+			ATUITextCopy(ATTextCopyMode::ASCII);
+		if (ImGui::MenuItem("Copy Escaped Text", nullptr, false, hasSelection))
+			ATUITextCopy(ATTextCopyMode::Escaped);
+		if (ImGui::MenuItem("Copy Hex", nullptr, false, hasSelection))
+			ATUITextCopy(ATTextCopyMode::Hex);
+		if (ImGui::MenuItem("Copy Unicode", nullptr, false, hasSelection))
+			ATUITextCopy(ATTextCopyMode::Unicode);
+		ImGui::Separator();
+		if (ImGui::MenuItem("Paste",
+				ATUIGetShortcutStringForCommand("Edit.PasteText"), false, hasClipText))
+			ATUIPasteText();
+		ImGui::EndPopup();
+	}
+
+	// Highlight overlay — drawn into the viewport background so it appears
+	// above the Atari frame but below any open ImGui window/dialog.
+	ATUITextSelectionDrawOverlay(imagePos, imageSize, ImGui::GetBackgroundDrawList());
+}
+
+// =========================================================================
 // Top-level frame render
 // =========================================================================
 
@@ -1085,6 +1185,14 @@ void ATUIRenderFrame(ATSimulator &sim, VDVideoDisplaySDL3 &display,
 	// Reusable confirmation dialogs — drawn last so they sit above
 	// every other window.  Also re-centers and captures keyboard focus.
 	ATUIRenderConfirmDialogs();
+
+	// Main display text-mode selection: mouse drag, highlight overlay, and
+	// right-click context menu.  Runs only when the debugger is closed;
+	// the debugger Display pane already wires selection in ui_debugger.cpp.
+	// Disabled on mobile where touch events drive on-screen controls.
+#ifndef ALTIRRA_MOBILE
+	ATUIRenderMainDisplayTextSelection();
+#endif
 
 	ImGui::Render();
 	if (s_usingGLBackend) {

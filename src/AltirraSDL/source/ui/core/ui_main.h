@@ -115,6 +115,17 @@ void ATUISetMouseCaptureWindow(SDL_Window *window);
 void ATUICaptureMouse();
 void ATUIReleaseMouse();
 
+// Main display rectangle in screen-space pixels (defined in main_sdl3.cpp).
+// Returns false when the display is not currently drawn directly to the SDL
+// framebuffer (e.g. debugger is open, or no frame has been produced yet).
+bool ATGetMainDisplayRect(float& x, float& y, float& w, float& h);
+
+// Process mouse text selection and draw the highlight overlay for the main
+// Atari display.  Called once per frame from ATUIRenderFrame() when the
+// debugger is closed.  Also renders the right-click context menu that
+// matches Windows IDR_DISPLAY_CONTEXT_MENU.
+void ATUIRenderMainDisplayTextSelection();
+
 // Deferred action types — shared between ui_main.cpp and ui_cartmapper.cpp
 enum ATDeferredActionType {
 	kATDeferred_BootImage,

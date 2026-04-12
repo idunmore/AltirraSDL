@@ -11,6 +11,7 @@
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/VDString.h>
 #include <vd2/system/text.h>
+#include <vd2/system/time.h>
 #include <vd2/system/vdstl.h>
 #include <at/atcore/atascii.h>
 
@@ -260,6 +261,7 @@ void ATUITextDeselect() {
 	s_sel.mSpans.clear();
 	s_sel.mHighlightRects.clear();
 	s_sel.mbDragActive = false;
+	s_sel.mbDragInitial = false;
 	s_sel.mbHighlightsValid = false;
 }
 
@@ -411,35 +413,59 @@ bool ATUITextSelectionHandleMouse(const ImVec2& imagePos, const ImVec2& imageSiz
 
 	ImVec2 mouse = ImGui::GetMousePos();
 
-	// Check if mouse is inside the image rect
 	bool mouseInImage = mouse.x >= imagePos.x && mouse.x < imagePos.x + imageSize.x
 					 && mouse.y >= imagePos.y && mouse.y < imagePos.y + imageSize.y;
 
-	// Don't start text selection when mouse is captured for emulator input
-	// (light pen, paddles, etc.)
+	// --- LMB pressed: start a drag -----------------------------------------
+	// Matches Windows uivideodisplaywindow.cpp:1269 — plain LMB starts a
+	// drag; modifiers are not required.  Mouse must not be captured for
+	// emulator input (paddle/light pen).
 	if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && mouseInImage
-		&& !ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeyAlt
 		&& !ATUIIsMouseCaptured()) {
-		// Start drag
 		int bx, by;
 		MapPixelToBeam(imagePos, imageSize, mouse.x, mouse.y, bx, by);
 		s_sel.mbDragActive = true;
+		s_sel.mbDragInitial = true;
 		s_sel.mAnchorBeamX = bx;
 		s_sel.mAnchorBeamY = by;
-		s_sel.mSpans.clear();
-		s_sel.mHighlightRects.clear();
+		s_sel.mDragStartTime = VDGetCurrentTick();
+		// Don't clear existing selection here — Windows intentionally
+		// preserves it so touch users can Copy from the context menu
+		// (uivideodisplaywindow.cpp:1277).
 		return true;
 	}
 
+	// --- Active drag: update or finalize ------------------------------------
 	if (s_sel.mbDragActive) {
+		// I-beam cursor during drag (Windows: kATUICursorImage_IBeam,
+		// uivideodisplaywindow.cpp:1385).
+		ImGui::SetMouseCursor(ImGuiMouseCursor_TextInput);
+
 		// Check for mouse release first — must be checked even when mouse
 		// is outside the window to avoid stuck drag state.
 		if (ImGui::IsMouseReleased(ImGuiMouseButton_Left) || !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-			// Finalize selection
+			s_sel.mbDragActive = false;
+			const bool quickClick = (VDGetCurrentTick() - s_sel.mDragStartTime) < 250;
+
+			if (s_sel.mbDragInitial) {
+				// Mouse never moved to a different beam position.
+				// Windows (uivideodisplaywindow.cpp:1308): if < 250ms
+				// this is a quick click — clear mbDragInitial but don't
+				// update the preview (no actual selection).  Otherwise
+				// just cancel.
+				s_sel.mbDragInitial = false;
+				if (quickClick && !s_sel.mSpans.empty()) {
+					// Quick click on existing selection → deselect
+					// (matches Windows:1314-1316 ClearDragPreview).
+					ATUITextDeselect();
+				}
+				return true;
+			}
+
+			// Normal drag release — finalize selection.
 			int bx, by;
 			MapPixelToBeam(imagePos, imageSize, mouse.x, mouse.y, bx, by);
 			SelectByBeamPosition(s_sel.mAnchorBeamX, s_sel.mAnchorBeamY, bx, by);
-			s_sel.mbDragActive = false;
 			if (s_sel.mSpans.empty())
 				ATUITextDeselect();
 			return true;
@@ -448,7 +474,16 @@ bool ATUITextSelectionHandleMouse(const ImVec2& imagePos, const ImVec2& imageSiz
 		int bx, by;
 		MapPixelToBeam(imagePos, imageSize, mouse.x, mouse.y, bx, by);
 
-		// Update selection while dragging
+		// Drag threshold: suppress selection preview until the mouse
+		// moves to a different beam position from the anchor.  Matches
+		// Windows UpdateDragPreviewAntic() mbDragInitial check
+		// (uivideodisplaywindow.cpp:2854-2858).
+		if (s_sel.mbDragInitial) {
+			if (bx == s_sel.mAnchorBeamX && by == s_sel.mAnchorBeamY)
+				return true;
+			s_sel.mbDragInitial = false;
+		}
+
 		SelectByBeamPosition(s_sel.mAnchorBeamX, s_sel.mAnchorBeamY, bx, by);
 		UpdateHighlightRects(imagePos, imageSize);
 		s_sel.mbHighlightsValid = true;
@@ -462,7 +497,8 @@ bool ATUITextSelectionHandleMouse(const ImVec2& imagePos, const ImVec2& imageSiz
 // Draw selection highlight overlay
 // ---------------------------------------------------------------------------
 
-void ATUITextSelectionDrawOverlay(const ImVec2& imagePos, const ImVec2& imageSize) {
+void ATUITextSelectionDrawOverlay(const ImVec2& imagePos, const ImVec2& imageSize,
+	ImDrawList *drawList) {
 	if (s_sel.mSpans.empty())
 		return;
 
@@ -474,7 +510,7 @@ void ATUITextSelectionDrawOverlay(const ImVec2& imagePos, const ImVec2& imageSiz
 	if (s_sel.mHighlightRects.empty())
 		return;
 
-	ImDrawList *dl = ImGui::GetWindowDrawList();
+	ImDrawList *dl = drawList ? drawList : ImGui::GetWindowDrawList();
 	const ImU32 selColor = IM_COL32(0, 160, 255, 128);	// semi-transparent blue
 
 	for (const auto& hr : s_sel.mHighlightRects) {

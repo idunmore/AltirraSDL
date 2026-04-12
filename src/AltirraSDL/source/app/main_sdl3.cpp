@@ -183,7 +183,21 @@ static bool g_prevImGuiMouseCapture = false;
 
 // Display destination rectangle — computed each frame by ComputeDisplayRect().
 // Declared here (before UpdateMousePosition) so mouse mapping can use it.
-static SDL_FRect g_displayRect = {0, 0, 0, 0};
+// Non-static so ui_main.cpp can read it via ATGetMainDisplayRect().
+SDL_FRect g_displayRect = {0, 0, 0, 0};
+
+// Accessor used by the ImGui UI layer to draw the text selection overlay
+// and process mouse events over the main display (when the debugger is
+// closed and the Atari frame is drawn directly to the SDL framebuffer).
+bool ATGetMainDisplayRect(float& x, float& y, float& w, float& h) {
+	if (g_displayRect.w <= 0.0f || g_displayRect.h <= 0.0f)
+		return false;
+	x = g_displayRect.x;
+	y = g_displayRect.y;
+	w = g_displayRect.w;
+	h = g_displayRect.h;
+	return true;
+}
 
 // Menu bar height from the previous frame.  ComputeDisplayRect() uses this to
 // offset the display area below the ImGui menu bar.  Updated each frame after
@@ -448,11 +462,18 @@ static void HandleEvents() {
 				// Auto-capture: on left click, capture the mouse if auto-capture
 				// is enabled and mouse is mapped.  The click is consumed (not
 				// forwarded to input manager) — matches Windows behavior.
-				if (ev.button.button == SDL_BUTTON_LEFT &&
-					ATUIGetMouseAutoCapture() &&
-					!ATUIIsMouseCaptured()) {
-					ATUICaptureMouse();
-					break;
+				// When the mouse is NOT mapped as an Atari input, fall through
+				// so the click reaches the text-selection handler in the UI
+				// render path.
+				{
+					ATInputManager *imCap = g_sim.GetInputManager();
+					if (ev.button.button == SDL_BUTTON_LEFT &&
+						ATUIGetMouseAutoCapture() &&
+						!ATUIIsMouseCaptured() &&
+						imCap && imCap->IsMouseMapped()) {
+						ATUICaptureMouse();
+						break;
+					}
 				}
 
 				// Forward button to input manager when captured or absolute mode

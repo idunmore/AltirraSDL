@@ -34,9 +34,11 @@ struct ATTextSpan {
 // Global text selection state.
 struct ATTextSelectionState {
 	bool mbDragActive = false;		// mouse-drag in progress
+	bool mbDragInitial = false;		// drag started but mouse hasn't moved yet
 	bool mbHighlightsValid = false;	// highlight rects computed this frame
 	int mAnchorBeamX = 0;			// drag start beam X
 	int mAnchorBeamY = 0;			// drag start beam Y
+	uint32 mDragStartTime = 0;		// VDGetCurrentTick() at drag start
 
 	vdfastvector<ATTextSpan> mSpans;	// selected spans
 
@@ -65,4 +67,9 @@ void ATUITextCopy(ATTextCopyMode mode);
 bool ATUITextSelectionHandleMouse(const ImVec2& imagePos, const ImVec2& imageSize);
 
 // Draw selection highlight overlay — call after ImGui::Image() in the Display pane.
-void ATUITextSelectionDrawOverlay(const ImVec2& imagePos, const ImVec2& imageSize);
+// When drawList is null the current window's draw list is used (debugger pane
+// path).  Callers that render outside any ImGui window (main display path)
+// should pass ImGui::GetBackgroundDrawList() so the highlight is drawn above
+// the Atari frame but below ImGui windows.
+void ATUITextSelectionDrawOverlay(const ImVec2& imagePos, const ImVec2& imageSize,
+	struct ImDrawList *drawList = nullptr);
