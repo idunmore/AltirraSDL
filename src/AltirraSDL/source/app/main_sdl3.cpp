@@ -727,6 +727,9 @@ static void HandleEvents() {
 			// Re-query safe insets in case rotation happened while
 			// suspended.
 			ATAndroid_InvalidateSafeInsets();
+			// Re-query storage volumes in case an SD card was
+			// inserted or removed while the app was backgrounded.
+			ATAndroid_InvalidateStorageVolumes();
 			// Refresh the file browser when returning from Settings
 			// (after a possible "All files access" grant).
 			ATMobileUI_InvalidateFileBrowser();

@@ -149,9 +149,34 @@ void RenderFileBrowser(ATSimulator &sim, ATUIState &uiState,
 
 		ImGui::Separator();
 
-		// Current directory
-		VDStringA dirU8 = VDTextWToU8(s_fileBrowserDir);
-		ImGui::TextWrapped("%s", dirU8.c_str());
+		// Current directory — show the last two path segments so it
+		// stays compact in landscape.  The full path is available as
+		// an ImGui tooltip on hover/long-press.
+		{
+			VDStringA dirU8 = VDTextWToU8(s_fileBrowserDir);
+			const char *display = dirU8.c_str();
+
+			// Find the last two '/' separators to extract tail.
+			// "/storage/emulated/0/Download/atari" → ".../Download/atari"
+			const char *p = dirU8.c_str() + dirU8.length();
+			int slashes = 0;
+			while (p > dirU8.c_str()) {
+				--p;
+				if (*p == '/' && ++slashes == 2) break;
+			}
+			char shortPath[256];
+			if (slashes >= 2 && p > dirU8.c_str()) {
+				snprintf(shortPath, sizeof(shortPath), "...%s", p);
+				display = shortPath;
+			}
+
+			ImGui::PushStyleColor(ImGuiCol_Text,
+				ImVec4(0.65f, 0.72f, 0.82f, 1.0f));
+			ImGui::TextUnformatted(display);
+			ImGui::PopStyleColor();
+			if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+				ImGui::SetTooltip("%s", dirU8.c_str());
+		}
 
 #ifdef __ANDROID__
 		// Storage permission banner — if the user hasn't granted
@@ -163,11 +188,6 @@ void RenderFileBrowser(ATSimulator &sim, ATUIState &uiState,
 		if (!ATAndroid_HasStoragePermission()) {
 			ImGui::PushStyleColor(ImGuiCol_ChildBg,
 				ImVec4(0.30f, 0.12f, 0.12f, 0.85f));
-			// Auto-size the child to its content so the "Open
-			// Settings" button is never clipped — the wrapped
-			// explanation text changes height with screen width and
-			// font scale, and a fixed 160dp box was too short on
-			// narrow phones, hiding the button under the next row.
 			ImGui::BeginChild("PermBanner",
 				ImVec2(0, 0),
 				ImGuiChildFlags_Border | ImGuiChildFlags_AutoResizeY
@@ -196,46 +216,183 @@ void RenderFileBrowser(ATSimulator &sim, ATUIState &uiState,
 		}
 #endif
 
-		// Quick-access shortcut bar — lets the user jump to common
-		// locations from anywhere in the tree, so an accidental climb
-		// into a filtered-empty folder is never a dead end.
+		// Shortcut + navigation bar — a single row (with wrapping)
+		// that contains ".." (up), location shortcuts, and "/".
+		// Merging Up into the shortcut row eliminates a whole row of
+		// chrome, giving more space to the file list in landscape.
+		//
+		// The active shortcut (whose path is a prefix of the current
+		// directory) is highlighted so the user can orient at a glance.
+		// When multiple shortcuts match (e.g. Downloads is inside
+		// Internal), the longest prefix wins.
 		{
-			float shortcutH = dp(40.0f);
-			if (ImGui::Button("Downloads", ImVec2(dp(120.0f), shortcutH))) {
+			float shortcutH = dp(44.0f);
+			const ImGuiStyle &style = ImGui::GetStyle();
+			float availRight = ImGui::GetCursorScreenPos().x
+				+ ImGui::GetContentRegionAvail().x;
+
+			auto sameLineIfFits = [&](float nextW) {
+				float afterPrev = ImGui::GetItemRectMax().x
+					+ style.ItemSpacing.x;
+				if (afterPrev + nextW <= availRight)
+					ImGui::SameLine();
+			};
+
+			// --- Determine which shortcut is "active" (longest
+			// prefix match against the current directory) ---
+			VDStringA dirU8 = VDTextWToU8(s_fileBrowserDir);
+			const char *activePath = nullptr;
+			size_t activeLen = 0;
+
+			auto checkActive = [&](const char *path) {
+				if (!path || !*path) return;
+				size_t len = strlen(path);
+				// Strip trailing slash for comparison.
+				while (len > 1 && path[len - 1] == '/') --len;
+				if (len <= activeLen) return;
+				if (dirU8.length() < len) return;
+				if (strncmp(dirU8.c_str(), path, len) != 0) return;
+				// Must match at a path boundary.
+				if (dirU8.length() > len && dirU8[len] != '/') return;
+				activePath = path;
+				activeLen = len;
+			};
+
+			// Check Downloads.
 #ifdef __ANDROID__
-				const char *dl = ATAndroid_GetPublicDownloadsDir();
-				if (dl && *dl)
-					JumpToDirectory(dl);
+			const char *dlPath = ATAndroid_GetPublicDownloadsDir();
+			if (!dlPath || !*dlPath) dlPath = "/storage/emulated/0/Download";
+			checkActive(dlPath);
+#else
+			// Copy SDL strings — SDL_GetUserFolder may use a shared
+			// internal buffer that a second call could overwrite.
+			VDStringA dlPathStr, homePathStr;
+			{
+				const char *p = SDL_GetUserFolder(SDL_FOLDER_DOWNLOADS);
+				if (p) dlPathStr = p;
+			}
+			{
+				const char *p = SDL_GetUserFolder(SDL_FOLDER_HOME);
+				if (p) homePathStr = p;
+			}
+			const char *dlPath = dlPathStr.empty()
+				? nullptr : dlPathStr.c_str();
+			const char *homePath = homePathStr.empty()
+				? nullptr : homePathStr.c_str();
+			if (dlPath) checkActive(dlPath);
+			if (homePath) checkActive(homePath);
+#endif
+
+			// "/" is the fallback — only active if nothing else matched.
+			if (!activePath)
+				checkActive("/");
+
+			// Highlight style for the active shortcut.
+			auto pushActiveStyle = [](bool active) {
+				if (active) {
+					ImGui::PushStyleColor(ImGuiCol_Button,
+						ImVec4(0.22f, 0.42f, 0.70f, 1.0f));
+					ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+						ImVec4(0.26f, 0.50f, 0.80f, 1.0f));
+				}
+			};
+			auto popActiveStyle = [](bool active) {
+				if (active) ImGui::PopStyleColor(2);
+			};
+
+			// --- ".." (Up) — first in the row for easy reach ---
+			{
+				bool atRoot = s_fileBrowserDir.empty()
+					|| s_fileBrowserDir == L"/";
+				if (atRoot) {
+					ImGui::BeginDisabled();
+				}
+				if (ImGui::Button("..", ImVec2(0, shortcutH)))
+					NavigateUp();
+				if (atRoot) {
+					ImGui::EndDisabled();
+				}
+			}
+
+			// --- Downloads ---
+			{
+				bool active = dlPath && activePath
+					&& activeLen == strlen(dlPath)
+					&& strncmp(activePath, dlPath, activeLen) == 0;
+				float btnW = ImGui::CalcTextSize("Downloads").x
+					+ style.FramePadding.x * 2.0f;
+				sameLineIfFits(btnW);
+				pushActiveStyle(active);
+				if (ImGui::Button("Downloads", ImVec2(0, shortcutH))) {
+#ifdef __ANDROID__
+					JumpToDirectory(dlPath);
+#else
+					if (dlPath && *dlPath) JumpToDirectory(dlPath);
+#endif
+				}
+				popActiveStyle(active);
+			}
+
+#ifdef __ANDROID__
+			for (size_t vi = 0; vi < volumes.size(); vi++) {
+				const ATAndroidVolume &vol = volumes[vi];
+
+				char btnLabel[64];
+				if (vol.removable)
+					snprintf(btnLabel, sizeof(btnLabel), "%.59s",
+						vol.label.c_str());
 				else
-					JumpToDirectory("/storage/emulated/0/Download");
-#else
-				const char *home = SDL_GetUserFolder(SDL_FOLDER_DOWNLOADS);
-				if (home && *home) JumpToDirectory(home);
-#endif
+					snprintf(btnLabel, sizeof(btnLabel), "Internal");
+
+				bool active = activePath
+					&& activeLen == vol.path.size()
+					&& strncmp(activePath, vol.path.c_str(),
+						activeLen) == 0;
+
+				float btnW = ImGui::CalcTextSize(btnLabel).x
+					+ style.FramePadding.x * 2.0f;
+				sameLineIfFits(btnW);
+
+				ImGui::PushID((int)(0x1000 + vi));
+				pushActiveStyle(active);
+				if (ImGui::Button(btnLabel, ImVec2(0, shortcutH)))
+					JumpToDirectory(vol.path.c_str());
+				popActiveStyle(active);
+				ImGui::PopID();
 			}
-			ImGui::SameLine();
-			if (ImGui::Button("Storage", ImVec2(dp(100.0f), shortcutH))) {
-#ifdef __ANDROID__
-				JumpToDirectory("/storage/emulated/0");
 #else
-				const char *home = SDL_GetUserFolder(SDL_FOLDER_HOME);
-				if (home && *home) JumpToDirectory(home);
-				else JumpToDirectory("/");
-#endif
+			{
+				bool active = activePath && homePath
+					&& activeLen == strlen(homePath)
+					&& strncmp(activePath, homePath, activeLen) == 0;
+				float btnW = ImGui::CalcTextSize("Home").x
+					+ style.FramePadding.x * 2.0f;
+				sameLineIfFits(btnW);
+				pushActiveStyle(active);
+				if (ImGui::Button("Home", ImVec2(0, shortcutH))) {
+					if (homePath && *homePath) JumpToDirectory(homePath);
+					else JumpToDirectory("/");
+				}
+				popActiveStyle(active);
 			}
-			ImGui::SameLine();
-			if (ImGui::Button("/", ImVec2(dp(50.0f), shortcutH))) {
-				JumpToDirectory("/");
+#endif
+
+			// --- "/" (root) ---
+			{
+				bool active = activePath
+					&& activeLen == 1 && activePath[0] == '/';
+				sameLineIfFits(dp(40.0f));
+				pushActiveStyle(active);
+				if (ImGui::Button("/", ImVec2(dp(40.0f), shortcutH)))
+					JumpToDirectory("/");
+				popActiveStyle(active);
 			}
 		}
 
-		// Navigation row: Up + (in ROM mode) "Select This Folder" button
-		float rowBtnH = dp(48.0f);
-		if (ImGui::Button(".. (Up)", ImVec2(dp(120.0f), rowBtnH)))
-			NavigateUp();
-
+		// In ROM-folder mode, the user picks a directory instead of a
+		// file — show a full-width "Use This Folder" action button.
 		if (s_romFolderMode) {
-			ImGui::SameLine();
+			float rowBtnH = dp(44.0f);
 			if (ImGui::Button("Use This Folder", ImVec2(-1, rowBtnH))) {
 				// Trigger firmware scan on current directory
 				s_romDir = s_fileBrowserDir;

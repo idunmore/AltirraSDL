@@ -26,6 +26,8 @@ bool		g_insetsValid   = false;
 ATSafeInsets	g_insets;
 std::string	g_downloadsDir;
 bool		g_downloadsLookupDone = false;
+std::vector<ATAndroidVolume>	g_storageVolumes;
+bool		g_volumesValid = false;
 
 // Helper: scoped-delete local JNI refs without forgetting.
 struct JLocal {
@@ -230,6 +232,64 @@ void QueryDownloadsDir() {
 	}
 }
 
+void QueryStorageVolumes() {
+	g_volumesValid = true;
+	g_storageVolumes.clear();
+
+	JNIEnv *env = GetEnv();
+	jobject activity = GetActivity();
+	if (!env || !activity) return;
+
+	jclass activityClass = env->GetObjectClass(activity);
+	if (!activityClass) { CheckAndClearException(env, "vol: GetObjectClass"); return; }
+	JLocal _acls(env, activityClass);
+
+	jmethodID mid = env->GetMethodID(activityClass,
+		"getStorageVolumes", "()Ljava/lang/String;");
+	if (!mid) {
+		CheckAndClearException(env, "getStorageVolumes mid");
+		LOGW("AltirraActivity.getStorageVolumes() missing");
+		return;
+	}
+
+	JLocal resultObj(env, env->CallObjectMethod(activity, mid));
+	if (CheckAndClearException(env, "getStorageVolumes") || !resultObj)
+		return;
+
+	const char *raw = env->GetStringUTFChars((jstring)resultObj.obj, nullptr);
+	if (!raw) return;
+
+	std::string data(raw);
+	env->ReleaseStringUTFChars((jstring)resultObj.obj, raw);
+
+	// Parse tab-separated lines: path\tlabel\tremovable\n
+	size_t pos = 0;
+	while (pos < data.size()) {
+		size_t eol = data.find('\n', pos);
+		if (eol == std::string::npos) eol = data.size();
+		std::string line = data.substr(pos, eol - pos);
+		pos = eol + 1;
+
+		if (line.empty()) continue;
+
+		size_t tab1 = line.find('\t');
+		if (tab1 == std::string::npos) continue;
+		size_t tab2 = line.find('\t', tab1 + 1);
+		if (tab2 == std::string::npos) continue;
+
+		ATAndroidVolume vol;
+		vol.path = line.substr(0, tab1);
+		vol.label = line.substr(tab1 + 1, tab2 - tab1 - 1);
+		vol.removable = (line.substr(tab2 + 1) == "1");
+		g_storageVolumes.push_back(std::move(vol));
+
+		LOGI("Volume: path=%s label=%s removable=%d",
+			g_storageVolumes.back().path.c_str(),
+			g_storageVolumes.back().label.c_str(),
+			g_storageVolumes.back().removable ? 1 : 0);
+	}
+}
+
 } // namespace
 
 ATSafeInsets ATAndroid_GetSafeInsets() {
@@ -293,6 +353,16 @@ const char *ATAndroid_GetPublicDownloadsDir() {
 	if (!g_downloadsLookupDone)
 		QueryDownloadsDir();
 	return g_downloadsDir.empty() ? "" : g_downloadsDir.c_str();
+}
+
+const std::vector<ATAndroidVolume>& ATAndroid_GetStorageVolumes() {
+	if (!g_volumesValid)
+		QueryStorageVolumes();
+	return g_storageVolumes;
+}
+
+void ATAndroid_InvalidateStorageVolumes() {
+	g_volumesValid = false;
 }
 
 // --- Vibrator cache ---
@@ -395,5 +465,14 @@ bool ATAndroid_HasStoragePermission() { return true; }
 const char *ATAndroid_GetPublicDownloadsDir() { return ""; }
 bool ATAndroid_OpenManageStorageSettings() { return false; }
 void ATAndroid_Vibrate(int) {}
+
+namespace {
+std::vector<ATAndroidVolume> g_emptyVolumes;
+}
+
+const std::vector<ATAndroidVolume>& ATAndroid_GetStorageVolumes() {
+	return g_emptyVolumes;
+}
+void ATAndroid_InvalidateStorageVolumes() {}
 
 #endif

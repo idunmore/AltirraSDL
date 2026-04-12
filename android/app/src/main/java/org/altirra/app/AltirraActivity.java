@@ -1,12 +1,18 @@
 package org.altirra.app;
 
 import android.Manifest;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
+import android.os.storage.StorageManager;
+import android.os.storage.StorageVolume;
 import android.provider.Settings;
+
+import java.io.File;
+import java.util.List;
 
 import org.libsdl.app.SDLActivity;
 
@@ -131,5 +137,74 @@ public class AltirraActivity extends SDLActivity {
         } else {
             requestStoragePermission();
         }
+    }
+
+    /**
+     * Returns a simple text encoding of mounted storage volumes.
+     * Each volume is one line: "path\tlabel\tremovable\n"
+     * where removable is "1" or "0".
+     *
+     * Uses StorageManager.getStorageVolumes() (API 24+, our minSdk).
+     * On API 30+ we get the directory directly from StorageVolume;
+     * below that we derive it from the volume UUID or use the primary
+     * external storage path.
+     *
+     * Called from native (JNI) to populate the file browser shortcut
+     * bar with SD card / USB drive entries.
+     */
+    public String getStorageVolumes() {
+        StorageManager sm = (StorageManager) getSystemService(Context.STORAGE_SERVICE);
+        if (sm == null) return "";
+
+        List<StorageVolume> volumes = sm.getStorageVolumes();
+        StringBuilder sb = new StringBuilder();
+
+        for (StorageVolume vol : volumes) {
+            // Skip volumes that aren't mounted.  Accept both
+            // read-write and read-only since the emulator only reads.
+            String state = vol.getState();
+            if (state == null
+                    || (!state.equals(Environment.MEDIA_MOUNTED)
+                        && !state.equals(Environment.MEDIA_MOUNTED_READ_ONLY)))
+                continue;
+
+            String path = null;
+
+            if (Build.VERSION.SDK_INT >= 30) {
+                // API 30+: StorageVolume.getDirectory() returns the
+                // mount point directly.
+                File dir = vol.getDirectory();
+                if (dir != null)
+                    path = dir.getAbsolutePath();
+            }
+
+            if (path == null) {
+                // Fallback for API 24-29: primary volume is
+                // Environment.getExternalStorageDirectory(); secondary
+                // volumes are at /storage/<uuid>.
+                if (vol.isPrimary()) {
+                    path = Environment.getExternalStorageDirectory()
+                            .getAbsolutePath();
+                } else {
+                    String uuid = vol.getUuid();
+                    if (uuid != null)
+                        path = "/storage/" + uuid;
+                }
+            }
+
+            if (path == null) continue;
+
+            String label = vol.getDescription(this);
+            if (label == null) label = path;
+
+            sb.append(path);
+            sb.append('\t');
+            sb.append(label);
+            sb.append('\t');
+            sb.append(vol.isRemovable() ? '1' : '0');
+            sb.append('\n');
+        }
+
+        return sb.toString();
     }
 }

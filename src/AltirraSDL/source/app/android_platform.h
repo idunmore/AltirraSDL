@@ -9,6 +9,15 @@
 
 #pragma once
 
+#include <string>
+#include <vector>
+
+struct ATAndroidVolume {
+	std::string path;
+	std::string label;
+	bool removable;
+};
+
 struct ATSafeInsets {
 	int top = 0;
 	int bottom = 0;
@@ -59,3 +68,13 @@ void ATAndroid_Vibrate(int durationMs);
 // on the Java side so we get the correct path regardless of device
 // OEM customization.  Returns an empty string on failure or non-Android.
 const char *ATAndroid_GetPublicDownloadsDir();
+
+// Returns the list of mounted storage volumes (internal, SD card, USB).
+// Uses StorageManager.getStorageVolumes() on the Java side.  The result
+// is cached; call ATAndroid_InvalidateStorageVolumes() to force a
+// re-query (e.g. on app resume after a hot-plug).
+const std::vector<ATAndroidVolume>& ATAndroid_GetStorageVolumes();
+
+// Invalidate the cached volume list so the next
+// ATAndroid_GetStorageVolumes() call re-queries the Java side.
+void ATAndroid_InvalidateStorageVolumes();

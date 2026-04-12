@@ -31,9 +31,9 @@ void UpdateContentScale() {
 	float fs = io.Fonts->Fonts.Size > 0
 		? io.Fonts->Fonts[0]->FontSize
 		: 13.0f;
-	s_contentScale = fs / 16.0f;
-	if (s_contentScale < 1.0f) s_contentScale = 1.0f;
-	if (s_contentScale > 4.0f) s_contentScale = 4.0f;
+	s_contentScale = (fs / 16.0f) * io.FontGlobalScale;
+	if (s_contentScale < 0.5f) s_contentScale = 0.5f;
+	if (s_contentScale > 5.0f) s_contentScale = 5.0f;
 }
 
 // Colour palette, matching the rest of the mobile UI (dark theme

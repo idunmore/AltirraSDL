@@ -72,6 +72,13 @@ struct ATMobileUIState {
 	// manually flipping one of those fields switches the preset to
 	// Custom so the user can see they've left the bundle.
 	int performancePreset = 1;
+
+	// --- Interface scale ---
+	// 0 = Small (0.75×), 1 = Standard (1.0×), 2 = Large (1.25×).
+	// Multiplies the DPI-based content scale so the user can shrink
+	// UI chrome on devices where headers and shortcut bars eat too
+	// much screen in landscape, or enlarge it for accessibility.
+	int interfaceScale = 1;
 };
 
 // Initialize mobile UI (call once at startup, after ImGui init)

@@ -132,9 +132,14 @@ void RenderSettings(ATSimulator &sim, ATUIState &uiState,
 					hwLabel(), vsLabel),
 				ATMobileSettingsPage::Machine };
 
-			cats[n++] = { "Display",
-				VDStringA("Filter, visual effects"),
-				ATMobileSettingsPage::Display };
+			{
+				const char *scaleLabel =
+					mobileState.interfaceScale == 0 ? "Small" :
+					mobileState.interfaceScale == 2 ? "Large" : "Standard";
+				cats[n++] = { "Display",
+					VDStringA().sprintf("Size: %s  \xC2\xB7  Filter, effects", scaleLabel),
+					ATMobileSettingsPage::Display };
+			}
 
 			cats[n++] = { "Performance",
 				VDStringA().sprintf("Preset: %s", presetLabel),
@@ -459,6 +464,20 @@ void RenderSettings(ATSimulator &sim, ATUIState &uiState,
 			markCustom();
 			SaveMobileConfig(mobileState);
 			try { ATMobileUI_ApplyVisualEffects(mobileState); } catch (...) {}
+		}
+
+		ATTouchSection("Interface");
+
+		// Interface scale — lets the user shrink the chrome on
+		// small-screen landscape where headers + shortcut bar
+		// consume most of the display, or enlarge for accessibility.
+		{
+			int sc = mobileState.interfaceScale;
+			static const char *sizes[] = { "Small", "Standard", "Large" };
+			if (ATTouchSegmented("Interface Size", &sc, sizes, 3)) {
+				mobileState.interfaceScale = sc;
+				SaveMobileConfig(mobileState);
+			}
 		}
 
 		ATTouchSection("Display");

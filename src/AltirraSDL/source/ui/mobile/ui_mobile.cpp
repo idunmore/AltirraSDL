@@ -80,6 +80,9 @@ static void LoadMobileConfig(ATMobileUIState &mobileState) {
 	int js = key.getInt("JoystickStyle", (int)ATTouchJoystickStyle::Analog);
 	if (js < 0 || js > 2) js = 0;
 	mobileState.layoutConfig.joystickStyle = (ATTouchJoystickStyle)js;
+	mobileState.interfaceScale = key.getInt("InterfaceScale", 1);
+	if (mobileState.interfaceScale < 0 || mobileState.interfaceScale > 2)
+		mobileState.interfaceScale = 1;
 }
 
 void SaveMobileConfig(const ATMobileUIState &mobileState) {  // shared via mobile_internal.h
@@ -100,6 +103,7 @@ void SaveMobileConfig(const ATMobileUIState &mobileState) {  // shared via mobil
 		key.setBool("FxDistortion", mobileState.fxDistortion);
 		key.setInt("PerformancePreset", mobileState.performancePreset);
 		key.setInt("JoystickStyle", (int)mobileState.layoutConfig.joystickStyle);
+		key.setInt("InterfaceScale", mobileState.interfaceScale);
 	}
 	// Persist immediately — registry-only writes are lost if the user
 	// swipes the app away from recents before it backgrounds properly.
@@ -460,8 +464,16 @@ void ATMobileUI_CloseMenu(ATSimulator &sim, ATMobileUIState &mobileState) {
 void ATMobileUI_Render(ATSimulator &sim, ATUIState &uiState,
 	ATMobileUIState &mobileState, SDL_Window *window)
 {
-	// Cache content scale for dp() helper
-	s_contentScale = mobileState.layoutConfig.contentScale;
+	// Cache content scale for dp() helper, applying user's interface
+	// scale preference on top of the physical DPI factor.
+	static constexpr float kInterfaceScaleFactors[] = { 0.75f, 1.0f, 1.25f };
+	int scaleIdx = mobileState.interfaceScale;
+	if (scaleIdx < 0 || scaleIdx > 2) scaleIdx = 1;
+	float userScale = kInterfaceScaleFactors[scaleIdx];
+	s_contentScale = mobileState.layoutConfig.contentScale * userScale;
+
+	ImGuiIO &io = ImGui::GetIO();
+	io.FontGlobalScale = userScale;
 
 	int w, h;
 	SDL_GetWindowSize(window, &w, &h);
