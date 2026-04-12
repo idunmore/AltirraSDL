@@ -435,6 +435,93 @@ waiting for the right VCOUNT value to start the next frame's processing.
 | $BC00-$BEFF | 768 | Terrain shape templates (bank contours) |
 | $BFFA-$BFFF | 6 | 6502 vectors: cold=$A000, ?=$8000, IRQ=$A000 |
 
+## DUO Implementation Discoveries (2026-04-12)
+
+> The following findings were made during the simultaneous 2-player
+> (DUO) port at `/home/ilm/Documents/GitHub/river_raid_duo/`. They
+> resolve several open questions and reveal previously undocumented
+> mechanics.
+
+### M0 is dormant in normal gameplay — resolved
+
+The M0 bit writer at `frame_sync.asm:$AEF1` and the M0 motion loop
+at `bullets_terrain.asm:$A5CA-$A607` are both **gated by
+`fuel_level == 0` or `invuln_flags bit 7`**. During normal play
+(fuel > 0, not dying), M0 never receives bitmap data and `$C1`
+stays at 0. M0 is a **fuel-depletion visual effect** (a moving dot
+that appears when fuel runs out), NOT a bullet or enemy projectile.
+The at-rest template at `$0BCC` (M1 bits) is the muzzle flash; M0
+has no role in normal bullet mechanics.
+
+### SIZEM initialized to $01 at $A116
+
+`init.asm:$A116` executes `inx; stx SIZEM` where X wraps from
+$FF→$00 then increments to $01. This sets M0 to double width
+(SIZEM bits 0-1 = 01). M1/M2/M3 stay normal width (bits 2-7 = 0).
+Irrelevant in normal play (M0 dormant) but critical for the DUO
+port where M0 carries bullet2.
+
+### Player movement uses velocity + sub-pixel accumulation
+
+The horizontal movement system at `entities.asm:$A453-$A495` is
+NOT simple inc/dec — it implements acceleration with fractional
+positioning:
+
+| Variable | Address | Role |
+|----------|---------|------|
+| `$2B` | ZP | Velocity accumulator: `+= 8` each frame with input held, capped at `$F8`. Reset to 0 on neutral. |
+| `$58` | ZP | Fractional position: `+= velocity` each frame. Pixel move occurs only on 8-bit overflow. |
+
+This creates inertia: the jet starts slowly (first pixel after ~8 frames),
+accelerates to near-pixel-per-frame at max velocity ($F8). Releasing
+the stick immediately resets velocity and fraction to 0 (no coasting).
+The same pattern is used for vertical (up/down) movement with `$59`.
+
+### Main game loop rate: ~1/9 VBI frequency (PAL)
+
+Empirically confirmed via bridge: `frame_counter` ($18, incremented
+in the VBI at `vbi_game_timers`) advances once per ~9 bridge
+`frame(1)` calls. The game's main loop (entity update, collision,
+input, fuel) runs at approximately **5.5 fps** while the VBI and DLI
+maintain 50 fps visuals (terrain scroll, sprite multiplexing, sound).
+Bullet1's smooth upward motion is VBI-driven (timer `$7D` decremented
+in the VBI at `$B387`), not main-loop-driven.
+
+### Bullet1 at-rest template is stationary
+
+The 10 M1 bytes at `$0BCC-$0BD5` do **not move** during bullet
+flight — they remain fixed at the muzzle position. Bullet1's
+apparent upward motion is achieved by changing `HPOSM1` (the
+horizontal position) frame-by-frame via the `($5B>>3)+$5C` formula
+in the DLI, combined with the terrain scrolling downward past the
+fixed missile strip. The bullet "advances" relative to the terrain
+because the terrain moves, not because the bullet bitmap moves.
+
+### Jet shape draw location: $0EAA, 14 bytes
+
+The jet shape is drawn at `frame_sync.asm:$AF32` via
+`lda (src_ptr_lo),Y; sta $0EAA,Y` with Y from $0D down to $00.
+This places the jet at P2 buffer offset $AA-$B7 (14 scanlines).
+The fuel-gauge blit (`copy_row_data` with dst=$0C00+entity_timer)
+overwrites the P0 buffer at the jet's Y range, making any P0
+bitmap at those scanlines transient.
+
+### Free zero-page range: $CC-$EF (36 bytes)
+
+Bridge runtime sampling across 60 frames of active gameplay
+confirmed ZP bytes $CC through $EF are consistently $00. This
+36-byte range is safe for new variables. The DUO port uses
+$CC-$DB for player 2 state (position, bullet, velocity, fuel).
+
+### Collision captures $1F and $21 activate with P0 bitmap
+
+When P0 carries a sprite (DUO jet2), the DLI captures at
+`$1F` (P3PL bit 0 = enemy vs P0) and `$21` (M0PL bit 2 = M0 vs P2)
+begin firing. The `$1F` consumer in `entities.asm` at `$A4C1`
+destroys the enemy on contact. The `$21` consumer at `$A42E`
+triggers entity hit processing. Both had to be NOP'd for DUO
+pass-through (jet2 should not destroy enemies by touching them).
+
 ## Open Questions
 
 1. **Two-player alternation**: The code at $A312 reads player number from
@@ -451,6 +538,18 @@ waiting for the right VCOUNT value to start the next frame's processing.
 4. **Extra life thresholds**: The threshold tracked at $6A triggers extra
    lives but the exact score intervals haven't been confirmed.
 
+5. ~~**M0 role**~~: **RESOLVED** — M0 is a fuel-depletion visual effect,
+   dormant in normal play. See "DUO Implementation Discoveries" above.
+
+6. **In-flight bullet mechanism**: Bullet1's visual upward motion is
+   achieved through HPOSM1 changes + terrain scroll, NOT by moving
+   M1 DMA bits. The exact HPOSM1 update path (via $5B/$5C) and its
+   relationship to the fire timer ($7D) needs complete tracing.
+
+7. **Real visible lives counter**: The byte that decrements when a
+   life icon disappears on screen has not been located. $2A is a
+   death timer, not the visible count.
+
 ## Status
 
 - Phases 0-3: Complete (XEX parse, boot, profiling)
@@ -459,3 +558,4 @@ waiting for the right VCOUNT value to start the next frame's processing.
 - Phase 6: In progress (this document + notes)
 - Phase 7: Pending (MADS round-trip)
 - Phase 8: Pending (final hand-off)
+- **DUO port**: Phases 0-6 complete (see `/home/ilm/Documents/GitHub/river_raid_duo/`)
