@@ -87,9 +87,11 @@ bool ATMobileGamepad_HandleEvent(const SDL_Event &ev,
 			s_uiOwning = false;
 		} else {
 			// Some other screen is open — back out to the
-			// hamburger drawer rather than all the way to the
-			// emulator, matching the on-screen back-arrow.
-			mobileState.currentScreen = ATMobileUIScreen::HamburgerMenu;
+			// hamburger drawer.  Use ATMobileUI_OpenMenu so
+			// s_wasPausedBeforeMenu tracks the sim state
+			// correctly; a direct assignment would leave it
+			// stale and CloseMenu could resume incorrectly.
+			ATMobileUI_OpenMenu(sim, mobileState);
 		}
 		return true;
 	}

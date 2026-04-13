@@ -600,8 +600,11 @@ void RenderSettings(ATSimulator &sim, ATUIState &uiState,
 					if (ImGui::Button("X##rm", ImVec2(dp(32.0f), dp(32.0f)))) {
 						sources.erase(sources.begin() + i);
 						lib->SetSources(sources);
+						lib->PurgeRemovedSourceEntries();
 						lib->SaveSettingsToRegistry();
 						lib->StartScan();
+						extern void GameBrowser_Invalidate();
+						GameBrowser_Invalidate();
 						extern void ATRegistryFlushToDisk();
 						ATRegistryFlushToDisk();
 						ImGui::PopID();
@@ -667,8 +670,11 @@ void RenderSettings(ATSimulator &sim, ATUIState &uiState,
 					if (ImGui::Button("X##rm", ImVec2(dp(32.0f), dp(32.0f)))) {
 						sources.erase(sources.begin() + i);
 						lib->SetSources(sources);
+						lib->PurgeRemovedSourceEntries();
 						lib->SaveSettingsToRegistry();
 						lib->StartScan();
+						extern void GameBrowser_Invalidate();
+						GameBrowser_Invalidate();
 						extern void ATRegistryFlushToDisk();
 						ATRegistryFlushToDisk();
 						ImGui::PopID();

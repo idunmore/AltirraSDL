@@ -169,6 +169,13 @@ static const char *RelativeTimeStr(uint64_t timestamp) {
 	return buf;
 }
 
+// Letter picker overlay (gamepad X button)
+static bool s_letterPickerOpen = false;
+
+// Variant picker popup
+static bool s_variantPickerOpen = false;
+static size_t s_variantPickerEntry = 0;
+
 static void LaunchGame(ATSimulator &sim, ATMobileUIState &mobileState,
 	size_t entryIndex, int variantIndex)
 {
@@ -189,13 +196,11 @@ static void LaunchGame(ATSimulator &sim, ATMobileUIState &mobileState,
 	mobileState.gameLoaded = true;
 	mobileState.currentScreen = ATMobileUIScreen::None;
 	s_gameLibrary->RecordPlay(entryIndex);
+	s_letterPickerOpen = false;
+	s_variantPickerOpen = false;
 	s_needsRefresh = true;
 	sim.Resume();
 }
-
-// Variant picker popup
-static bool s_variantPickerOpen = false;
-static size_t s_variantPickerEntry = 0;
 
 static void ShowVariantPicker(size_t entryIndex) {
 	s_variantPickerEntry = entryIndex;
@@ -267,6 +272,80 @@ static void RenderVariantPicker(ATSimulator &sim, ATMobileUIState &mobileState) 
 	ImGui::End();
 }
 
+static void JumpToLetter(char letter) {
+	s_searchActive = true;
+	s_searchBuf[0] = letter;
+	s_searchBuf[1] = '\0';
+	s_searchFilter = s_searchBuf;
+	s_needsRefresh = true;
+}
+
+static void RenderLetterPicker() {
+	if (!s_letterPickerOpen)
+		return;
+
+	ImGuiIO &io = ImGui::GetIO();
+	ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+
+	const int cols = 7;
+	const int totalLetters = 27;  // A-Z + #
+	const int rows = (totalLetters + cols - 1) / cols;
+
+	float btnSize = dp(56.0f);
+	float pad = dp(4.0f);
+	float gridW = cols * (btnSize + pad) - pad + dp(32.0f);
+	float gridH = rows * (btnSize + pad) - pad + dp(80.0f);
+
+	ImGui::SetNextWindowSize(ImVec2(gridW, gridH), ImGuiCond_Always);
+	ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+
+	ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar
+		| ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove
+		| ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings
+		| ImGuiWindowFlags_NoScrollbar;
+
+	if (ImGui::Begin("##LetterPicker", &s_letterPickerOpen, flags)) {
+		ImGui::TextUnformatted("Jump to Letter");
+		ImGui::Spacing();
+
+		for (int i = 0; i < totalLetters; ++i) {
+			if (i % cols != 0)
+				ImGui::SameLine(0, pad);
+
+			char label[4];
+			char letter;
+			if (i < 26) {
+				letter = 'a' + i;
+				label[0] = 'A' + i;
+				label[1] = '\0';
+			} else {
+				letter = '#';
+				label[0] = '#';
+				label[1] = '\0';
+			}
+
+			if (ImGui::Button(label, ImVec2(btnSize, btnSize))) {
+				if (letter == '#') {
+					s_searchActive = true;
+					s_searchBuf[0] = '\0';
+					s_searchFilter.clear();
+					s_needsRefresh = true;
+				} else {
+					JumpToLetter(letter);
+				}
+				s_letterPickerOpen = false;
+			}
+			if (i == 0)
+				ImGui::SetItemDefaultFocus();
+		}
+
+		ImGui::Spacing();
+		if (ImGui::Button("Cancel", ImVec2(-1, dp(40.0f))))
+			s_letterPickerOpen = false;
+	}
+	ImGui::End();
+}
+
 static void RenderGameTile(ATSimulator &sim, ATMobileUIState &mobileState,
 	size_t entryIndex, float tileW, float tileH)
 {
@@ -287,7 +366,7 @@ static void RenderGameTile(ATSimulator &sim, ATMobileUIState &mobileState,
 	float totalH = tileH;
 
 	char btnId[256];
-	snprintf(btnId, sizeof(btnId), "##tile_%zu", entryIndex);
+	snprintf(btnId, sizeof(btnId), "##tile_%s", nameU8.c_str());
 
 	ImVec2 cursor = ImGui::GetCursorScreenPos();
 	ImDrawList *dl = ImGui::GetWindowDrawList();
@@ -403,9 +482,9 @@ static void RenderGameRow(ATSimulator &sim, ATMobileUIState &mobileState,
 	const char *badge = entry.mVariants.empty() ? "???"
 		: MediaTypeIcon(entry.mVariants[0].mType);
 
-	// Build unique button label
+	// Build unique button label using game name for stable test IDs
 	char btnId[256];
-	snprintf(btnId, sizeof(btnId), "##game_%zu", entryIndex);
+	snprintf(btnId, sizeof(btnId), "##game_%s", nameU8.c_str());
 
 	ImVec2 cursor = ImGui::GetCursorScreenPos();
 	float availW = ImGui::GetContentRegionAvail().x;
@@ -550,6 +629,42 @@ void RenderGameBrowser(ATSimulator &sim, ATUIState &uiState,
 		| ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings;
 
 	if (ImGui::Begin("##GameBrowser", nullptr, flags)) {
+
+		// ── Gamepad / keyboard back navigation ───────────────────
+		// B button, Escape, or Backspace: context-dependent back.
+		// Keyboard shortcuts only fire when no InputText is active
+		// (to avoid stealing Backspace/Escape from text editing).
+		bool backPressed = ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false);
+		if (!ImGui::IsAnyItemActive()) {
+			backPressed = backPressed
+				|| ImGui::IsKeyPressed(ImGuiKey_Escape, false)
+				|| ImGui::IsKeyPressed(ImGuiKey_Backspace, false);
+		}
+
+		if (backPressed) {
+			if (s_letterPickerOpen) {
+				s_letterPickerOpen = false;
+			} else if (s_variantPickerOpen) {
+				s_variantPickerOpen = false;
+			} else if (s_searchActive) {
+				s_searchBuf[0] = '\0';
+				s_searchFilter.clear();
+				s_searchActive = false;
+				s_needsRefresh = true;
+			} else {
+				if (mobileState.gameLoaded) {
+					mobileState.currentScreen = ATMobileUIScreen::None;
+					sim.Resume();
+				} else {
+					ATMobileUI_OpenMenu(sim, mobileState);
+				}
+			}
+		}
+
+		// X button (GamepadFaceLeft): toggle letter picker
+		if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false)) {
+			s_letterPickerOpen = !s_letterPickerOpen;
+		}
 
 		// ── Top bar ──────────────────────────────────────────────
 		const float headerH = dp(56.0f);
@@ -845,6 +960,7 @@ void RenderGameBrowser(ATSimulator &sim, ATUIState &uiState,
 	}
 	ImGui::End();
 
-	// Variant picker overlay
+	// Overlays
 	RenderVariantPicker(sim, mobileState);
+	RenderLetterPicker();
 }

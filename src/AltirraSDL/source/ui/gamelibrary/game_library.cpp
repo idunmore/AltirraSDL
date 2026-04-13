@@ -621,6 +621,35 @@ void ATGameLibrary::SetSources(std::vector<GameSource> sources) {
 	mSources = std::move(sources);
 }
 
+void ATGameLibrary::PurgeRemovedSourceEntries() {
+	if (mSources.empty()) {
+		mEntries.clear();
+		return;
+	}
+
+	mEntries.erase(
+		std::remove_if(mEntries.begin(), mEntries.end(),
+			[this](const GameEntry &entry) -> bool {
+				for (const auto &var : entry.mVariants) {
+					for (const auto &src : mSources) {
+						if (src.mbIsArchive) {
+							if (var.mArchivePath == src.mPath)
+								return false;
+						} else {
+							const VDStringW &sp = src.mPath;
+							const VDStringW &vp = var.mPath;
+							if (vp.size() > sp.size()
+								&& wcsncmp(vp.c_str(), sp.c_str(), sp.size()) == 0
+								&& (vp[sp.size()] == L'/' || vp[sp.size()] == L'\\'))
+								return false;
+						}
+					}
+				}
+				return true;
+			}),
+		mEntries.end());
+}
+
 void ATGameLibrary::SetSettings(const GameLibrarySettings &settings) {
 	mSettings = settings;
 }

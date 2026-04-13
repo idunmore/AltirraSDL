@@ -81,6 +81,7 @@ public:
 
 	const std::vector<GameSource>& GetSources() const { return mSources; }
 	void SetSources(std::vector<GameSource> sources);
+	void PurgeRemovedSourceEntries();
 
 	const GameLibrarySettings& GetSettings() const { return mSettings; }
 	void SetSettings(const GameLibrarySettings &settings);
