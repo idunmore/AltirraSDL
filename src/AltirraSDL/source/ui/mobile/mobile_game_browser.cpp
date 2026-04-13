@@ -640,8 +640,10 @@ void RenderGameBrowser(ATSimulator &sim, ATUIState &uiState,
 			s_artCache->Clear();
 	}
 
-	if (s_needsRefresh)
+	if (s_needsRefresh) {
+		ComputeAvailableLetters();
 		RebuildFilteredIndices();
+	}
 
 	ImGuiIO &io = ImGui::GetIO();
 	float insetT = (float)mobileState.layout.insets.top;
