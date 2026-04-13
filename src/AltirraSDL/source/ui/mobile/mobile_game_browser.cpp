@@ -20,6 +20,7 @@
 #include "cpu.h"
 #include "versioninfo.h"
 #include "settings.h"
+#include "ui_mode.h"
 
 #include "../gamelibrary/game_library.h"
 #include "../gamelibrary/game_library_art.h"
@@ -760,6 +761,18 @@ void RenderGameBrowser(ATSimulator &sim, ATUIState &uiState,
 				s_settingsReturnScreen = ATMobileUIScreen::GameBrowser;
 				mobileState.currentScreen = ATMobileUIScreen::Settings;
 			}
+
+#ifndef __ANDROID__
+			ImGui::SameLine();
+			if (ImGui::Button("Exit Gaming Mode", ImVec2(0, btnH))) {
+				ATUISetMode(ATUIMode::Desktop);
+				ATUISaveMode();
+				float cs = SDL_GetDisplayContentScale(SDL_GetDisplayForWindow(window));
+				if (cs < 1.0f) cs = 1.0f;
+				if (cs > 4.0f) cs = 4.0f;
+				ATUIApplyModeStyle(cs);
+			}
+#endif
 		}
 
 		// ── Row 3: Letter filter bar + search (fixed, not scrolled) ──
