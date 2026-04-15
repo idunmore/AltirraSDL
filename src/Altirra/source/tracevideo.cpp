@@ -28,7 +28,7 @@
 
 class ATTraceChannelVideo final : public vdrefcounted<IATTraceChannel, IATTraceChannelVideo> {
 public:
-	static constexpr uint32 kTypeID = 'tcvd';
+	static constexpr uint32 kTypeID = "tcvd"_vdfcctypeid;
 
 	ATTraceChannelVideo(ATTraceMemoryTracker *memTracker) : mpMemTracker(memTracker) {}
 

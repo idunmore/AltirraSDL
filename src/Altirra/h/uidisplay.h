@@ -33,7 +33,7 @@ enum class ATTextCopyMode : uint8 {
 
 class IATDisplayPane {
 public:
-	enum { kTypeID = 'atdp' };
+	enum { kTypeID = "atdp"_vdfcctypeid };
 
 	virtual void ReleaseMouse() = 0;
 	virtual void ToggleCaptureMouse() = 0;

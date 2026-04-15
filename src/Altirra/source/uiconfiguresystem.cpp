@@ -3141,7 +3141,7 @@ void ATUIDialogSysConfigDisplay2::OnSelectVideoMode() {
 }
 
 void ATUIDialogSysConfigDisplay2::OnBrowseEffect() {
-	const VDStringW& s = VDGetLoadFileName('ceff', (VDGUIHandle)mhdlg, L"Load custom effect", L"CG program (*.cgp)\0*.cgp\0", nullptr);
+	const VDStringW& s = VDGetLoadFileName("ceff"_vdfcctypeid, (VDGUIHandle)mhdlg, L"Load custom effect", L"CG program (*.cgp)\0*.cgp\0", nullptr);
 
 	if (!s.empty())
 		SetControlText(IDC_PATH, s.c_str());
@@ -4094,7 +4094,7 @@ void ATUIDialogSysConfigCompatDB::OnExternalDBToggled() {
 }
 
 void ATUIDialogSysConfigCompatDB::OnBrowse() {
-	const auto& path = VDGetLoadFileName('cpdc', (VDGUIHandle)mhdlg, L"Load external compatibility database", g_ATUIFileFilter_LoadCompatEngine, L"atcpengine");
+	const auto& path = VDGetLoadFileName("cpdc"_vdfcctypeid, (VDGUIHandle)mhdlg, L"Load external compatibility database", g_ATUIFileFilter_LoadCompatEngine, L"atcpengine");
 
 	if (!path.empty()) {
 		try {

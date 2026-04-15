@@ -23,43 +23,77 @@
 #include "uiaccessors.h"
 #include "uiconfgeneric.h"
 
+class IATUIConfigController {
+public:
+	virtual void BuildDialog(IATUIConfigView& view) = 0;
+};
+
 class ATUIConfDialogGenericPanel final : public VDDialogFrameW32, public IATUIConfigView {
 public:
 	ATUIConfDialogGenericPanel(IATUIConfigController& controller);
 	~ATUIConfDialogGenericPanel();
 
+	IATUIConfigStaticTextView& AddStaticText() override;
+	IATUIConfigMultilineTextView& AddMultilineText(bool fullWidth) override;
+	IATUIConfigMultilineTextView& AddMultilineLinkableText(bool fullWidth) override;
 	IATUIConfigCheckboxView& AddCheckbox() override;
+	IATUIConfigBoolChoiceView& AddBoolChoice() override;
 	IATUIConfigPathView& AddPath() override;
 	IATUIConfigStringEditView& AddStringEdit() override;
 	IATUIConfigIntEditView& AddIntEdit() override;
+	IATUIConfigIntSliderView& AddIntSlider() override;
 	IATUIConfigColorView& AddColor() override;
+	IATUIConfigBoolDropDownView& AddBoolDropDown() override;
 	IATUIConfigIntDropDownView& AddIntDropDown() override;
 	IATUIConfigDropDownView& AddDropDown(const ATEnumLookupTable& enumTable) override;
+	IATUIConfigCustomDropDownView& AddCustomDropDown() override;
 
 	void AddVerticalSpace() override;
 
-	void Read(const ATPropertySet& pset) override;
-	void Write(ATPropertySet& pset) const override;
+	void Read(const ATPropertySet& pset);
+	bool Write(ATPropertySet& pset);
+
+	void SetCustomRead(vdfunction<void(const ATPropertySet&)> fn) override;
+	void SetCustomWrite(vdfunction<void(ATPropertySet&)> fn) override;
 
 private:
 	class BaseView;
 	class BoolView;
 	class StringView;
 	class IntView;
+
+	class StaticTextView;
+	class MultilineTextView;
 	class CheckboxView;
+	class BoolChoiceView;
 	class PathView;
 	class StringEditView;
 	class IntEditView;
+	class IntSliderView;
 	class ColorView;
+	class BoolDropDownView;
 	class IntDropDownView;
 	class EnumDropDownView;
+	class CustomDropDownView;
 
 	bool OnLoaded() override;
+	void OnSize() override;
 
 	void OnValueChanged();
+	void OnViewHeightChanged(BaseView& view);
 	void UpdateEnables();
 
 	void AddView(BaseView *view);
+
+	template<typename T, typename... Args>
+	T& AddViewT(Args&&... args) {
+		T* view = new T(std::forward<Args>(args)...);
+		AddView(view);
+
+		return *view;
+	}
+
+	void Relayout();
 
 	static constexpr uint32 kBaseId = 30000;
 
@@ -67,6 +101,10 @@ private:
 	vdfastvector<BaseView *> mViews;
 
 	sint32 mYPosDLUs = 0;
+	sint32 mYPaddingDLUs = 0;
+
+	vdfunction<void(const ATPropertySet&)> mpCustomRead;
+	vdfunction<void(ATPropertySet&)> mpCustomWrite;
 };
 
 class ATUIConfDialogGenericPanel::BaseView : public VDDialogFrameW32, public virtual IATUIConfigPropView {
@@ -87,12 +125,6 @@ public:
 		UpdateLabel();
 	}
 
-	void SetHelpImpl(const wchar_t *text) override {
-	}
-
-	void SetHelpImpl(const wchar_t *caption, const wchar_t *text) override {
-	}
-
 	void SetEnableExprImpl(vdfunction<bool()> fn) override {
 		mpEnableExpr = std::move(fn);
 	}
@@ -105,12 +137,27 @@ public:
 	virtual void Read(const ATPropertySet& pset) = 0;
 	virtual void Write(ATPropertySet& pset) const = 0;
 
+	sint32 GetPaddingTopDLUs() const {
+		return mPaddingTopDLUs;
+	}
+
+	void SetPaddingTopDLUs(sint32 v) {
+		mPaddingTopDLUs = v;
+	}
+
+	virtual sint32 GetHeightDLUs() const {
+		return GetTemplateSizeDLUs().h;
+	}
+
+	virtual void Measure(sint32 w) {}
+
 protected:
 	virtual void UpdateLabel() = 0;
 	virtual void UpdateView() = 0;
 
 	ATUIConfDialogGenericPanel *mpParent = nullptr;
 	uint32 mViewIndex = 0;
+	sint32 mPaddingTopDLUs = 0;
 	VDStringA mTag;
 	VDStringW mLabel;
 	vdfunction<bool()> mpEnableExpr;
@@ -121,7 +168,10 @@ public:
 	using BaseView::BaseView;
 	using BaseView::SetTag;
 
-	void SetDefaultImpl(bool val) override { mbDefault = val; }
+	void SetDefaultImpl(bool val, bool writeDefault) override {
+		mbDefault = val;
+		mbWriteDefault = writeDefault;
+	}
 
 	bool GetValue() const override {
 		return mbValue;
@@ -140,13 +190,14 @@ public:
 	}
 
 	void Write(ATPropertySet& pset) const override {
-		if (!mTag.empty() && mbValue != mbDefault)
+		if (!mTag.empty() &&  (mbWriteDefault || mbValue != mbDefault))
 			pset.SetBool(mTag.c_str(), mbValue);
 	}
 
 protected:
 	bool mbDefault = false;
 	bool mbValue = false;
+	bool mbWriteDefault = false;
 };
 
 class ATUIConfDialogGenericPanel::IntView : public BaseView, public virtual IATUIConfigIntView {
@@ -154,7 +205,13 @@ public:
 	using BaseView::BaseView;
 	using BaseView::SetTag;
 
-	void SetDefaultImpl(sint32 val, bool writeDefault) override { mDefault = val; mbWriteDefault = writeDefault; }
+	void SetDefaultImpl(sint32 val, bool writeDefault) override {
+		mDefault = val;
+		mbWriteDefault = writeDefault;
+
+		if (!mbValueSet)
+			SetValue(val);
+	}
 
 	sint32 GetValue() const override {
 		return mValue;
@@ -163,6 +220,7 @@ public:
 	void SetValueImpl(sint32 v) override {
 		if (mValue != v) {
 			mValue = v;
+			mbValueSet = true;
 			UpdateView();
 		}
 	}
@@ -180,6 +238,7 @@ public:
 protected:
 	sint32 mDefault = 0;
 	sint32 mValue = 0;
+	bool mbValueSet = false;
 	bool mbWriteDefault = false;
 };
 
@@ -219,6 +278,128 @@ protected:
 	VDStringW mValue;
 	VDStringW mDefaultValue;
 	bool mbWriteDefault = false;
+};
+
+class ATUIConfDialogGenericPanel::StaticTextView final : public StringView, public IATUIConfigStaticTextView {
+public:
+	StaticTextView() : StringView(IDD_CFGPROP_STATICTEXT) {
+	}
+
+private:
+	VDUIProxyControl mLabelView;
+	VDUIProxyControl mStaticTextView;
+
+	bool OnLoaded() override {
+		AddProxy(&mLabelView, IDC_LABEL);
+		AddProxy(&mStaticTextView, IDC_STATICTEXT);
+		mResizer.Add(mStaticTextView.GetWindowHandle(), mResizer.kTC);
+
+		UpdateView();
+		UpdateLabel();
+		return false;
+	}
+
+	void OnEnable(bool enable) override {
+		mStaticTextView.SetEnabled(enable);
+	}
+
+	void UpdateView() override {
+		mStaticTextView.SetCaption(mValue.c_str());
+	}
+
+	void UpdateLabel() override {
+		mLabelView.SetCaption(mLabel.c_str());
+	}
+};
+
+class ATUIConfDialogGenericPanel::MultilineTextView final : public StringView, public IATUIConfigMultilineTextView {
+public:
+	MultilineTextView(bool linkable, bool fullWidth)
+		: StringView(fullWidth ? IDD_CFGPROP_SYSLINK2 : IDD_CFGPROP_SYSLINK)
+		, mbLinkable(linkable)
+		, mbFullWidth(fullWidth)
+	{
+	}
+
+	void SetOnLinkSelected(vdfunction<void()> fn) override {
+		mSysLinkView.SetOnClickedWithUrl(
+			[fn = std::move(fn)](const wchar_t *) {
+				fn();
+			}
+		);
+	}
+
+	void SetOnLinkSelected(vdfunction<void(const wchar_t *url)> fn) override {
+		mSysLinkView.SetOnClickedWithUrl(std::move(fn));
+	}
+
+private:
+	VDUIProxyControl mLabelView;
+	VDUIProxySysLinkControl mSysLinkView;
+	const bool mbLinkable;
+	const bool mbFullWidth;
+
+	bool OnLoaded() override {
+		if (!mbFullWidth)
+			AddProxy(&mLabelView, IDC_LABEL);
+
+		AddProxy(&mSysLinkView, IDC_SYSLINK);
+		mResizer.Add(mSysLinkView.GetWindowHandle(), mResizer.kMC);
+
+		UpdateView();
+		UpdateLabel();
+		return false;
+	}
+
+	void OnEnable(bool enable) override {
+		mSysLinkView.SetEnabled(enable);
+	}
+
+	void UpdateView() override {
+		// We use a Syslink control due to its sizing capability. However, it
+		// has no escaping support, which we need to bypass. The workaround is
+		// to insert zero width joiners after each less-than char, so it doesn't
+		// detect a tag.
+		if (mbLinkable) {
+			mSysLinkView.SetCaption(mValue.c_str());
+		} else {
+			VDStringW escapedStr;
+			wchar_t lastCh = (wchar_t)0;
+
+			for(wchar_t ch : mValue) {
+				if (lastCh == L'<')
+					escapedStr += (wchar_t)0x200B;
+
+				escapedStr += ch;
+
+				lastCh = ch;
+			}
+
+			mSysLinkView.SetCaption(escapedStr.c_str());
+		}
+
+		mLastMeasuredWidth = -1;
+	}
+
+	void UpdateLabel() override {
+		if (!mbFullWidth)
+			mLabelView.SetCaption(mLabel.c_str());
+	}
+
+	sint32 GetHeightDLUs() const override {
+		return mHeight;
+	}
+
+	void Measure(sint32 w) override {
+		if (mLastMeasuredWidth != w) {
+			mLastMeasuredWidth = w;
+			mHeight = PixelSizeToDLUsCeil(vdsize32(0, mSysLinkView.GetIdealHeightForWidth(w))).h;
+		}
+	}
+
+private:
+	sint32 mHeight = 0;
+	sint32 mLastMeasuredWidth = -1;
 };
 
 class ATUIConfDialogGenericPanel::CheckboxView final : public BoolView, public IATUIConfigCheckboxView {
@@ -273,6 +454,100 @@ private:
 	}
 };
 
+class ATUIConfDialogGenericPanel::BoolChoiceView final : public BoolView, public IATUIConfigBoolChoiceView {
+public:
+	BoolChoiceView() : BoolView(IDD_CFGPROP_BOOLCHOICE) {
+		mFirstRadio.SetOnClicked(
+			[this] {
+				const bool v = mbFirstChoiceValue;
+
+				if (mbValue != v) {
+					mbValue = v;
+					mpParent->OnValueChanged();
+				}
+			}
+		);
+
+		mSecondRadio.SetOnClicked(
+			[this] {
+				const bool v = !mbFirstChoiceValue;
+
+				if (mbValue != v) {
+					mbValue = v;
+					mpParent->OnValueChanged();
+				}
+			}
+		);
+	}
+
+	IATUIConfigBoolChoiceView& SetFirstChoiceValue(bool v) override {
+		if (mbFirstChoiceValue != v) {
+			mbFirstChoiceValue = v;
+
+			UpdateView();
+		}
+
+		return *this;
+	}
+
+	IATUIConfigBoolChoiceView& SetFirstChoiceText(const wchar_t *text) override {
+		if (mFirstChoiceText != text) {
+			mFirstChoiceText = text;
+
+			mFirstRadio.SetCaption(text);
+		}
+
+		return *this;
+	}
+
+	IATUIConfigBoolChoiceView& SetSecondChoiceText(const wchar_t *text) override {
+		if (mSecondChoiceText != text) {
+			mSecondChoiceText = text;
+
+			mSecondRadio.SetCaption(text);
+		}
+
+		return *this;
+	}
+
+private:
+	VDUIProxyControl mLabelView;
+	VDUIProxyButtonControl mFirstRadio;
+	VDUIProxyButtonControl mSecondRadio;
+	VDStringW mFirstChoiceText;
+	VDStringW mSecondChoiceText;
+	bool mbFirstChoiceValue = true;
+
+	bool OnLoaded() override {
+		AddProxy(&mLabelView, IDC_LABEL);
+		AddProxy(&mFirstRadio, IDC_RADIO1);
+		AddProxy(&mSecondRadio, IDC_RADIO2);
+		mResizer.Add(mFirstRadio.GetWindowHandle(), mResizer.kTC);
+		mResizer.Add(mSecondRadio.GetWindowHandle(), mResizer.kTC);
+
+		mFirstRadio.SetCaption(mFirstChoiceText.c_str());
+		mSecondRadio.SetCaption(mSecondChoiceText.c_str());
+
+		UpdateLabel();
+		UpdateView();
+		return false;
+	}
+
+	void OnEnable(bool enable) override {
+		mFirstRadio.SetEnabled(enable);
+		mSecondRadio.SetEnabled(enable);
+	}
+
+	void UpdateView() override {
+		mFirstRadio.SetChecked(mbValue == mbFirstChoiceValue);
+		mSecondRadio.SetChecked(mbValue != mbFirstChoiceValue);
+	}
+
+	void UpdateLabel() override {
+		mLabelView.SetCaption(mLabel.c_str());
+	}
+};
+
 class ATUIConfDialogGenericPanel::PathView final : public StringView, public IATUIConfigPathView {
 public:
 	PathView() : StringView(IDD_CFGPROP_PATH) {
@@ -309,6 +584,11 @@ public:
 		return *this;
 	}
 
+	IATUIConfigPathView& SetTypeDirectory() override {
+		mbDirectory = true;
+		return *this;
+	}
+
 	IATUIConfigPathView& SetType(const wchar_t *filter, const wchar_t *ext) override {
 		const wchar_t *filterEnd = filter;
 		while(*filterEnd) {
@@ -321,7 +601,7 @@ public:
 	}
 
 	IATUIConfigPathView& SetTypeImage() override {
-		SetBrowseKey('img ');
+		SetBrowseKey("img "_vdfcctypeid);
 		return SetType(L"Supported image files\0*.png;*.jpg;*.jpeg\0All files\0*.*\0", nullptr);
 	}
 
@@ -330,10 +610,11 @@ private:
 	VDUIProxyEditControl mPathView;
 	VDUIProxyButtonControl mBrowseView;
 	bool mbSave = false;
+	bool mbDirectory = false;
 	VDStringW mBrowseFilter;
 	VDStringW mBrowseExt;
 	VDStringW mBrowseCaption;
-	uint32 mBrowseKey = 'path';
+	uint32 mBrowseKey = "path"_vdfcctypeid;
 
 	bool OnLoaded() override {
 		AddProxy(&mLabelView, IDC_LABEL);
@@ -359,13 +640,25 @@ private:
 	}
 
 	void OnBrowse() {
-		const wchar_t *filter = mBrowseFilter.empty() ? L"All files\0*.*\0" : mBrowseFilter.c_str();
-		const wchar_t *ext = mBrowseExt.empty() ? nullptr : mBrowseExt.c_str();
+		if (mbDirectory) {
+			const VDStringW& fn = VDGetDirectory(mBrowseKey, (VDGUIHandle)mhdlg, mBrowseCaption.empty() ? L"Select Directory" : mBrowseCaption.c_str());
 
-		if (mbSave)
-			VDGetSaveFileName(mBrowseKey, (VDGUIHandle)mhdlg, L"Select file", filter, ext);
-		else
-			VDGetLoadFileName(mBrowseKey, (VDGUIHandle)mhdlg, L"Select file", filter, ext);
+			if (!fn.empty())
+				SetValueImpl(fn.c_str());
+		} else {
+			const wchar_t *filter = mBrowseFilter.empty() ? L"All files\0*.*\0" : mBrowseFilter.c_str();
+			const wchar_t *ext = mBrowseExt.empty() ? nullptr : mBrowseExt.c_str();
+			const wchar_t *caption = mBrowseCaption.empty() ? mBrowseCaption.c_str() : L"Select File";
+
+			VDStringW fn;
+			if (mbSave)
+				fn = VDGetSaveFileName(mBrowseKey, (VDGUIHandle)mhdlg, caption, filter, ext);
+			else
+				fn = VDGetLoadFileName(mBrowseKey, (VDGUIHandle)mhdlg, caption, filter, ext);
+
+			if (!fn.empty())
+				SetValueImpl(fn.c_str());
+		}
 	}
 };
 
@@ -431,6 +724,7 @@ public:
 				sint32 val = (sint32)v;
 				if (mValue != val) {
 					mValue = val;
+					mbValueSet = true;
 
 					mpParent->OnValueChanged();
 				}
@@ -467,6 +761,83 @@ private:
 
 	void UpdateLabel() override {
 		mLabelView.SetCaption(mLabel.c_str());
+	}
+};
+
+////////////////////////////////////////////////////////////////////////////
+
+class ATUIConfDialogGenericPanel::IntSliderView final : public IntView, public IATUIConfigIntSliderView {
+public:
+	IntSliderView() : IntView(IDD_CFGPROP_SLIDER) {
+		mTrackBarView.SetOnValueChanged(
+			[this](sint32 v, bool tracking) {
+				if (mValue != v) {
+					mValue = v;
+					mbValueSet = true;
+
+					UpdateValue();
+					mpParent->OnValueChanged();
+				}
+			}
+		);
+	}
+	
+	IATUIConfigIntSliderView& SetRange(sint32 minVal, sint32 maxVal) override {
+		mTrackBarView.SetRange(minVal, maxVal);
+		mTrackBarView.SetValue(mValue);
+
+		return *this;
+	}
+
+	IATUIConfigIntSliderView& SetFormatter(vdfunction<void(VDStringW&, sint32)> fn) override {
+		mpValueFn = std::move(fn);
+
+		return *this;
+	}
+
+private:
+	VDUIProxyControl mLabelView;
+	VDUIProxyControl mValueView;
+	VDUIProxyTrackbarControl mTrackBarView;
+	vdfunction<void(VDStringW&, sint32)> mpValueFn;
+
+	bool OnLoaded() override {
+		AddProxy(&mLabelView, IDC_LABEL);
+		AddProxy(&mTrackBarView, IDC_SLIDER);
+		AddProxy(&mValueView, IDC_STATIC_VALUE);
+		mResizer.Add(mTrackBarView.GetWindowHandle(), mResizer.kTC);
+		mResizer.Add(mValueView.GetWindowHandle(), mResizer.kTR);
+		UpdateLabel();
+		UpdateView();
+		UpdateValue();
+		return false;
+	}
+
+	void OnEnable(bool enable) override {
+		mTrackBarView.SetEnabled(enable);
+		mValueView.SetEnabled(enable);
+	}
+
+	void UpdateView() override {
+		mTrackBarView.SetValue(mValue);
+
+		UpdateValue();
+	}
+
+	void UpdateLabel() override {
+		mLabelView.SetCaption(mLabel.c_str());
+	}
+
+	void UpdateValue() {
+		VDStringW s;
+
+		if (mpValueFn) {
+			mpValueFn(s, mValue);
+		} else {
+			s.sprintf(L"%d", (int)mValue);
+		}
+
+		mValueView.SetCaption(s.c_str());
 	}
 };
 
@@ -590,6 +961,118 @@ private:
 
 ////////////////////////////////////////////////////////////////////////////
 
+class ATUIConfDialogGenericPanel::BoolDropDownView final : public BaseView, public IATUIConfigBoolDropDownView {
+public:
+	using BaseView::BaseView;
+	using BaseView::SetTag;
+
+	BoolDropDownView()
+		: BaseView(IDD_CFGPROP_DROPDOWN)
+	{
+		mComboView.SetOnSelectionChanged(
+			[this](int idx) {
+				if ((unsigned)idx < mChoices.size()) {
+					mValue = mChoices[idx].mValue;
+					mpParent->OnValueChanged();
+				}
+			}
+		);
+	}
+
+	bool GetValue() const override { return mValue; }
+	void SetValueImpl(bool value) override {
+		if (mValue != value) {
+			mValue = value;
+
+			UpdateView();
+		}
+	}
+
+	void SetDefaultImpl(bool value, bool writeDefault) override {
+		mDefaultValue = value;
+		mbDefaultValueSet = true;
+		mbWriteDefault = writeDefault;
+	}
+
+	IATUIConfigBoolDropDownView& AddChoice(bool value, const wchar_t *name) override {
+		auto& choice = mChoices.emplace_back();
+		choice.mValue = value;
+		choice.mName = name;
+
+		if (IsCreated())
+			mComboView.AddItem(name);
+
+		return *this;
+	}
+
+	void Read(const ATPropertySet& pset) override {
+		if (!mTag.empty()) {
+			bool v = pset.GetBool(mTag.c_str(), mbDefaultValueSet ? mDefaultValue : mChoices.empty() ? false : mChoices[0].mValue);
+			mValue = !v;
+
+			SetValue(v);
+		}
+	}
+
+	void Write(ATPropertySet& pset) const override {
+		if (!mTag.empty() && (!mbDefaultValueSet || mbWriteDefault || mValue != mDefaultValue))
+			pset.SetBool(mTag.c_str(), mValue);
+	}
+
+private:
+	VDUIProxyControl mLabelView;
+	VDUIProxyComboBoxControl mComboView;
+	bool mValue = false;
+	bool mDefaultValue = false;
+	bool mbDefaultValueSet = false;
+	bool mbWriteDefault = false;
+
+	struct Choice {
+		bool mValue;
+		VDStringW mName;
+	};
+
+	vdvector<Choice> mChoices;
+
+	bool OnLoaded() override {
+		AddProxy(&mLabelView, IDC_LABEL);
+		AddProxy(&mComboView, IDC_COMBO);
+		mResizer.Add(mComboView.GetWindowHandle(), mResizer.kTC);
+
+		for(const Choice& choice : mChoices) {
+			mComboView.AddItem(choice.mName.c_str());
+		}
+
+		UpdateLabel();
+		return false;
+	}
+
+	void OnEnable(bool enable) override {
+		mComboView.SetEnabled(enable);
+	}
+
+	void UpdateView() override {
+		int index = -1;
+
+		if (!mChoices.empty()) {
+			index = 0;
+
+			auto it = std::find_if(mChoices.begin(), mChoices.end(), [value = mValue](const Choice& choice) { return choice.mValue == value; });
+
+			if (it != mChoices.end())
+				index = (int)(it - mChoices.begin());
+		}
+
+		mComboView.SetSelection(index);
+	}
+
+	void UpdateLabel() override {
+		mLabelView.SetCaption(mLabel.c_str());
+	}
+};
+
+////////////////////////////////////////////////////////////////////////////
+
 class ATUIConfDialogGenericPanel::IntDropDownView final : public BaseView, public IATUIConfigIntDropDownView {
 public:
 	using BaseView::BaseView;
@@ -609,7 +1092,7 @@ public:
 	}
 
 	sint32 GetValue() const override { return mValue; }
-	void SetValue(sint32 value) override {
+	void SetValueImpl(sint32 value) override {
 		if (mValue != value) {
 			mValue = value;
 
@@ -617,9 +1100,10 @@ public:
 		}
 	}
 
-	void SetDefaultValueImpl(sint32 value) override {
+	void SetDefaultImpl(sint32 value, bool writeDefault) override {
 		mDefaultValue = value;
 		mbDefaultValueSet = true;
+		mbWriteDefault = writeDefault;
 	}
 
 	IATUIConfigIntDropDownView& AddChoice(sint32 value, const wchar_t *name) override {
@@ -634,16 +1118,17 @@ public:
 	}
 
 	void Read(const ATPropertySet& pset) override {
-		if (!mTag.empty()) {
-			sint32 v = pset.GetInt32(mTag.c_str(), mbDefaultValueSet ? mDefaultValue : mChoices.empty() ? 0 : mChoices[0].mValue);
-			mValue = ~v;
+		sint32 v = mValue;
 
-			SetValue(v);
-		}
+		if (!mTag.empty())
+			v = pset.GetInt32(mTag.c_str(), mbDefaultValueSet ? mDefaultValue : mChoices.empty() ? 0 : mChoices[0].mValue);
+			
+		mValue = ~v;
+		SetValue(v);
 	}
 
 	void Write(ATPropertySet& pset) const override {
-		if (!mTag.empty())
+		if (!mTag.empty() && (!mbDefaultValueSet || mbWriteDefault || mValue != mDefaultValue))
 			pset.SetInt32(mTag.c_str(), mValue);
 	}
 
@@ -653,6 +1138,7 @@ private:
 	sint32 mValue = 0;
 	sint32 mDefaultValue = 0;
 	bool mbDefaultValueSet = false;
+	bool mbWriteDefault = false;
 
 	struct Choice {
 		sint32 mValue;
@@ -727,8 +1213,9 @@ public:
 		}
 	}
 
-	void SetRawDefaultValue(uint32 value) override {
+	void SetRawDefault(uint32 value, bool writeDefault) override {
 		mDefaultValue = value;
+		mbWriteDefault = writeDefault;
 	}
 
 	IATUIConfigDropDownView& AddRawChoice(uint32 value, const wchar_t *name) override {
@@ -753,7 +1240,7 @@ public:
 	}
 
 	void Write(ATPropertySet& pset) const override {
-		if (!mTag.empty())
+		if (!mTag.empty() && (!mbDefaultValueSet || mbWriteDefault || mValue != mDefaultValue))
 			pset.SetEnum(mEnumTable, mTag.c_str(), mValue);
 	}
 
@@ -763,6 +1250,8 @@ private:
 	VDUIProxyComboBoxControl mComboView;
 	uint32 mValue = 0;
 	uint32 mDefaultValue = 0;
+	bool mbDefaultValueSet = false;
+	bool mbWriteDefault = false;
 
 	struct Choice {
 		uint32 mValue;
@@ -810,6 +1299,132 @@ private:
 
 ////////////////////////////////////////////////////////////////////////////
 
+class ATUIConfDialogGenericPanel::CustomDropDownView final : public BaseView, public IATUIConfigCustomDropDownView {
+public:
+	using BaseView::BaseView;
+	using BaseView::SetTag;
+
+	CustomDropDownView()
+		: BaseView(IDD_CFGPROP_DROPDOWN)
+	{
+		mComboView.SetOnSelectionChanged(
+			[this](int idx) {
+				if ((unsigned)idx < mChoices.size())
+					mValue = idx;
+			}
+		);
+	}
+
+	uint32 GetValue() const override { return mValue; }
+	void SetValueImpl(uint32 value) override {
+		if (mValue != value) {
+			mValue = value;
+
+			UpdateView();
+		}
+	}
+
+	void SetDefaultImpl(uint32 value) override {
+		mDefaultValue = value;
+	}
+
+	IATUIConfigCustomDropDownView& AddChoice(
+		const wchar_t *text,
+		vdfunction<bool(const ATPropertySet&)> readFn,
+		vdfunction<void(ATPropertySet&)> writeFn
+	) override {
+		auto& choice = mChoices.emplace_back();
+		choice.mName = text;
+		choice.mpReadFn = std::move(readFn);
+		choice.mpWriteFn = std::move(writeFn);
+
+		if (mComboView.IsValid())
+			mComboView.AddItem(text);
+
+		return *this;
+	}
+
+	void Read(const ATPropertySet& pset) override {
+		uint32 v = mDefaultValue;
+		uint32 n = (uint32)mChoices.size();
+
+		for(uint32 i=0; i<n; ++i) {
+			const auto& ch = mChoices[i];
+
+			if (ch.mpReadFn && ch.mpReadFn(pset)) {
+				v = i;
+				break;
+			}
+		}
+
+		mValue = ~v;
+		SetValueImpl(v);
+	}
+
+	void Write(ATPropertySet& pset) const override {
+		if (!mChoices.empty()) {
+			uint32 n = mValue;
+
+			if (n >= mChoices.size()) {
+				n = mDefaultValue;
+
+				if (n >= mChoices.size())
+					n = 0;
+			}
+
+			const auto& fn = mChoices[n].mpWriteFn;
+			if (fn)
+				fn(pset);
+		}
+	}
+
+private:
+	VDUIProxyControl mLabelView;
+	VDUIProxyComboBoxControl mComboView;
+	uint32 mValue = 0;
+	uint32 mDefaultValue = 0;
+
+	struct Choice {
+		VDStringW mName;
+		vdfunction<bool(const ATPropertySet&)> mpReadFn;
+		vdfunction<void(ATPropertySet&)> mpWriteFn;
+	};
+
+	vdvector<Choice> mChoices;
+
+	bool OnLoaded() override {
+		AddProxy(&mLabelView, IDC_LABEL);
+		AddProxy(&mComboView, IDC_COMBO);
+		mResizer.Add(mComboView.GetWindowHandle(), mResizer.kTC);
+
+		for(const Choice& choice : mChoices) {
+			mComboView.AddItem(choice.mName.c_str());
+		}
+
+		UpdateLabel();
+		return false;
+	}
+
+	void OnEnable(bool enable) override {
+		mComboView.SetEnabled(enable);
+	}
+
+	void UpdateView() override {
+		int index = -1;
+
+		if (mValue < mChoices.size())
+			index = (int)mValue;
+
+		mComboView.SetSelection(index);
+	}
+
+	void UpdateLabel() override {
+		mLabelView.SetCaption(mLabel.c_str());
+	}
+};
+
+////////////////////////////////////////////////////////////////////////////
+
 ATUIConfDialogGenericPanel::ATUIConfDialogGenericPanel(IATUIConfigController& controller)
 	: VDDialogFrameW32(IDD_CFGPROP_GENERIC)
 	, mController(controller)
@@ -823,77 +1438,122 @@ ATUIConfDialogGenericPanel::~ATUIConfDialogGenericPanel() {
 	}
 }
 
-IATUIConfigCheckboxView& ATUIConfDialogGenericPanel::AddCheckbox() {
-	CheckboxView *view = new CheckboxView;
-	AddView(view);
+IATUIConfigStaticTextView& ATUIConfDialogGenericPanel::AddStaticText() {
+	return AddViewT<StaticTextView>();
+}
 
-	return *view;
+IATUIConfigMultilineTextView& ATUIConfDialogGenericPanel::AddMultilineText(bool fullWidth) {
+	return AddViewT<MultilineTextView>(false, fullWidth);
+}
+
+IATUIConfigMultilineTextView& ATUIConfDialogGenericPanel::AddMultilineLinkableText(bool fullWidth) {
+	return AddViewT<MultilineTextView>(true, fullWidth);
+}
+
+IATUIConfigCheckboxView& ATUIConfDialogGenericPanel::AddCheckbox() {
+	return AddViewT<CheckboxView>();
+}
+
+IATUIConfigBoolChoiceView& ATUIConfDialogGenericPanel::AddBoolChoice() {
+	return AddViewT<BoolChoiceView>();
 }
 
 IATUIConfigPathView& ATUIConfDialogGenericPanel::AddPath() {
-	PathView *view = new PathView;
-	AddView(view);
-
-	return *view;
+	return AddViewT<PathView>();
 }
 
 IATUIConfigStringEditView& ATUIConfDialogGenericPanel::AddStringEdit() {
-	StringEditView *view = new StringEditView;
-	AddView(view);
-
-	return *view;
+	return AddViewT<StringEditView>();
 }
 
 IATUIConfigIntEditView& ATUIConfDialogGenericPanel::AddIntEdit() {
-	IntEditView *view = new IntEditView;
-	AddView(view);
+	return AddViewT<IntEditView>();
+}
 
-	return *view;
+IATUIConfigIntSliderView& ATUIConfDialogGenericPanel::AddIntSlider() {
+	return AddViewT<IntSliderView>();
 }
 
 IATUIConfigColorView& ATUIConfDialogGenericPanel::AddColor() {
-	ColorView *view = new ColorView;
-	AddView(view);
+	return AddViewT<ColorView>();
+}
 
-	return *view;
+IATUIConfigBoolDropDownView& ATUIConfDialogGenericPanel::AddBoolDropDown() {
+	return AddViewT<BoolDropDownView>();
 }
 
 IATUIConfigIntDropDownView& ATUIConfDialogGenericPanel::AddIntDropDown() {
-	IntDropDownView *view = new IntDropDownView;
-	AddView(view);
-
-	return *view;
+	return AddViewT<IntDropDownView>();
 }
 
 IATUIConfigDropDownView& ATUIConfDialogGenericPanel::AddDropDown(const ATEnumLookupTable& enumTable) {
-	EnumDropDownView *view = new EnumDropDownView(enumTable);
-	AddView(view);
+	return AddViewT<EnumDropDownView>(enumTable);
+}
 
-	return *view;
+IATUIConfigCustomDropDownView& ATUIConfDialogGenericPanel::AddCustomDropDown() {
+	return AddViewT<CustomDropDownView>();
 }
 
 void ATUIConfDialogGenericPanel::AddVerticalSpace() {
-	mYPosDLUs += 4;
+	mYPaddingDLUs += 4;
 }
 
 void ATUIConfDialogGenericPanel::Read(const ATPropertySet& pset) {
 	for(BaseView *view : mViews)
 		view->Read(pset);
 
+	if (mpCustomRead)
+		mpCustomRead(pset);
+
 	UpdateEnables();
 }
 
-void ATUIConfDialogGenericPanel::Write(ATPropertySet& pset) const {
+bool ATUIConfDialogGenericPanel::Write(ATPropertySet& pset) {
 	pset.Clear();
 
 	for(BaseView *view : mViews)
 		view->Write(pset);
+
+	if (mpCustomWrite) {
+		try {
+			mpCustomWrite(pset);
+		} catch(const ATUIGenericConfigValidationException& ex) {
+			ShowError(ex);
+
+			auto *viewToFocus = ex.GetView();
+
+			if (viewToFocus) {
+				for(BaseView *view : mViews) {
+					if (view == viewToFocus) {
+						SetFocusToNextControl(view->GetWindowId());
+						break;
+					}
+				}
+			}
+
+			return false;
+		} catch(const VDException& ex) {
+			ShowError(ex);
+			return false;
+		}
+	}
+
+	return true;
+}
+
+void ATUIConfDialogGenericPanel::SetCustomRead(vdfunction<void(const ATPropertySet&)> fn) {
+	mpCustomRead = std::move(fn);
+}
+
+void ATUIConfDialogGenericPanel::SetCustomWrite(vdfunction<void(ATPropertySet&)> fn) {
+	mpCustomWrite = std::move(fn);
 }
 
 bool ATUIConfDialogGenericPanel::OnLoaded() {
 	mController.BuildDialog(*this);
 
 	UpdateEnables();
+	Relayout();
 
 	vdsize32 sz = GetSize();
 	sz.h = DLUsToPixelSize(vdsize32(0, mYPosDLUs)).h;
@@ -902,8 +1562,18 @@ bool ATUIConfDialogGenericPanel::OnLoaded() {
 	return false;
 }
 
+void ATUIConfDialogGenericPanel::OnSize() {
+	Relayout();
+
+	VDDialogFrameW32::OnSize();
+}
+
 void ATUIConfDialogGenericPanel::OnValueChanged() {
 	UpdateEnables();
+}
+
+void ATUIConfDialogGenericPanel::OnViewHeightChanged(BaseView& resizingView) {
+	Relayout();
 }
 
 void ATUIConfDialogGenericPanel::UpdateEnables() {
@@ -923,12 +1593,35 @@ void ATUIConfDialogGenericPanel::AddView(BaseView *view) {
 		const uint16 id = (uint16)(kBaseId + (mViews.size() - 1));
 		view->SetWindowId(id);
 
-		sint32 htDLUs = view->GetTemplateSizeDLUs().h + 1;
+		view->SetPaddingTopDLUs(mYPaddingDLUs);
+		mYPosDLUs += mYPaddingDLUs;
+		mYPaddingDLUs = 0;
+
+		sint32 htDLUs = view->GetHeightDLUs() + 1;
 
 		mResizer.AddWithOffsets(view->GetWindowHandle(), 0, mYPosDLUs, 0, mYPosDLUs + htDLUs, mResizer.kTC, true, true);
 
 		mYPosDLUs += htDLUs;
 	}
+}
+
+void ATUIConfDialogGenericPanel::Relayout() {
+	const sint32 width = GetSize().w;
+	sint32 ypos = 0;
+
+	for(BaseView *view : mViews) {
+		view->Measure(width);
+
+		ypos += view->GetPaddingTopDLUs();
+
+		sint32 ht = view->GetHeightDLUs() + 1;
+
+		mResizer.SetOffsets(view->GetWindowHandle(), 0, ypos, 0, ypos + ht, mResizer.kTC, true);
+
+		ypos += ht;
+	}
+
+	mYPosDLUs = ypos;
 }
 
 ////////////////////////////////////////////////////////////////////////////
@@ -940,6 +1633,7 @@ public:
 private:
 	bool OnLoaded() override;
 	void OnDataExchange(bool write) override;
+	bool OnOK() override;
 
 	void BuildDialog(IATUIConfigView& view) override;
 
@@ -989,17 +1683,15 @@ void ATUIConfDialogGeneric::OnDataExchange(bool write) {
 		mPropPanel.Read(mPropSet);
 }
 
+bool ATUIConfDialogGeneric::OnOK() {
+	return !mPropPanel.Write(mPropSet);
+}
+
 void ATUIConfDialogGeneric::BuildDialog(IATUIConfigView& view) {
 	mpConfigurator(view);
 }
 
 ////////////////////////////////////////////////////////////////////////////
-
-bool ATUIShowDialogGenericConfig(VDGUIHandle h, IATUIConfigController& controller) {
-	ATUIConfDialogGenericPanel dlg(controller);
-
-	return dlg.ShowDialog(h);
-}
 
 bool ATUIShowDialogGenericConfig(VDGUIHandle h, ATPropertySet& pset, const wchar_t *name, vdfunction<void(IATUIConfigView&)> fn) {
 	ATUIConfDialogGeneric dlg(pset, name, fn);

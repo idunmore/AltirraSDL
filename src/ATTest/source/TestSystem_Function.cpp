@@ -12,6 +12,11 @@
 	#define LOG_ME() ((void)0)
 #endif
 
+#ifdef VD_COMPILER_CLANG
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wpessimizing-move"
+#endif
+
 namespace ATTestSystemFunction {
 	struct EmptyBase {};
 
@@ -324,3 +329,7 @@ DEFINE_TEST(System_Function) {
 
 	return e;
 }
+
+#ifdef VD_COMPILER_CLANG
+#pragma clang diagnostic pop
+#endif

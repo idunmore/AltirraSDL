@@ -140,7 +140,7 @@ bool ATUIDialogCreateVHDImage2::OnCommand(uint32 id, uint32 extcode) {
 	switch(id) {
 		case IDC_BROWSE:
 			{
-				VDStringW s(VDGetSaveFileName('vhd ', (VDGUIHandle)mhdlg, L"Select location for new VHD image file", L"Virtual hard disk image\0*.vhd\0", L"vhd"));
+				VDStringW s(VDGetSaveFileName("vhd "_vdfcctypeid, (VDGUIHandle)mhdlg, L"Select location for new VHD image file", L"Virtual hard disk image\0*.vhd\0", L"vhd"));
 				if (!s.empty())
 					SetControlText(IDC_PATH, s.c_str());
 			}
@@ -148,7 +148,7 @@ bool ATUIDialogCreateVHDImage2::OnCommand(uint32 id, uint32 extcode) {
 
 		case IDC_BROWSE_PARENT:
 			{
-				VDStringW s(VDGetLoadFileName('vhd ', (VDGUIHandle)mhdlg, L"Select parent VHD image file", L"Virtual hard disk image\0*.vhd\0", L"vhd"));
+				VDStringW s(VDGetLoadFileName("vhd "_vdfcctypeid, (VDGUIHandle)mhdlg, L"Select parent VHD image file", L"Virtual hard disk image\0*.vhd\0", L"vhd"));
 				if (!s.empty())
 					SetControlText(IDC_PATH_PARENT, s.c_str());
 			}
@@ -634,7 +634,7 @@ void ATUIDialogDeviceHardDisk::OnBrowseImage() {
 		{0}
 	};
 
-	VDStringW s(VDGetSaveFileName('ide ', (VDGUIHandle)mhdlg, L"Select IDE image file", L"All files\0*.*\0", NULL, kOpts, optvals));
+	VDStringW s(VDGetSaveFileName("ide "_vdfcctypeid, (VDGUIHandle)mhdlg, L"Select IDE image file", L"All files\0*.*\0", NULL, kOpts, optvals));
 	if (!s.empty()) {
 		if (s.size() >= 4 && !vdwcsicmp(s.c_str() + s.size() - 4, L".vhd")) {
 			try {

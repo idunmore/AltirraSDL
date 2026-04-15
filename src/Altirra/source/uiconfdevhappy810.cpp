@@ -1,5 +1,5 @@
 //	Altirra - Atari 800/800XL/5200 emulator
-//	Copyright (C) 2009-2020 Avery Lee
+//	Copyright (C) 2009-2026 Avery Lee
 //
 //	This program is free software; you can redistribute it and/or modify
 //	it under the terms of the GNU General Public License as published by
@@ -16,83 +16,37 @@
 
 #include <stdafx.h>
 #include <at/atcore/propertyset.h>
-#include <at/atnativeui/dialog.h>
-#include <at/atnativeui/uiproxies.h>
-#include "resource.h"
-
-class ATUIDialogDeviceDiskDriveHappy810 : public VDDialogFrameW32 {
-public:
-	ATUIDialogDeviceDiskDriveHappy810(ATPropertySet& props);
-
-protected:
-	bool OnLoaded();
-	void OnDataExchange(bool write);
-	void UpdateEnables();
-	void UpdateSpeedLabel();
-
-	ATPropertySet& mPropSet;
-	VDUIProxyButtonControl mAutospeedEnable;
-	VDUIProxyControl mAutospeedLabel;
-	VDUIProxyTrackbarControl mAutospeedRate;
-	VDUIProxyComboBoxControl mComboDriveSelect;
-};
-
-ATUIDialogDeviceDiskDriveHappy810::ATUIDialogDeviceDiskDriveHappy810(ATPropertySet& props)
-	: VDDialogFrameW32(IDD_DEVICE_HAPPY810)
-	, mPropSet(props)
-{
-	mAutospeedEnable.SetOnClicked([this] { UpdateEnables(); });
-	mAutospeedRate.SetOnValueChanged([this](sint32, bool) { UpdateSpeedLabel(); });
-}
-
-bool ATUIDialogDeviceDiskDriveHappy810::OnLoaded() {
-	AddProxy(&mComboDriveSelect, IDC_DRIVESELECT);
-	AddProxy(&mAutospeedEnable, IDC_AUTOSPEED);
-	AddProxy(&mAutospeedLabel, IDC_STATIC_AUTOSPEEDRATE);
-	AddProxy(&mAutospeedRate, IDC_AUTOSPEEDRATE);
-
-	mAutospeedRate.SetRange(200, 400);
-	mAutospeedRate.SetPageSize(10);
-
-	VDStringW s;
-	for(int i=1; i<=4; ++i) {
-		s.sprintf(L"Drive %d (D%d:)", i, i);
-		mComboDriveSelect.AddItem(s.c_str());
-	}
-
-	mComboDriveSelect.SetSelection(0);
-
-	UpdateEnables();
-
-	return VDDialogFrameW32::OnLoaded();
-}
-
-void ATUIDialogDeviceDiskDriveHappy810::OnDataExchange(bool write) {
-	if (write) {
-		mPropSet.SetUint32("id", mComboDriveSelect.GetSelection());
-		mPropSet.SetBool("autospeed", mAutospeedEnable.GetChecked());
-		mPropSet.SetFloat("autospeedrate", (float)mAutospeedRate.GetValue());
-	} else {
-		mComboDriveSelect.SetSelection(mPropSet.GetUint32("id", 0));
-		mAutospeedEnable.SetChecked(mPropSet.GetBool("autospeed"));
-		mAutospeedRate.SetValue(std::clamp<float>(mPropSet.GetFloat("autospeedrate", 266.0f), 200.0f, 400.0f));
-		UpdateEnables();
-		UpdateSpeedLabel();
-	}
-}
-
-void ATUIDialogDeviceDiskDriveHappy810::UpdateEnables() {
-	mAutospeedLabel.SetEnabled(mAutospeedEnable.GetChecked());
-}
-
-void ATUIDialogDeviceDiskDriveHappy810::UpdateSpeedLabel() {
-	VDStringW s;
-	s.sprintf(L"%d RPM", mAutospeedRate.GetValue());
-	mAutospeedLabel.SetCaption(s.c_str());
-}
+#include "uiconfgeneric.h"
 
 bool ATUIConfDevHappy810(VDGUIHandle hParent, ATPropertySet& props) {
-	ATUIDialogDeviceDiskDriveHappy810 dlg(props);
+	return ATUIShowDialogGenericConfig(
+		hParent,
+		props,
+		L"Happy 810 Options",
+		[](IATUIConfigView& view) {
+			auto& dsel = view.AddIntDropDown()
+				.SetLabel(L"&Drive select")
+				.SetTag("id");
 
-	return dlg.ShowDialog(hParent) != 0;
+			VDStringW s;
+			for(int i=1; i<=4; ++i) {
+				s.sprintf(L"Drive %d (D%d:)", i, i);
+				dsel.AddChoice(i - 1, s.c_str());
+			}
+
+			view.AddVerticalSpace();
+
+			auto& autospeed = view.AddCheckbox()
+				.SetLabel(L"&Autospeed mod")
+				.SetText(L"Install autospeed mod (3K pre-V7 firmware only)")
+				.SetTag("autospeed");
+
+			view.AddIntSlider()
+				.SetTag("autospeedrate")
+				.SetRange(200, 400)
+				.SetDefault(266, true)
+				.SetFormatter([](VDStringW& s, sint32 val) { s.sprintf(L"%d RPM", val); })
+				.SetEnableExpr([&] { return autospeed.GetValue(); });
+		}
+	);
 }

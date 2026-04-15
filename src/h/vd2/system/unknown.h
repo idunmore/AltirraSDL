@@ -100,4 +100,16 @@ constexpr uint32 operator""_vdtypeid(const char *s, size_t n) {
 	return h;
 }
 
+// Legacy FOURCC-style type ID. "abcd"_vdfcctypeid is equivalent to legacy
+// MSVC 'abcd'.
+consteval uint32 operator""_vdfcctypeid(const char *s, size_t n) {
+	if (n != 4)
+		throw;
+
+	return ((uint32)(unsigned char)s[0] << 24)
+		+ ((uint32)(unsigned char)s[1] << 16)
+		+ ((uint32)(unsigned char)s[2] << 8)
+		+ ((uint32)(unsigned char)s[3]);
+}
+
 #endif

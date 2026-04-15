@@ -63,8 +63,8 @@ public:
 
 	bool JumpToCycle(uint32 cycle) override;
 
-	void SetOnTimestampModeChanged(vdfunction<void(ATUIHistoryTimestampMode)> fn);
-	void SetOnTimestampOriginChanged(vdfunction<void(uint32, uint32)> fn);
+	void SetOnTimestampModeChanged(vdfunction<void(ATUIHistoryTimestampMode)> fn) override;
+	void SetOnTimestampOriginChanged(vdfunction<void(uint32, uint32)> fn) override;
 
 protected:
 	LRESULT EditWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);

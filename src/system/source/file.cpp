@@ -303,7 +303,7 @@ bool VDFile::enableExtendValid() {
 	return bSuccessful;
 }
 
-long VDFile::readData(void *buffer, long length) {
+sint32 VDFile::readData(void *buffer, sint32 length) {
 	DWORD dwActual;
 
 	if (!ReadFile(mhFile, buffer, (DWORD)length, &dwActual, NULL))
@@ -314,12 +314,12 @@ long VDFile::readData(void *buffer, long length) {
 	return dwActual;
 }
 
-void VDFile::read(void *buffer, long length) {
+void VDFile::read(void *buffer, sint32 length) {
 	if (length != readData(buffer, length))
 		throw VDWin32Exception(L"Cannot read from file \"%ls\": Premature end of file.", GetLastError(), mpFilename.get());
 }
 
-long VDFile::writeData(const void *buffer, long length) {
+sint32 VDFile::writeData(const void *buffer, sint32 length) {
 	DWORD dwActual;
 
 	if (!WriteFile(mhFile, buffer, (DWORD)length, &dwActual, NULL) || dwActual != (DWORD)length)
@@ -333,7 +333,7 @@ found_error:
 	throw VDWin32Exception(L"Cannot write to file \"%ls\": %%s", GetLastError(), mpFilename.get());
 }
 
-void VDFile::write(const void *buffer, long length) {
+void VDFile::write(const void *buffer, sint32 length) {
 	if (length != writeData(buffer, length))
 		throw VDWin32Exception(L"Cannot write to file \"%ls\": Unable to write all data.", GetLastError(), mpFilename.get());
 }
@@ -382,7 +382,7 @@ bool VDFile::skipNT(sint64 delta) {
 	char buf[1024];
 
 	if (delta <= sizeof buf) {
-		return (long)delta == readData(buf, (long)delta);
+		return (sint32)delta == readData(buf, (sint32)delta);
 	} else
 		return seekNT(delta, kSeekCur);
 }
@@ -394,7 +394,7 @@ void VDFile::skip(sint64 delta) {
 	char buf[1024];
 
 	if (delta > 0 && delta <= sizeof buf) {
-		if ((long)delta != readData(buf, (long)delta))
+		if ((sint32)delta != readData(buf, (sint32)delta))
 			throw VDWin32Exception(L"Cannot seek within file \"%ls\": %%s", GetLastError(), mpFilename.get());
 	} else
 		seek(delta, kSeekCur);

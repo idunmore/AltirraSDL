@@ -108,7 +108,7 @@ enum ATUIPaneCommandId {
 
 class IATUIDebuggerPane {
 public:
-	enum { kTypeID = 'uidp' };
+	enum { kTypeID = "uidp"_vdfcctypeid };
 
 	virtual bool OnPaneCommand(ATUIPaneCommandId id) = 0;
 };

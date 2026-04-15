@@ -46,16 +46,16 @@
 
 	#if defined(__clang__)
 		#define VD_COMPILER_CLANG
+		#define VD_COMPILER_CLANG_OR_GCC
+	#elif defined(__GNUC__)
+		#define VD_COMPILER_GCC		__GNUC__
+		#define VD_COMPILER_CLANG_OR_GCC
 	#elif defined(_MSC_VER)
 		#define VD_COMPILER_MSVC	_MSC_VER
 
 		#if _MSC_VER < 1911
 			#error Visual Studio 2017 15.3 or newer is required.
 		#endif
-
-		#define VD_COMPILER_MSVC_VC8_OR_LATER 1
-	#elif defined(__GNUC__)
-		#define VD_COMPILER_GCC		__GNUC__
 	#endif
 #endif
 
@@ -104,6 +104,16 @@
 
 ///////////////////////////////////////////////////////////////////////////
 //
+//	platform
+//
+///////////////////////////////////////////////////////////////////////////
+
+#ifdef WIN32
+	#define VD_PLATFORM_WINDOWS
+#endif
+
+///////////////////////////////////////////////////////////////////////////
+//
 //	types
 //
 ///////////////////////////////////////////////////////////////////////////
@@ -130,8 +140,8 @@
 #endif
 
 #define VD64(x) INT64_C(x)
-	
-typedef	struct __VDGUIHandle *VDGUIHandle;
+
+typedef	struct VDGUIHandleType *VDGUIHandle;
 
 // enforce wchar_t under Visual C++
 
@@ -156,7 +166,6 @@ typedef	struct __VDGUIHandle *VDGUIHandle;
 #if defined(VD_COMPILER_MSVC)
 	#define VDINTERFACE			__declspec(novtable)
 	#define VDNORETURN			__declspec(noreturn)
-	#define VDPUREFUNC
 	#define VDRESTRICT			__restrict
 
 	#define VDNOINLINE			__declspec(noinline)
@@ -166,46 +175,49 @@ typedef	struct __VDGUIHandle *VDGUIHandle;
 	#define VDCDECL				__cdecl
 	#define VD_CPU_TARGET(exts)
 	#define VD_CPU_TARGET_LAMBDA(exts)
-#elif defined(VD_COMPILER_CLANG)
-	#define VDINTERFACE
-	#define VDNORETURN			__attribute__((noreturn))
-	#define VDPUREFUNC			__attribute__((pure))
-	#define VDRESTRICT			__restrict
-	#define VDNOINLINE			__attribute__((noinline))
-	#define VDFORCEINLINE		inline __attribute__((always_inline))
-	#define VDALIGN(alignment)	__attribute__((aligned(alignment)))
-	#define VDCDECL				__cdecl
-	#define VD_CPU_TARGET(exts)	[[gnu::target(exts)]]
-	#define VD_CPU_TARGET_LAMBDA(exts)	__attribute__((target(exts)))
-#elif defined(VD_COMPILER_GCC)
-	// __cdecl is not a keyword on GCC/Linux; define as empty
-	#ifndef __cdecl
-		#define __cdecl
-	#endif
-	// __declspec is MSVC-specific; on GCC, discard it
-	// (alignment hints like __declspec(align(16)) become unaligned, which is safe)
-	#ifndef __declspec
-		#define __declspec(x)
+#elif defined(VD_COMPILER_CLANG_OR_GCC)
+	// AltirraSDL: on non-Windows GCC/Clang, __cdecl and __declspec are not
+	// keywords; neutralize them so shared headers that sprinkle these
+	// annotations still compile. Windows-Clang already has them.
+	#if defined(VD_COMPILER_GCC) || (defined(VD_COMPILER_CLANG) && !defined(_WIN32))
+		#ifndef __cdecl
+			#define __cdecl
+		#endif
+		#ifndef __declspec
+			#define __declspec(x)
+		#endif
 	#endif
 
 	#define VDINTERFACE
 	#define VDNORETURN			__attribute__((noreturn))
-	#define VDPUREFUNC			__attribute__((pure))
 	#define VDRESTRICT			__restrict
 	#define VDNOINLINE			__attribute__((noinline))
 	#define VDFORCEINLINE		inline __attribute__((always_inline))
 	#define VDALIGN(alignment)	__attribute__((aligned(alignment)))
-	#define VDCDECL
+	#if defined(VD_COMPILER_GCC) || (defined(VD_COMPILER_CLANG) && !defined(_WIN32))
+		#define VDCDECL
+	#else
+		#define VDCDECL			__cdecl
+	#endif
 	#define VD_CPU_TARGET(exts)	[[gnu::target(exts)]]
 	#define VD_CPU_TARGET_LAMBDA(exts)	__attribute__((target(exts)))
 #else
 	#define VDINTERFACE
 	#define VDNORETURN
-	#define VDPUREFUNC
 	#define VDRESTRICT
 	#define VDFORCEINLINE
 	#define VDALIGN(alignment)
 	#define VDCDECL
+#endif
+
+// MSVC ignores no_unique_address, but requires msvc::no_unique_address.
+// Clang follows on Windows for ABI compatibility, but then warns on
+// no_unique_address which means we can't just stick both of them in. So
+// thanks to both these compilers being annoying, we need yet another macro.
+#ifdef VD_COMPILER_GCC
+	#define VD_NO_UNIQUE_ADDRESS	[[no_unique_address]]
+#else
+	#define VD_NO_UNIQUE_ADDRESS	[[msvc::no_unique_address]]
 #endif
 
 ///////////////////////////////////////////////////////////////////////////
@@ -294,13 +306,8 @@ extern void VDDebugPrint(const char *format, ...);
 #else
 	#define VDASSERT_ENABLED 0
 
-	#if defined(_MSC_VER)
-		#define VDASSERT(exp)		((void)0)
-		#define VDASSERTPTR(exp)	((void)0)
-	#elif defined(__GNUC__)
-		#define VDASSERT(exp)		((void)0)
-		#define VDASSERTPTR(exp)	((void)0)
-	#endif
+	#define VDASSERT(exp)		((void)0)
+	#define VDASSERTPTR(exp)	((void)0)
 
 	#define VDFAIL(str)			(void)(str)
 	#define VDVERIFY(exp)		(void)(exp)
@@ -311,7 +318,7 @@ extern void VDDebugPrint(const char *format, ...);
 
 	#if defined(VD_COMPILER_MSVC)
 		#define	VDNEVERHERE			__assume(false)
-	#elif defined(VD_COMPILER_CLANG) || defined(VD_COMPILER_GCC)
+	#elif defined(VD_COMPILER_CLANG_OR_GCC)
 		#define	VDNEVERHERE			__builtin_unreachable()
 	#else
 		#define	VDNEVERHERE			VDASSERT(false)

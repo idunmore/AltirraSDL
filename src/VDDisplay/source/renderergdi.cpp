@@ -10,7 +10,7 @@ class VDDisplayCachedImageGDI : public vdrefcounted<IVDRefUnknown>, public vdlis
 	VDDisplayCachedImageGDI(const VDDisplayCachedImageGDI&);
 	VDDisplayCachedImageGDI& operator=(const VDDisplayCachedImageGDI&);
 public:
-	enum { kTypeID = 'cimI' };
+	enum { kTypeID = "cimI"_vdfcctypeid };
 
 	VDDisplayCachedImageGDI();
 	~VDDisplayCachedImageGDI();

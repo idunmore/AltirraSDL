@@ -32,7 +32,7 @@ class IATDeviceCIODeviceList;
 
 class IATDeviceCIOManager {
 public:
-	enum { kTypeID = 'adcm' };
+	enum { kTypeID = "adcm"_vdfcctypeid };
 
 	virtual void AddCIODevice(IATDeviceCIO *dev) = 0;
 	virtual void RemoveCIODevice(IATDeviceCIO *dev) = 0;
@@ -51,7 +51,7 @@ public:
 
 class IATDeviceCIO {
 public:
-	enum { kTypeID = 'adci'};
+	enum { kTypeID = "adci"_vdfcctypeid };
 
 	// Handler is currently working on call, which should be retried. Break
 	// should not be handled.

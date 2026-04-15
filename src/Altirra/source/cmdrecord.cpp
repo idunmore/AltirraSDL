@@ -58,7 +58,7 @@ void OnCommandRecordRawAudio(ATUICommandContext& ctx) {
 		VDStringW s;
 		
 		if (!ctx.GetArg(0, s))
-			s = VDGetSaveFileName('raud', ATUIGetNewPopupOwner(), L"Record raw audio", L"Raw 32-bit float data\0*.pcm\0", L"pcm");
+			s = VDGetSaveFileName("raud"_vdfcctypeid, ATUIGetNewPopupOwner(), L"Record raw audio", L"Raw 32-bit float data\0*.pcm\0", L"pcm");
 
 		if (!s.empty()) {
 			ctx.SetArg(0, s.c_str());
@@ -75,7 +75,7 @@ void OnCommandRecordAudio(ATUICommandContext& ctx) {
 		VDStringW s;
 		
 		if (!ctx.GetArg(0, s))
-			s = VDGetSaveFileName('raud', ATUIGetNewPopupOwner(), L"Record audio", L"Wave audio (*.wav)\0*.wav\0", L"wav");
+			s = VDGetSaveFileName("raud"_vdfcctypeid, ATUIGetNewPopupOwner(), L"Record audio", L"Wave audio (*.wav)\0*.wav\0", L"wav");
 
 		if (!s.empty()) {
 			ctx.SetArg(0, s.c_str());
@@ -104,17 +104,17 @@ void OnCommandRecordVideo() {
 		case kATVideoEncoding_Raw:
 		case kATVideoEncoding_RLE:
 		case kATVideoEncoding_ZMBV:
-			s = VDGetSaveFileName('rvid', ATUIGetNewPopupOwner(), L"Record raw video", L"Audio/Visual Interleaved (*.avi)\0*.avi\0", L"avi");
+			s = VDGetSaveFileName("rvid"_vdfcctypeid, ATUIGetNewPopupOwner(), L"Record raw video", L"Audio/Visual Interleaved (*.avi)\0*.avi\0", L"avi");
 			break;
 
 		case kATVideoEncoding_WMV7:
 		case kATVideoEncoding_WMV9:
-			s = VDGetSaveFileName('rvid', ATUIGetNewPopupOwner(), L"Record raw video", L"Windows Media Video (*.wmv)\0*.wmv\0", L"wmv");
+			s = VDGetSaveFileName("rvid"_vdfcctypeid, ATUIGetNewPopupOwner(), L"Record raw video", L"Windows Media Video (*.wmv)\0*.wmv\0", L"wmv");
 			break;
 
 		case kATVideoEncoding_H264_AAC:
 		case kATVideoEncoding_H264_MP3:
-			s = VDGetSaveFileName('rvid', ATUIGetNewPopupOwner(), L"Record raw video", L"MPEG-4/AVC (*.mp4)\0*.mp4\0", L"mp4");
+			s = VDGetSaveFileName("rvid"_vdfcctypeid, ATUIGetNewPopupOwner(), L"Record raw video", L"MPEG-4/AVC (*.mp4)\0*.mp4\0", L"mp4");
 			break;
 	}
 
@@ -146,7 +146,7 @@ void OnCommandRecordSapTypeR(ATUICommandContext& ctx) {
 		VDStringW s;
 		
 		if (!ctx.GetArg(0, s))
-			s = VDGetSaveFileName('rsap', ATUIGetNewPopupOwner(), L"Record SAP type R music file", L"SAP Type R\0*.sap\0", L"sap");
+			s = VDGetSaveFileName("rsap"_vdfcctypeid, ATUIGetNewPopupOwner(), L"Record SAP type R music file", L"SAP Type R\0*.sap\0", L"sap");
 
 		if (!s.empty()) {
 			ctx.SetArg(0, s.c_str());
@@ -163,7 +163,7 @@ public:
 	virtual void RunInner() {
 		switch(mStage) {
 			case 0:
-				mpSrcFileDialogResult = ATUIShowOpenFileDialog('lsap', L"Select source SAP file",
+				mpSrcFileDialogResult = ATUIShowOpenFileDialog("lsap"_vdfcctypeid, L"Select source SAP file",
 					g_ATUIFileFilter_LoadSAP);
 
 				Wait(mpSrcFileDialogResult);
@@ -176,7 +176,7 @@ public:
 					break;
 				}
 
-				mpDstFileDialogResult = ATUIShowSaveFileDialog('sxex', L"Select output executable name",
+				mpDstFileDialogResult = ATUIShowSaveFileDialog("sxex"_vdfcctypeid, L"Select output executable name",
 					g_ATUIFileFilter_SaveXEX);
 
 				Wait(mpDstFileDialogResult);

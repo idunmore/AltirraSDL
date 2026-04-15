@@ -3314,7 +3314,7 @@ void ATUITapeEditorDialog::Open() {
 	if (!OKToDiscard())
 		return;
 
-	const VDStringW& path = VDGetLoadFileName('cass', (VDGUIHandle)mhdlg, L"Load cassette tape", g_ATUIFileFilter_LoadTape, nullptr);
+	const VDStringW& path = VDGetLoadFileName("cass"_vdfcctypeid, (VDGUIHandle)mhdlg, L"Load cassette tape", g_ATUIFileFilter_LoadTape, nullptr);
 	if (!path.empty())
 		Load(path.c_str());
 }
@@ -3373,7 +3373,7 @@ void ATUITapeEditorDialog::SaveAsCAS() {
 		}
 	}
 
-	const VDStringW& path = VDGetSaveFileName('cass', (VDGUIHandle)mhdlg, L"Save cassette tape", g_ATUIFileFilter_SaveTape, L"cas");
+	const VDStringW& path = VDGetSaveFileName("cass"_vdfcctypeid, (VDGUIHandle)mhdlg, L"Save cassette tape", g_ATUIFileFilter_SaveTape, L"cas");
 	if (!path.empty()) {
 		VDFileStream fs(path.c_str(), nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kCreateAlways);
 		ATSaveCassetteImageCAS(fs, image);
@@ -3392,7 +3392,7 @@ void ATUITapeEditorDialog::SaveAsWAV() {
 	if (!image)
 		return;
 
-	const VDStringW& path = VDGetSaveFileName('casa', (VDGUIHandle)mhdlg, L"Save cassette tape audio", g_ATUIFileFilter_SaveTapeAudio, L"wav");
+	const VDStringW& path = VDGetSaveFileName("casa"_vdfcctypeid, (VDGUIHandle)mhdlg, L"Save cassette tape audio", g_ATUIFileFilter_SaveTapeAudio, L"wav");
 	if (!path.empty()) {
 		VDFileStream fs(path.c_str(), nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kCreateAlways);
 		ATSaveCassetteImageWAV(fs, image);
@@ -3456,11 +3456,11 @@ void ATUITapeEditorDialog::ExtractCFile() {
 	if (data.empty())
 		throw MyError("There is no data to extract.");
 
-	VDStringW path(VDGetSaveFileName('tapx', (VDGUIHandle)mhdlg, L"Save extracted file", L"All files\0*.*\0", nullptr));
+	VDStringW path(VDGetSaveFileName("tapx"_vdfcctypeid, (VDGUIHandle)mhdlg, L"Save extracted file", L"All files\0*.*\0", nullptr));
 	if (!path.empty()) {
 		VDFile f(path.c_str(), nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kCreateAlways);
 
-		f.write(data.data(), (long)data.size());
+		f.write(data.data(), (sint32)data.size());
 		f.close();
 	}
 }

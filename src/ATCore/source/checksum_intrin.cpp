@@ -108,7 +108,7 @@ void ATChecksumUpdateSHA256_SSE2(ATChecksumStateSHA256& VDRESTRICT state, const 
 		__m128i v3 = _mm_loadu_si128((const __m128i *)(src2 + 48));
 
 		if constexpr(T_SSSE3) {
-#if defined(VD_COMPILER_CLANG) || defined(VD_COMPILER_GCC)
+#ifdef VD_COMPILER_CLANG_OR_GCC
 			const auto pshufb = [](__m128i a, __m128i b) __attribute__((target("ssse3"))) {
 				return _mm_shuffle_epi8(a, b);
 			};
@@ -141,7 +141,7 @@ void ATChecksumUpdateSHA256_SSE2(ATChecksumStateSHA256& VDRESTRICT state, const 
 			__m128i back7;
 
 			if constexpr(T_SSSE3) {
-#if defined(VD_COMPILER_CLANG) || defined(VD_COMPILER_GCC)
+#ifdef VD_COMPILER_CLANG_OR_GCC
 				const auto alignr4 = [](__m128i a, __m128i b) __attribute__((target("ssse3"))) {
 					return _mm_alignr_epi8(a, b, 4);
 				};

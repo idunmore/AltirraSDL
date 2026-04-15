@@ -501,7 +501,7 @@ xit:
 }
 
 void __declspec(naked) __stdcall ATArtifactPALFinal_SSE2(uint32 *dst, const uint32 *ybuf, const uint32 *ubuf, const uint32 *vbuf, uint32 *ulbuf, uint32 *vlbuf, uint32 n) {
-	static const __declspec(align(8)) sint16 kCoeffs[4]={
+	alignas(8) static const sint16 kCoeffs[4]={
 		-3182*4, -3182*4,	// -co_ug / co_ub * 16384 * 4
 		-8346*4+0x10000, -8346*4+0x10000	// -co_vg / co_vr * 16384 * 4, wrapped around
 	};

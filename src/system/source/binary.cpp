@@ -26,6 +26,13 @@
 #include <stdafx.h>
 #include <vd2/system/binary.h>
 
+#ifdef VD_COMPILER_CLANG_OR_GCC
+static_assert(alignof(VDUnalignedHelper<uint16>) == 1);
+static_assert(alignof(VDUnalignedHelper<sint16>) == 1);
+static_assert(alignof(VDUnalignedHelper<float>) == 1);
+static_assert(alignof(VDUnalignedHelper<double>) == 1);
+#endif
+
 static_assert(VDSwizzleU16(0x1234) == 0x3412);
 static_assert(VDSwizzleS16(0x1234) == 0x3412);
 static_assert(VDSwizzleU32(0x12345678) == 0x78563412);

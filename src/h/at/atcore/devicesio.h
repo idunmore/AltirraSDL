@@ -352,7 +352,7 @@ public:
 
 class IATDeviceSIO {
 public:
-	enum { kTypeID = 'adsi' };
+	enum { kTypeID = "adsi"_vdfcctypeid };
 
 	enum CmdResponse {
 		kCmdResponse_NotHandled,
@@ -404,7 +404,7 @@ public:
 
 class IATDeviceRawSIO {
 public:
-	enum { kTypeID = 'adsr' };
+	enum { kTypeID = "adsr"_vdfcctypeid };
 
 	virtual void OnCommandStateChanged(bool asserted) = 0;
 	virtual void OnMotorStateChanged(bool asserted) = 0;

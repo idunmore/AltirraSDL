@@ -23,7 +23,7 @@
 
 class ATCTCEmulator final : public IATSchedulerCallback {
 public:
-	enum : uint32 { kTypeID = 'ctc ' };
+	enum : uint32 { kTypeID = "ctc "_vdfcctypeid };
 
 	ATCTCEmulator();
 	~ATCTCEmulator();

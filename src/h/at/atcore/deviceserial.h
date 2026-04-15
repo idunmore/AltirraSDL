@@ -42,7 +42,7 @@ struct ATDeviceSerialStatus {
 
 class IATDeviceSerial : public IVDRefUnknown {
 public:
-	enum { kTypeID = 'adsr' };
+	enum { kTypeID = "adsr"_vdfcctypeid };
 
 	virtual void SetOnStatusChange(const vdfunction<void(const ATDeviceSerialStatus&)>& fn) = 0;
 

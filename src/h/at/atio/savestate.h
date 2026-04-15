@@ -35,7 +35,7 @@ extern const uint8 kATSaveStateHeader[12];
 
 class IATSaveStateImage2 : public IATImage {
 public:
-	enum : uint32 { kTypeID = 'ssim' };
+	enum : uint32 { kTypeID = "ssim"_vdfcctypeid };
 	
 	virtual const IATSerializable *GetRoot() const = 0;
 };

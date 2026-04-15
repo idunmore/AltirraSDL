@@ -8,11 +8,11 @@
 
 class VDDisplaySubRenderCache;
 
-class VDDisplayRenderCacheGeneric : public vdrefcounted<IVDRefUnknown>, public vdlist_node {
-	VDDisplayRenderCacheGeneric(const VDDisplayRenderCacheGeneric&);
-	VDDisplayRenderCacheGeneric& operator=(const VDDisplayRenderCacheGeneric&);
+class VDDisplayRenderCacheGeneric final : public vdrefcounted<IVDRefUnknown>, public vdlist_node {
+	VDDisplayRenderCacheGeneric(const VDDisplayRenderCacheGeneric&) = delete;
+	VDDisplayRenderCacheGeneric& operator=(const VDDisplayRenderCacheGeneric&) = delete;
 public:
-	enum { kTypeID = 'crd ' };
+	enum { kTypeID = "crd "_vdfcctypeid };
 
 	VDDisplayRenderCacheGeneric();
 	~VDDisplayRenderCacheGeneric();

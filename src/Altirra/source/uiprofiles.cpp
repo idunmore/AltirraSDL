@@ -450,7 +450,7 @@ void ATUIDialogProfiles::OnMouseMove(int x, int y) {
 		if (mpDragTarget)
 			mProfileTree.SetDropTargetHighlight(treeNode);
 		else
-			mProfileTree.SetDropTargetHighlight(NULL);
+			mProfileTree.SetDropTargetHighlight(mProfileTree.kNodeNull);
 	}
 }
 
@@ -459,7 +459,7 @@ void ATUIDialogProfiles::OnMouseUpL(int x, int y) {
 		return;
 
 	mbDragInProgress = false;
-	mProfileTree.SetDropTargetHighlight(NULL);
+	mProfileTree.SetDropTargetHighlight(mProfileTree.kNodeNull);
 
 	// prevent a node from being parented to itself or any of its children
 	if (!mpDragTarget->IsSameOrChildOf(mpDragSource)) {
@@ -498,7 +498,7 @@ void ATUIDialogProfiles::OnCaptureLost() {
 	mbDragInProgress = false;
 	mpDragSource = nullptr;
 	mpDragTarget = nullptr;
-	mProfileTree.SetDropTargetHighlight(NULL);
+	mProfileTree.SetDropTargetHighlight(mProfileTree.kNodeNull);
 }
 
 void ATUIDialogProfiles::OnAdd() {

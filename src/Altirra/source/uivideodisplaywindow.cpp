@@ -624,7 +624,7 @@ void ATUIVideoDisplayWindow::CopySaveFrame(bool saveFrame, bool trueAspect, cons
 		if (path)
 			fn = path;
 		else
-			fn = VDGetSaveFileName('scrn', ATUIGetMainWindow(), L"Save Screenshot", L"Portable Network Graphics (*.png)\0*.png\0", L"png");
+			fn = VDGetSaveFileName("scrn"_vdfcctypeid, ATUIGetMainWindow(), L"Save Screenshot", L"Portable Network Graphics (*.png)\0*.png\0", L"png");
 
 		if (!fn.empty())
 			ATSaveFrame(buf, fn.c_str());

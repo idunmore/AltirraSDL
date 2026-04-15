@@ -97,7 +97,7 @@ void ATSwapEndian(uint64& v) {
 }
 
 template<class T>
-void ATSwapEndianArray(T *p, uint32 n) {
+void ATSwapEndianArray(T *p, size_t n) {
 	while(n--)
 		ATSwapEndian(*p++);
 }
@@ -328,10 +328,10 @@ void ATIDEVHDImage::Init(const wchar_t *path, bool write, bool solidState) {
 		mBlockAllocTable.resize(blockCount);
 
 		mFile.seek(mDynamicHeader.mTableOffset);
-		mFile.read(mBlockAllocTable.data(), (long)mBlockAllocTable.size() * sizeof(mBlockAllocTable[0]));
+		mFile.read(mBlockAllocTable.data(), (sint32)(mBlockAllocTable.size() * sizeof(mBlockAllocTable[0])));
 
 		// swizzle the BAT
-		ATSwapEndianArray(mBlockAllocTable.data(), (long)mBlockAllocTable.size());
+		ATSwapEndianArray(mBlockAllocTable.data(), mBlockAllocTable.size());
 
 		// validate the BAT
 		for(uint32 i=0; i<blockCount; ++i) {
@@ -815,7 +815,7 @@ void ATIDEVHDImage::SetCurrentBlock(uint32 blockIndex) {
 	} else {
 		// yes it is -- read in the bitmap from the new block
 		mFile.seek((sint64)sectorOffset << 9);
-		mFile.read(mCurrentBlockBitmap.data(), (long)(mCurrentBlockBitmap.size() * sizeof(mCurrentBlockBitmap[0])));
+		mFile.read(mCurrentBlockBitmap.data(), (sint32)(mCurrentBlockBitmap.size() * sizeof(mCurrentBlockBitmap[0])));
 		mbCurrentBlockAllocated = true;
 		mCurrentBlockDataOffset = ((sint64)sectorOffset << 9) + mBlockBitmapSize;
 	}
@@ -828,7 +828,7 @@ void ATIDEVHDImage::FlushCurrentBlockBitmap() {
 	if (mbCurrentBlockBitmapDirty) {
 		uint32 sectorOffset = mBlockAllocTable[mCurrentBlock];
 		mFile.seek((uint64)sectorOffset << 9);
-		mFile.write(mCurrentBlockBitmap.data(), (long)(mCurrentBlockBitmap.size() * sizeof(mCurrentBlockBitmap[0])));
+		mFile.write(mCurrentBlockBitmap.data(), (sint32)(mCurrentBlockBitmap.size() * sizeof(mCurrentBlockBitmap[0])));
 		mbCurrentBlockBitmapDirty = false;
 	}
 }
@@ -864,7 +864,7 @@ void ATIDEVHDImage::AllocateBlock() {
 
 	// Write the new block bitmap.
 	mFile.seek(newBlockBitmapLoc);
-	mFile.write(mCurrentBlockBitmap.data(), (long)(mCurrentBlockBitmap.size() * sizeof(mCurrentBlockBitmap[0])));
+	mFile.write(mCurrentBlockBitmap.data(), (sint32)(mCurrentBlockBitmap.size() * sizeof(mCurrentBlockBitmap[0])));
 
 	// Zero the data; technically not needed with NTFS since the bitmap is always at least
 	// as big as the footer and NTFS zeroes new space, but we might be running on FAT32

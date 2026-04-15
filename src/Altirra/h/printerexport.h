@@ -1,5 +1,5 @@
 //	Altirra - Atari 800/800XL/5200 emulator
-//	Copyright (C) 2009-2026 Avery Lee
+//	Copyright (C) 2026 Avery Lee
 //
 //	This program is free software; you can redistribute it and/or modify
 //	it under the terms of the GNU General Public License as published by
@@ -14,20 +14,9 @@
 //	You should have received a copy of the GNU General Public License along
 //	with this program. If not, see <http://www.gnu.org/licenses/>.
 
-#include <stdafx.h>
-#include <at/atcore/propertyset.h>
-#include "uiconfgeneric.h"
+#ifndef f_AT_PRINTEREXPORT_H
+#define f_AT_PRINTEREXPORT_H
 
-bool ATUIConfDevCorvus(VDGUIHandle hParent, ATPropertySet& props) {
-	return ATUIShowDialogGenericConfig(hParent, props, L"Corvus Interface Options",
-		[](IATUIConfigView& view) {
-			view.AddBoolChoice()
-				.SetLabel(L"&Controller port")
-				.SetTag("altports")
-				.SetDefault(false)
-				.SetFirstChoiceValue(false)
-				.SetFirstChoiceText(L"Ports 3+4 (standard, but 400/800 only)")
-				.SetSecondChoiceText(L"Ports 1+2 (XL/XE compatible)");
-		}
-	);
-}
+
+
+#endif

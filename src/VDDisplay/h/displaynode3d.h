@@ -60,6 +60,7 @@ struct VDDisplayVertex3T3D {
 
 class VDDisplayNodeContext3D;
 class VDDisplayCommand3D;
+class VDDisplayCommandList3D;
 struct VDDisplayMeshCommand3D;
 struct VDDisplayDispatchCommand3D;
 enum VDDPoolTextureIndex : uint16;
@@ -119,7 +120,7 @@ public:
 
 	template<typename T> requires(alignof(T) <= 4 && !(sizeof(T) & 3))
 	T *InitVertices(uint32 vertexCount) {
-		return (T *)InitVertex(sizeof(T), vertexCount);
+		return (T *)InitVertices(sizeof(T), vertexCount, nullptr);
 	}
 
 	void SetVertices(const void *data, size_t vertexSize, size_t vertexCount, VDDVertexTransformer vertexTransformer);

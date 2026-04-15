@@ -113,6 +113,7 @@ public:
 	void Add(VDZHWND hwndControl, uint32 alignment);
 	void Add(VDZHWND hwnd, sint32 x, sint32 y, sint32 w, sint32 h, uint32 alignment);
 	void AddWithOffsets(VDZHWND hwnd, sint32 x1, sint32 y1, sint32 x2, sint32 y2, uint32 alignment, bool dlus, bool repositionNow);
+	void SetOffsets(VDZHWND hwnd, sint32 x1, sint32 y1, sint32 x2, sint32 y2, uint32 alignment, bool dlus);
 	void AddAlias(VDZHWND hwndTarget, VDZHWND hwndSource, uint32 mergeFlags);
 	void Remove(VDZHWND hwnd);
 
@@ -296,6 +297,7 @@ protected:
 
 	VDZHWND GetFocusedWindow() const;
 	void SetFocusToControl(uint32 id);
+	void SetFocusToNextControl(uint32 id);
 
 	void SetCurrentCursor(const ATUICursorImage& image);
 
@@ -422,6 +424,8 @@ protected:
 	sint32 GetDpiScaledMetricYEdge() const;
 	vdsize32 ComputeTemplatePixelSize() const;
 	vdsize32 DLUsToPixelSize(const vdsize32& dluSize) const;
+	vdsize32 DLUsToPixelSizeCeil(const vdsize32& dluSize) const;
+	vdsize32 PixelSizeToDLUsCeil(const vdsize32& dluSize) const;
 
 	bool	mbValidationFailed;
 	bool	mbIsModal;

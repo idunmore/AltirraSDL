@@ -17,59 +17,32 @@
 
 #include <stdafx.h>
 #include <at/atcore/propertyset.h>
-#include <at/atnativeui/dialog.h>
-#include <at/atnativeui/uiproxies.h>
-#include "resource.h"
-
-class ATUIDialogDeviceDiskDrive815 : public VDDialogFrameW32 {
-public:
-	ATUIDialogDeviceDiskDrive815(ATPropertySet& props);
-
-protected:
-	bool OnLoaded();
-	void OnDataExchange(bool write);
-
-	ATPropertySet& mPropSet;
-	VDUIProxyComboBoxControl mComboDriveSelect;
-};
-
-ATUIDialogDeviceDiskDrive815::ATUIDialogDeviceDiskDrive815(ATPropertySet& props)
-	: VDDialogFrameW32(IDD_DEVICE_815)
-	, mPropSet(props)
-{
-}
-
-bool ATUIDialogDeviceDiskDrive815::OnLoaded() {
-	AddProxy(&mComboDriveSelect, IDC_DRIVESELECT);
-
-	VDStringW s;
-	for(int i=1; i<=4; ++i) {
-		s.sprintf(L"Drives %d-%d (D%d-D%d:)", i*2-1, i*2, i*2-1, i*2);
-
-		mComboDriveSelect.AddItem(s.c_str());
-	}
-
-	mComboDriveSelect.SetSelection(0);
-
-	return VDDialogFrameW32::OnLoaded();
-}
-
-void ATUIDialogDeviceDiskDrive815::OnDataExchange(bool write) {
-	if (write) {
-		mPropSet.SetUint32("id", mComboDriveSelect.GetSelection() << 1);
-		mPropSet.SetBool("accurate_invert", IsButtonChecked(IDC_INVERTMODE_ACCURATE));
-	} else {
-		mComboDriveSelect.SetSelection(mPropSet.GetUint32("id", 0) >> 1);
-
-		if (mPropSet.GetBool("accurate_invert", false))
-			CheckButton(IDC_INVERTMODE_ACCURATE, true);
-		else
-			CheckButton(IDC_INVERTMODE_COMPATIBLE, true);
-	}
-}
+#include "uiconfgeneric.h"
 
 bool ATUIConfDev815(VDGUIHandle hParent, ATPropertySet& props) {
-	ATUIDialogDeviceDiskDrive815 dlg(props);
+	return ATUIShowDialogGenericConfig(
+		hParent,
+		props,
+		L"815 Disk Drive Options",
+		[](IATUIConfigView& view) {
+			view.AddIntDropDown()
+				.AddChoice(0, L"Drives 1-2 (D1-D2:)")
+				.AddChoice(2, L"Drives 3-4 (D3-D4:)")
+				.AddChoice(4, L"Drives 5-6 (D5-D6:)")
+				.AddChoice(6, L"Drives 7-8 (D7-D8:)")
+				.SetDefault(0)
+				.SetLabel(L"&Drive select")
+				.SetTag("id");
 
-	return dlg.ShowDialog(hParent) != 0;
+			view.AddVerticalSpace();
+
+			view.AddBoolChoice()
+				.SetLabel(L"Data &inversion")
+				.SetTag("accurate_invert")
+				.SetFirstChoiceValue(true)
+				.SetFirstChoiceText(L"Store data inverted from other drives (accurate)")
+				.SetSecondChoiceText(L"Automatically un-invert data for 815 (compatible)")
+				.SetDefault(false);
+		}
+	);
 }

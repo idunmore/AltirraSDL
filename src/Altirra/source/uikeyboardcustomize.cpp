@@ -649,7 +649,7 @@ void ATUIDialogKeyboardCustomize::OnRemoveClicked() {
 }
 
 void ATUIDialogKeyboardCustomize::OnImportClicked() {
-	const auto& s = VDGetLoadFileName('kmap', (VDGUIHandle)mhdlg, L"Load custom keyboard map", L"Altirra keyboard map (*.atkmap)\0*.atkmap\0All files\0*.*\0", L"atkmap");
+	const auto& s = VDGetLoadFileName("kmap"_vdfcctypeid, (VDGUIHandle)mhdlg, L"Load custom keyboard map", L"Altirra keyboard map (*.atkmap)\0*.atkmap\0All files\0*.*\0", L"atkmap");
 	if (s.empty())
 		return;
 
@@ -662,7 +662,7 @@ void ATUIDialogKeyboardCustomize::OnImportClicked() {
 			throw InvalidKeyboardMapFileException();
 
 		vdblock<char> buf((uint32)size);
-		f.read(buf.data(), (long)size);
+		f.read(buf.data(), (sint32)size);
 		f.close();
 
 		VDJSONDocument doc;
@@ -776,7 +776,7 @@ void ATUIDialogKeyboardCustomize::OnImportClicked() {
 }
 
 void ATUIDialogKeyboardCustomize::OnExportClicked() {
-	const auto& path = VDGetSaveFileName('kmap', (VDGUIHandle)mhdlg, L"Save custom keyboard map", L"Altirra keyboard map (*.atkmap)\0*.atkmap\0", L"atkmap");
+	const auto& path = VDGetSaveFileName("kmap"_vdfcctypeid, (VDGUIHandle)mhdlg, L"Save custom keyboard map", L"Altirra keyboard map (*.atkmap)\0*.atkmap\0", L"atkmap");
 	if (path.empty())
 		return;
 

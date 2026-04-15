@@ -98,7 +98,7 @@ public:
 	void Shutdown();
 
 	bool SetHookEnabled(uint32 addr, bool enabled) override;
-	void ListHooks(vdfastvector<std::pair<uint32, bool>>& hooks) const override;
+	void ListHooks(vdvector<std::pair<uint32, bool>>& hooks) const override;
 
 private:
 	void OnHook(uint16 pc);
@@ -153,7 +153,7 @@ bool ATHLEFPAccelerator::SetHookEnabled(uint32 addr, bool enabled) {
 	return false;
 }
 
-void ATHLEFPAccelerator::ListHooks(vdfastvector<std::pair<uint32, bool>>& hooks) const {
+void ATHLEFPAccelerator::ListHooks(vdvector<std::pair<uint32, bool>>& hooks) const {
 	hooks.resize(vdcountof(mpHookNodes));
 
 	for(size_t i = 0; i < vdcountof(mpHookNodes); ++i) {

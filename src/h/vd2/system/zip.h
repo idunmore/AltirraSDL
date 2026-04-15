@@ -77,7 +77,6 @@ private:
 
 	uint32	mReadValidEnd = 0;
 	uint64	mReadLimitRemaining = 0;
-	bool	mbTailAdded = false;
 	IVDStream *mpSrc = nullptr;
 	uint8	mReadBuffer[kBufferSize + kHeaderSize];
 };

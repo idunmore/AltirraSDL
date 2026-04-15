@@ -35,7 +35,7 @@ enum ATU1MBControl {
 //
 class IATDeviceU1MBControllable {
 public:
-	enum { kTypeID = 'adul' };
+	enum { kTypeID = "adul"_vdfcctypeid };
 
 	virtual void SetU1MBControl(ATU1MBControl control, sint32 value) = 0;
 };

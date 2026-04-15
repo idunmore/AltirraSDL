@@ -95,7 +95,7 @@ public:
 
 class IATDevicePBIConnection {
 public:
-	enum : uint32 { kTypeID = 'atpc' };
+	enum : uint32 { kTypeID = "atpc"_vdfcctypeid };
 
 	virtual void InitPBI(IATDevicePBIManager *pbiman) = 0;
 };

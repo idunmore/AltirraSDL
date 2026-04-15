@@ -15,6 +15,7 @@
 //	with this program. If not, see <http://www.gnu.org/licenses/>.
 
 #include <stdafx.h>
+#define INITGUID
 #include <d2d1.h>
 #include <dwrite.h>
 #include <vd2/system/color.h>
@@ -87,6 +88,8 @@ ID2D1PathGeometry *ATUINativeDrawPath::CreatePathGeometry() {
 			if (SUCCEEDED(hr)) {
 				const vdfloat2 *pts = mPoints.data();
 				bool open = false;
+
+				[[maybe_unused]]
 				bool haveFigureGeo = false;
 
 				for(Command cmd : mCommands) {
@@ -620,6 +623,10 @@ D2D1_COLOR_F ATUINativeDraw::Helpers::ColorFromARGB32(uint32 c) {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+#ifdef VD_COMPILER_GCC
+__CRT_UUID_DECL(ATUINativeDrawSolidColorBrushHandle, 0xFE9CF68E, 0x7D52, 0x4585, 0x80, 0xA8, 0x7A, 0x76, 0x54, 0x72, 0x0A, 0x58);
+#endif
+
 class __declspec(uuid("FE9CF68E-7D52-4585-80A8-7A7654720A58")) ATUINativeDrawSolidColorBrushHandle final : public ATCOMBaseW32<IUnknown> {
 public:
 	HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void **ppvObj) override;
@@ -652,11 +659,11 @@ class ATUINativeDrawTextRenderer final : public ATCOMBaseW32<IDWriteTextRenderer
 public:
 	HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void **ppvObj) override;
 
-	HRESULT STDMETHODCALLTYPE IsPixelSnappingDisabled(void *clientDrawingContext, BOOL *isDisabled) override;
-	HRESULT STDMETHODCALLTYPE GetCurrentTransform(void *clientDrawingContext, DWRITE_MATRIX *transform) override;
-	HRESULT STDMETHODCALLTYPE GetPixelsPerDip(void *clientDrawingContext, FLOAT *pixelsPerDip) override;
+	COM_DECLSPEC_NOTHROW HRESULT STDMETHODCALLTYPE IsPixelSnappingDisabled(void *clientDrawingContext, BOOL *isDisabled) override;
+	COM_DECLSPEC_NOTHROW HRESULT STDMETHODCALLTYPE GetCurrentTransform(void *clientDrawingContext, DWRITE_MATRIX *transform) override;
+	COM_DECLSPEC_NOTHROW HRESULT STDMETHODCALLTYPE GetPixelsPerDip(void *clientDrawingContext, FLOAT *pixelsPerDip) override;
 
-	HRESULT STDMETHODCALLTYPE DrawGlyphRun(
+	COM_DECLSPEC_NOTHROW HRESULT STDMETHODCALLTYPE DrawGlyphRun(
 		void *clientDrawingContext,
 		FLOAT baselineOriginX,
 		FLOAT baselineOriginY,
@@ -665,21 +672,21 @@ public:
 		const DWRITE_GLYPH_RUN_DESCRIPTION *glyphRunDescription,
 		IUnknown *clientDrawingEffect
 		) override;
-	HRESULT STDMETHODCALLTYPE DrawUnderline(
+	COM_DECLSPEC_NOTHROW HRESULT STDMETHODCALLTYPE DrawUnderline(
 		void *clientDrawingContext,
 		FLOAT baselineOriginX,
 		FLOAT baselineOriginY,
 		const DWRITE_UNDERLINE *underline,
 		IUnknown *clientDrawingEffect
 		) override;
-	HRESULT STDMETHODCALLTYPE DrawStrikethrough(
+	COM_DECLSPEC_NOTHROW HRESULT STDMETHODCALLTYPE DrawStrikethrough(
 		void *clientDrawingContext,
 		FLOAT baselineOriginX,
 		FLOAT baselineOriginY,
 		const DWRITE_STRIKETHROUGH *strikethrough,
 		IUnknown *clientDrawingEffect
 		) override;
-	HRESULT STDMETHODCALLTYPE DrawInlineObject(
+	COM_DECLSPEC_NOTHROW HRESULT STDMETHODCALLTYPE DrawInlineObject(
 		void *clientDrawingContext,
 		FLOAT originX,
 		FLOAT originY,

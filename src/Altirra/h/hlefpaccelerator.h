@@ -27,7 +27,7 @@ class IATHLEFPAccelerator {
 public:
 	virtual ~IATHLEFPAccelerator() = default;
 	virtual bool SetHookEnabled(uint32 addr, bool enabled) = 0;
-	virtual void ListHooks(vdfastvector<std::pair<uint32, bool>>& hooks) const = 0;
+	virtual void ListHooks(vdvector<std::pair<uint32, bool>>& hooks) const = 0;
 };
 
 IATHLEFPAccelerator *ATCreateHLEFPAccelerator(ATCPUEmulator *cpu);

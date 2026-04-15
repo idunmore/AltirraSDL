@@ -176,7 +176,7 @@ private:
 //
 class VDINTERFACE IATDiskImage : public IATImage {
 public:
-	enum : uint32 { kTypeID = 'dsim' };
+	enum : uint32 { kTypeID = "dsim"_vdfcctypeid };
 
 	virtual ATDiskTimingMode GetTimingMode() const = 0;
 

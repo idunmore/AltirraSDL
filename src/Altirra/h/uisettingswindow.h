@@ -1,5 +1,5 @@
 //	Altirra - Atari 800/800XL/5200 emulator
-//	Copyright (C) 2009-2014 Avery Lee
+//	Copyright (C) 2009-2026 Avery Lee
 //
 //	This program is free software; you can redistribute it and/or modify
 //	it under the terms of the GNU General Public License as published by
@@ -11,9 +11,8 @@
 //	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 //	GNU General Public License for more details.
 //
-//	You should have received a copy of the GNU General Public License
-//	along with this program; if not, write to the Free Software
-//	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+//	You should have received a copy of the GNU General Public License along
+//	with this program. If not, see <http://www.gnu.org/licenses/>.
 
 #ifndef f_AT_UISETTINGSWINDOW_H
 #define f_AT_UISETTINGSWINDOW_H
@@ -21,6 +20,7 @@
 #include <initializer_list>
 #include <vd2/system/function.h>
 #include <vd2/system/refcount.h>
+#include <vd2/system/unknown.h>
 #include <at/atui/uicontainer.h>
 #include <at/atuicontrols/uislider.h>
 #include "uiqueue.h"
@@ -42,7 +42,7 @@ public:
 
 class ATUISetting : public IVDUnknown {
 public:
-	enum { kTypeID = 'ause' };
+	enum { kTypeID = "ause"_vdfcctypeid };
 
 	ATUISetting(const wchar_t *name) : mbValueDynamic(false), mName(name) {}
 	virtual ~ATUISetting() {}
@@ -72,7 +72,7 @@ protected:
 
 class ATUIBoolSetting final : public ATUISetting {
 public:
-	enum { kTypeID = 'aubs' };
+	enum { kTypeID = "aubs"_vdfcctypeid };
 
 	ATUIBoolSetting(const wchar_t *name);
 	
@@ -97,7 +97,7 @@ private:
 
 class ATUIIntSetting final : public ATUISetting {
 public:
-	enum { kTypeID = 'auis' };
+	enum { kTypeID = "auis"_vdfcctypeid };
 
 	ATUIIntSetting(const wchar_t *name, sint32 minVal, sint32 maxVal);
 	
@@ -127,7 +127,7 @@ private:
 
 class ATUIEnumSetting final : public ATUISetting {
 public:
-	enum { kTypeID = 'aues' };
+	enum { kTypeID = "aues"_vdfcctypeid };
 
 	ATUIEnumSetting(const wchar_t *name, const ATUIEnumValue *values, uint32 n);
 	ATUIEnumSetting(const wchar_t *name, std::initializer_list<ATUIEnumValue> il);
@@ -159,7 +159,7 @@ protected:
 
 class ATUISubScreenSetting final : public ATUISetting {
 public:
-	enum { kTypeID = 'auss' };
+	enum { kTypeID = "auss"_vdfcctypeid };
 
 	ATUISubScreenSetting(const wchar_t *name, const vdfunction<void(IATUISettingsScreen **)>& builder) : ATUISetting(name), mpBuilder(builder) {}
 
@@ -173,7 +173,7 @@ protected:
 
 class ATUIActionSetting final : public ATUISetting {
 public:
-	enum { kTypeID = 'auas' };
+	enum { kTypeID = "auas"_vdfcctypeid };
 
 	ATUIActionSetting(const wchar_t *name) : ATUISetting(name) {}
 	ATUIActionSetting(const wchar_t *name, const vdfunction<bool()>& action) : ATUISetting(name), mpAction(action) {}

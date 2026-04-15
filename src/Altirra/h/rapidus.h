@@ -41,7 +41,7 @@ class ATRapidusDevice final
 	ATRapidusDevice(const ATRapidusDevice&) = delete;
 	ATRapidusDevice& operator=(const ATRapidusDevice&) = delete;
 public:
-	enum : uint32 { kTypeID = 'rapi' };
+	enum : uint32 { kTypeID = "rapi"_vdfcctypeid };
 
 	ATRapidusDevice();
 

@@ -128,7 +128,7 @@ public:
 
 class IATDeviceCartridge {
 public:
-	enum : uint32 { kTypeID = 'atct' };
+	enum : uint32 { kTypeID = "atct"_vdfcctypeid };
 
 	virtual void InitCartridge(IATDeviceCartridgePort *cartPort) = 0;
 

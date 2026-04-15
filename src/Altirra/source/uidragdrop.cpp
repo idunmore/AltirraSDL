@@ -16,10 +16,12 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
+#define INITGUID
 #define STRICT_TYPED_ITEMIDS
 #include <windows.h>
 #include <shellapi.h>
 #include <shlwapi.h>
+#include <shlguid.h>
 
 #pragma warning(push)
 #pragma warning(disable: 4768)		// ShlObj.h(1065): warning C4768: __declspec attributes before linkage specification are ignored

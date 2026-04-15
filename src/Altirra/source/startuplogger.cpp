@@ -272,7 +272,6 @@ void ATStartupLogger::ExceptionPreFilter(DWORD code, const EXCEPTION_POINTERS *e
 
 	sCrashLogger->Log(s);
 
-#if defined(VD_CPU_X86) || defined(VD_CPU_AMD64)
 	MEMORY_BASIC_INFORMATION mbi {};
 	if (VirtualQuery(hmod, &mbi, sizeof mbi)) {
 		// try to determine extent
@@ -292,12 +291,19 @@ void ATStartupLogger::ExceptionPreFilter(DWORD code, const EXCEPTION_POINTERS *e
 		const uintptr *sp = (const uintptr *)exptrs->ContextRecord->Esp;
 #elif defined(VD_CPU_AMD64)
 		const uintptr *sp = (const uintptr *)exptrs->ContextRecord->Rsp;
+#elif defined(VD_CPU_ARM64)
+		const uintptr *sp = (const uintptr *)exptrs->ContextRecord->Sp;
 #endif
 
 		int n = 0;
 		for(int i=0; i<500; ++i) {
 			bool valid = true;
 
+#ifdef VD_COMPILER_GCC
+			uintptr v = 0;
+			SIZE_T actual = 0;
+			valid = ReadProcessMemory(GetCurrentProcess(), &sp[i], &v, sizeof(v), &actual) && actual >= sizeof(v);
+#else
 			// can't mix EH types in the same function, so...
 			uintptr v = [p = &sp[i], &valid]() -> uintptr {
 				__try {
@@ -307,6 +313,7 @@ void ATStartupLogger::ExceptionPreFilter(DWORD code, const EXCEPTION_POINTERS *e
 					return 0;
 				}
 			}();
+#endif
 
 			if (!valid)
 				break;
@@ -325,7 +332,6 @@ void ATStartupLogger::ExceptionPreFilter(DWORD code, const EXCEPTION_POINTERS *e
 			}
 		}
 	}
-#endif
 }
 
 BOOL WINAPI ATStartupLogger::CtrlHandler(DWORD CtrlType) {

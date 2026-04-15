@@ -1288,7 +1288,7 @@ void ATUIColorImageReferenceWindow::OnHScroll(uint32 id, int code) {
 
 void ATUIColorImageReferenceWindow::OnCommandLoad() {
 	try {
-		const VDStringW& path = VDGetLoadFileName('cref', (VDGUIHandle)mhdlg, L"Select Reference Image", L"PNG/JPEG images\0*.png;*.jpg;*.jpeg;*.pal;*.act\0", nullptr);
+		const VDStringW& path = VDGetLoadFileName("cref"_vdfcctypeid, (VDGUIHandle)mhdlg, L"Select Reference Image", L"PNG/JPEG images\0*.png;*.jpg;*.jpeg;*.pal;*.act\0", nullptr);
 		if (path.empty())
 			return;
 
@@ -1299,7 +1299,7 @@ void ATUIColorImageReferenceWindow::OnCommandLoad() {
 			throw MyError("File is too large to load.");
 
 		vdblock<unsigned char> buf((uint32)size);
-		f.read(buf.data(), (long)size);
+		f.read(buf.data(), (sint32)size);
 		f.close();
 
 		static constexpr uint8 kJPEGSig[4] = { 0xFF, 0xD8, 0xFF, 0xE0 };
@@ -1736,14 +1736,14 @@ bool ATAdjustColorsDialog::OnCommand(uint32 id, uint32 extcode) {
 		}
 		return true;
 	} else if (id == ID_FILE_EXPORTPALETTE) {
-		const VDStringW& fn = VDGetSaveFileName('pal ', (VDGUIHandle)mhdlg, L"Export palette", L"Atari800 palette (*.pal)\0*.pal", L"pal");
+		const VDStringW& fn = VDGetSaveFileName("pal "_vdfcctypeid, (VDGUIHandle)mhdlg, L"Export palette", L"Atari800 palette (*.pal)\0*.pal", L"pal");
 
 		if (!fn.empty()) {
 			ExportPalette(fn.c_str());
 		}
 		return true;
 	} else if (id == ID_FILE_LOAD) {
-		const VDStringW& fn = VDGetLoadFileName('colr', (VDGUIHandle)mhdlg, L"Load color settings", L"Altirra color settings (*.atcolors)\0*.atcolors", L"atcolors");
+		const VDStringW& fn = VDGetLoadFileName("colr"_vdfcctypeid, (VDGUIHandle)mhdlg, L"Load color settings", L"Altirra color settings (*.atcolors)\0*.atcolors", L"atcolors");
 
 		if (!fn.empty()) {
 			vdrefptr<IATSerializable> rawData;
@@ -1773,7 +1773,7 @@ bool ATAdjustColorsDialog::OnCommand(uint32 id, uint32 extcode) {
 			OnDataExchange(false);
 		}
 	} else if (id == ID_FILE_SAVE) {
-		const VDStringW& fn = VDGetSaveFileName('colr', (VDGUIHandle)mhdlg, L"Save color settings", L"Altirra color settings (*.atcolors)\0*.atcolors", L"atcolors");
+		const VDStringW& fn = VDGetSaveFileName("colr"_vdfcctypeid, (VDGUIHandle)mhdlg, L"Save color settings", L"Altirra color settings (*.atcolors)\0*.atcolors", L"atcolors");
 
 		if (!fn.empty()) {
 			vdrefptr<ATSaveStateColorSettings> cs(new ATSaveStateColorSettings(mSettings));

@@ -22,6 +22,7 @@
 #define f_AT_ATCORE_ASYNCDISPATCHER_H
 
 #include <vd2/system/function.h>
+#include <vd2/system/unknown.h>
 
 class ATAsyncCallback;
 
@@ -54,7 +55,7 @@ class ATAsyncCallback;
 class IATAsyncDispatcher 
 {
 public:
-	static constexpr uint32 kTypeID = 'asdp';
+	static constexpr uint32 kTypeID = "asdp"_vdfcctypeid;
 
 	virtual ~IATAsyncDispatcher() = default;
 

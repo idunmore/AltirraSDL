@@ -55,7 +55,7 @@ void ATSetOutputDebugStringFilter() {
 	//	EB F2						jmp *-14
 
 	MEMORY_BASIC_INFORMATION mbi {};
-	if (!VirtualQuery(fp, &mbi, sizeof mbi))
+	if (!VirtualQuery((void *)fp, &mbi, sizeof mbi))
 		return;
 
 	// check that the region is in executable image code
@@ -89,7 +89,7 @@ void ATSetOutputDebugStringFilter() {
 		0x48, 0x8B, 0xC4
 	};
 
-	if (!memcmp(fp, kCheckBytes, 15))
+	if (!memcmp((void *)fp, kCheckBytes, 15))
 		return;
 
 	// change protection

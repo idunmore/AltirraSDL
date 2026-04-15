@@ -32,7 +32,7 @@ void ATUIShowDialogVerifier(VDGUIHandle h, ATSimulator& sim);
 void ATUIShowDialogNewBreakpoint();
 
 void OnCommandDebuggerOpenSourceFile() {
-	VDStringW fn(VDGetLoadFileName('src ', ATUIGetNewPopupOwner(), L"Load source file", L"All files (*.*)\0*.*\0", NULL));
+	VDStringW fn(VDGetLoadFileName("src "_vdfcctypeid, ATUIGetNewPopupOwner(), L"Load source file", L"All files (*.*)\0*.*\0", NULL));
 
 	if (!fn.empty()) {
 		ATOpenSourceWindow(fn.c_str());

@@ -30,8 +30,10 @@
 ATConfigVarFloat g_ATCVTapeDecodeDirectHPFCutoff("tape.decode.slope.hpf_cutoff", 5327.0f);
 ATConfigVarFloat g_ATCVTapeDecodeFSKMarkGain("tape.decode.fsk.mark_gain", 1.0f);
 
+#ifdef VD_COMPILER_MSVC
 #pragma runtime_checks("", off)
 #pragma optimize("gt", on)
+#endif
 
 ATCassetteDecoderFSK::ATCassetteDecoderFSK() {
 	Reset();

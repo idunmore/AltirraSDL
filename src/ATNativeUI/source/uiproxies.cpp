@@ -15,12 +15,13 @@
 //	with this program. If not, see <http://www.gnu.org/licenses/>.
 
 #include <stdafx.h>
+#define INITGUID
 #include <windows.h>
 #include <windowsx.h>
 #include <richedit.h>
 #include <shldisp.h>
 #include <shlguid.h>
-#include <shlobj_core.h>
+#include <shlobj.h>
 #include <shobjidl.h>
 #include <commctrl.h>
 #include <tom.h>
@@ -45,6 +46,10 @@
 #include <at/atnativeui/uiproxies.h>
 
 #pragma comment(lib, "oleaut32")
+
+#ifdef VD_COMPILER_GCC
+	__CRT_UUID_DECL(ITextDocument, 0x8CC497C0, 0xA1DF, 0x11ce, 0x80, 0x98, 0x00, 0xAA, 0x00, 0x47, 0xBE, 0x5D)
+#endif
 
 namespace {
 	union AlphaBitmapHeader {
@@ -2712,7 +2717,7 @@ IVDUITreeViewVirtualItem *VDUIProxyTreeViewControl::GetVirtualItem(NodeRef ref) 
 
 uint32 VDUIProxyTreeViewControl::GetItemId(NodeRef ref) const {
 	if (!mhwnd)
-		return NULL;
+		return 0;
 
 	TVITEMW itemw = {0};
 
@@ -2738,7 +2743,7 @@ void VDUIProxyTreeViewControl::DeleteItem(NodeRef ref) {
 
 VDUIProxyTreeViewControl::NodeRef VDUIProxyTreeViewControl::AddItem(NodeRef parent, NodeRef insertAfter, const wchar_t *label) {
 	if (!mhwnd)
-		return NULL;
+		return kNodeNull;
 
 	TVINSERTSTRUCTW isw = { 0 };
 
@@ -2746,7 +2751,7 @@ VDUIProxyTreeViewControl::NodeRef VDUIProxyTreeViewControl::AddItem(NodeRef pare
 	isw.hInsertAfter = (HTREEITEM)insertAfter;
 	isw.item.mask = TVIF_TEXT | TVIF_PARAM;
 	isw.item.pszText = (LPWSTR)label;
-	isw.item.lParam = NULL;
+	isw.item.lParam = 0;
 
 	return (NodeRef)SendMessageW(mhwnd, TVM_INSERTITEMW, 0, (LPARAM)&isw);
 }
@@ -2755,7 +2760,7 @@ VDUIProxyTreeViewControl::NodeRef VDUIProxyTreeViewControl::AddVirtualItem(NodeR
 	VDASSERT(!mbIndexedMode);
 
 	if (!mhwnd)
-		return NULL;
+		return kNodeNull;
 
 	HTREEITEM hti;
 
@@ -2785,7 +2790,7 @@ VDUIProxyTreeViewControl::NodeRef VDUIProxyTreeViewControl::AddIndexedItem(NodeR
 	VDASSERT(mbIndexedMode);
 
 	if (!mhwnd)
-		return NULL;
+		return kNodeNull;
 
 	HTREEITEM hti;
 
@@ -2807,7 +2812,7 @@ VDUIProxyTreeViewControl::NodeRef VDUIProxyTreeViewControl::AddIndexedItem(NodeR
 
 VDUIProxyTreeViewControl::NodeRef VDUIProxyTreeViewControl::AddHiddenNode(NodeRef parent, NodeRef insertAfter) {
 	if (!mhwnd)
-		return NULL;
+		return kNodeNull;
 
 	TVINSERTSTRUCTW isw = { 0 };
 
@@ -3153,10 +3158,10 @@ void VDUIProxyTreeViewControl::SetOnBeginDrag(const vdfunction<void(const BeginD
 VDUIProxyTreeViewControl::NodeRef VDUIProxyTreeViewControl::FindDropTarget() const {
 	POINT pt;
 	if (!mhwnd || !GetCursorPos(&pt))
-		return NULL;
+		return kNodeNull;
 
 	if (!ScreenToClient(mhwnd, &pt))
-		return NULL;
+		return kNodeNull;
 
 	TVHITTESTINFO hti = {};
 	hti.pt = pt;
@@ -4588,6 +4593,16 @@ void VDUIProxySysLinkControl::SetOnClicked(vdfunction<void()> fn) {
 
 void VDUIProxySysLinkControl::SetOnClickedWithUrl(vdfunction<void(const wchar_t *)> fn) {
 	mpOnClickedWithUrl = std::move(fn);
+}
+
+sint32 VDUIProxySysLinkControl::GetIdealHeightForWidth(sint32 w) const {
+	if (!mhwnd)
+		return 0;
+
+	SIZE sz { w, 0 };
+	sint32 h = SendMessage(mhwnd, LM_GETIDEALHEIGHT, w, (LPARAM)&sz);
+
+	return h;
 }
 
 VDZLRESULT VDUIProxySysLinkControl::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam) {

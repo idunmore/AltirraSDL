@@ -409,7 +409,7 @@ bool VDDGetLibraryOverridesEnabled() {
 ///////////////////////////////////////////////////////////////////////////
 
 ATOM VDVideoDisplayWindow::Register() {
-	WNDCLASS wc;
+	WNDCLASS wc {};
 	HMODULE hInst = VDGetLocalModuleHandleW32();
 
 	if (!sChildWindowClass) {
@@ -426,7 +426,7 @@ ATOM VDVideoDisplayWindow::Register() {
 
 		sChildWindowClass = RegisterClass(&wc);
 		if (!sChildWindowClass)
-			return NULL;
+			return 0;
 	}
 
 	wc.style			= CS_HREDRAW | CS_VREDRAW;

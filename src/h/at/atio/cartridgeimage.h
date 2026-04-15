@@ -48,7 +48,7 @@ struct ATCartLoadContext {
 
 class IATCartridgeImage : public IATImage {
 public:
-	enum : uint32 { kTypeID = 'ctim' };
+	enum : uint32 { kTypeID = "ctim"_vdfcctypeid };
 
 	virtual ATCartridgeMode GetMode() const = 0;
 	virtual const wchar_t *GetPath() const = 0;

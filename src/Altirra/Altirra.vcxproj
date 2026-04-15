@@ -113,8 +113,10 @@
     <ClInclude Include="h\printer1020.h" />
     <ClInclude Include="h\printer1020font.h" />
     <ClInclude Include="h\printerbase.h" />
+    <ClInclude Include="h\printerexport.h" />
     <ClInclude Include="h\printerfont.h" />
     <ClInclude Include="h\printeroutput.h" />
+    <ClInclude Include="h\printerrasterizer.h" />
     <ClInclude Include="h\printerttfencoder.h" />
     <ClInclude Include="h\printertypes.h" />
     <ClInclude Include="h\profilerui.h" />
@@ -314,8 +316,10 @@
     <ClCompile Include="source\printer1020.cpp" />
     <ClCompile Include="source\printer1020font.cpp" />
     <ClCompile Include="source\printerbase.cpp" />
+    <ClCompile Include="source\printerexport.cpp" />
     <ClCompile Include="source\printerfont.cpp" />
     <ClCompile Include="source\printeroutput.cpp" />
+    <ClCompile Include="source\printerrasterizer.cpp" />
     <ClCompile Include="source\printerttfencoder.cpp" />
     <ClCompile Include="source\profiler.cpp" />
     <ClCompile Include="source\profilerui.cpp" />

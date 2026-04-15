@@ -770,7 +770,7 @@ bool ATUICommandLineProcessor::ProcessNextSequencedSwitch() {
 		bool suppressColdReset = false;
 		DoLoad(ATUIGetNewPopupOwner(), arg, mpBootImageWriteMode, mImageCartMapper, kATImageType_None, &suppressColdReset, ATImageLoadContext::kLoadIndexNextFree, mbAutoSwitchProfile);
 
-		VDSetLastLoadSavePath('load', VDGetFullPath(arg).c_str());
+		VDSetLastLoadSavePath("load"_vdfcctypeid, VDGetFullPath(arg).c_str());
 
 		if (!suppressColdReset)
 			mbColdResetPending = true; // required to set up cassette autoboot

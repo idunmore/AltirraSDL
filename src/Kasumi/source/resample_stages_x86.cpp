@@ -296,7 +296,7 @@ void VDResamplerSeparableTableRowStage8MMX::RedoRowFilters(const VDResamplerAxis
 }
 
 void __declspec(naked) __cdecl vdasm_resize_table_row_8_k8_4x_MMX(void *dst, const void *src, uint32 width, const void *kernel) {
-	static const __declspec(align(8)) __int64 kRound = 0x0000000000002000;
+	alignas(8) static const __int64 kRound = 0x0000000000002000;
 	__asm {
 		push		ebp
 		push		edi
@@ -400,7 +400,7 @@ yloop:
 }
 
 void __declspec(naked) __cdecl vdasm_resize_table_row_8_k12_4x_MMX(void *dst, const void *src, uint32 width, const void *kernel) {
-	static const __declspec(align(8)) __int64 kRound = 0x0000200000002000;
+	alignas(8) static const __int64 kRound = 0x0000200000002000;
 	__asm {
 		push		ebp
 		push		edi
@@ -522,7 +522,7 @@ yloop:
 }
 
 void __declspec(naked) __cdecl vdasm_resize_table_row_8_MMX(void *dst, const void *src, uint32 width, const void *kernel, uint32 kwidth) {
-	static const __declspec(align(8)) __int64 kRound = 0x0000000000002000;
+	alignas(8) static const __int64 kRound = 0x0000000000002000;
 	__asm {
 		push		ebp
 		push		edi
@@ -742,7 +742,7 @@ VDResamplerSeparableTableColStage8MMX::VDResamplerSeparableTableColStage8MMX(con
 }
 
 void __declspec(naked) __cdecl vdasm_resize_table_col_8_k2_MMX(void *dst, const void *const *srcs, uint32 width, const void *kernel) {
-	static const __declspec(align(8)) __int64 kRound = 0x0000200000002000;
+	alignas(8) static const __int64 kRound = 0x0000200000002000;
 
 	__asm {
 		push		ebp
@@ -805,7 +805,7 @@ yloop:
 }
 
 void __declspec(naked) __cdecl vdasm_resize_table_col_8_k4_MMX(void *dst, const void *const *srcs, uint32 width, const void *kernel) {
-	static const __declspec(align(8)) __int64 kRound = 0x0000200000002000;
+	alignas(8) static const __int64 kRound = 0x0000200000002000;
 
 	__asm {
 		push		ebp
@@ -881,7 +881,7 @@ yloop:
 }
 
 void __declspec(naked) __cdecl vdasm_resize_table_col_8_MMX(void *dst, const void *const *srcs, uint32 width, const void *kernel, uint32 kwidth) {
-	static const __declspec(align(8)) __int64 kRound = 0x0000200000002000;
+	alignas(8) static const __int64 kRound = 0x0000200000002000;
 
 	__asm {
 		push		ebp

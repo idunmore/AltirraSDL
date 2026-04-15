@@ -45,7 +45,7 @@ int g_dynamicMenuItemBaseOffset[kATUIDynamicMenuCount];
 int g_dynamicMenuItemBaseCount[kATUIDynamicMenuCount];
 
 VDLinearAllocator g_ATUIMenuBoundCommandsAlloc;
-vdfastvector<std::pair<const char *, const wchar_t *> > g_ATUIMenuBoundCommands;
+vdvector<std::pair<const char *, const wchar_t *> > g_ATUIMenuBoundCommands;
 vdrefptr<ATUIMenu> g_pATUIMenu;
 VDStringW g_ATUIMenuCharSet;
 bool g_ATUIMenuHidden = false;

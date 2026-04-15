@@ -37,7 +37,7 @@ namespace {
 	}
 }
 
-void VDCompilerWriteLogOutputF(IVDCompilerLogOutput& out, const char *format ...) {
+void VDCompilerWriteLogOutputF(IVDCompilerLogOutput& out, const char *format, ...) {
 	char buf[3072];
 	va_list val;
 

@@ -14,7 +14,7 @@ struct IMLangFontLink2;
 
 class IVDDisplayFontGDI : public IVDRefUnknown {
 public:
-	enum { kTypeID = 'gdif' };
+	enum { kTypeID = "gdif"_vdfcctypeid };
 
 	virtual HFONT GetHFONT() = 0;
 };

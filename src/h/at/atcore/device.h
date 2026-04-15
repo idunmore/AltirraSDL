@@ -75,7 +75,7 @@ struct ATDeviceInfo {
 
 class IATDeviceMemMap {
 public:
-	enum { kTypeID = 'admm' };
+	enum { kTypeID = "admm"_vdfcctypeid };
 
 	virtual void InitMemMap(ATMemoryManager *memmap) = 0;
 
@@ -99,7 +99,7 @@ enum class ATDeviceFirmwareStatus : uint8 {
 
 class IATDeviceFirmware {
 public:
-	enum { kTypeID = 'adfw' };
+	enum { kTypeID = "adfw"_vdfcctypeid };
 
 	virtual void InitFirmware(ATFirmwareManager *fwman) = 0;
 
@@ -116,7 +116,7 @@ public:
 
 class IATDeviceIRQSource {
 public:
-	enum { kTypeID = 'adir' };
+	enum { kTypeID = "adir"_vdfcctypeid };
 
 	virtual void InitIRQSource(ATIRQController *irqc) = 0;
 };
@@ -131,7 +131,7 @@ public:
 
 class IATDeviceScheduling {
 public:
-	enum { kTypeID = 'adsc' };
+	enum { kTypeID = "adsc"_vdfcctypeid };
 
 	// The first scheduler is the fast scheduler, which runs at cycle granularity
 	// and provides a common timebase for the emulator.
@@ -167,7 +167,7 @@ enum ATDeviceButton : uint32 {
 
 class IATDeviceButtons {
 public:
-	enum { kTypeID = 'adbt' };
+	enum { kTypeID = "adbt"_vdfcctypeid };
 
 	virtual uint32 GetSupportedButtons() const = 0;
 	virtual bool IsButtonDepressed(ATDeviceButton idx) const = 0;
@@ -176,21 +176,21 @@ public:
 
 class IATDeviceIndicators {
 public:
-	enum { kTypeID = 'adin' };
+	enum { kTypeID = "adin"_vdfcctypeid };
 
 	virtual void InitIndicators(IATDeviceIndicatorManager *r) = 0;
 };
 
 class IATDeviceAudioOutput {
 public:
-	enum { kTypeID = 'adao' };
+	enum { kTypeID = "adao"_vdfcctypeid };
 
 	virtual void InitAudioOutput(IATAudioMixer *output) = 0;
 };
 
 class IATDeviceDiagnostics {
 public:
-	enum { kTypeID = 'addd' };
+	enum { kTypeID = "addd"_vdfcctypeid };
 
 	virtual void DumpStatus(ATConsoleOutput& output) = 0;
 };
@@ -229,7 +229,7 @@ public:
 
 class IATDevice : public IVDRefUnknown {
 public:
-	enum { kTypeID = 'adev' };
+	enum { kTypeID = "adev"_vdfcctypeid };
 
 	virtual void SetManager(IATDeviceManager *devMgr) = 0;
 	virtual IATDeviceParent *GetParent() = 0;

@@ -145,7 +145,7 @@ class VDDisplayCachedImageD3D9 final : public vdrefcounted<IVDRefUnknown>, publi
 	VDDisplayCachedImageD3D9(const VDDisplayCachedImageD3D9&) = delete;
 	VDDisplayCachedImageD3D9& operator=(const VDDisplayCachedImageD3D9&) = delete;
 public:
-	enum { kTypeID = 'cim9' };
+	enum { kTypeID = "cim9"_vdfcctypeid };
 
 	VDDisplayCachedImageD3D9();
 	~VDDisplayCachedImageD3D9();

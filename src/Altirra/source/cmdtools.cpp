@@ -37,11 +37,11 @@ void OnCommandToolsCompatDBDialog() {
 
 void OnCommandToolsAnalyzeTapeDecoding() {
 	VDGUIHandle h = ATUIGetNewPopupOwner();
-	VDStringW fn1(VDGetLoadFileName('cass', h, L"Load cassette tape to analyze", g_ATUIFileFilter_LoadTapeAudio, L"wav"));
+	VDStringW fn1(VDGetLoadFileName("cass"_vdfcctypeid, h, L"Load cassette tape to analyze", g_ATUIFileFilter_LoadTapeAudio, L"wav"));
 	if (fn1.empty())
 		return;
 
-	VDStringW fn2(VDGetSaveFileName('casa', h, L"Save cassette tape analysis", g_ATUIFileFilter_SaveTapeAnalysis, L"wav"));
+	VDStringW fn2(VDGetSaveFileName("casa"_vdfcctypeid, h, L"Save cassette tape analysis", g_ATUIFileFilter_SaveTapeAnalysis, L"wav"));
 	if (fn2.empty())
 		return;
 

@@ -163,7 +163,7 @@ void VDDisplayCustomShaderD3D9::Init(
 		if (shaderPrecompile) {
 			VDFile fout(precompiledPath.c_str(), nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kCreateAlways);
 
-			fout.write(bytecode.data(), (long)(bytecode.size() * sizeof(bytecode[0])));
+			fout.write(bytecode.data(), (sint32)(bytecode.size() * sizeof(bytecode[0])));
 		}
 	}
 

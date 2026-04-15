@@ -13,7 +13,7 @@ public:
 
 class IATUIProportionAnchor : public IATUIAnchor {
 public:
-	enum : uint32 { kTypeID = 'uipa' };
+	enum : uint32 { kTypeID = "uipa"_vdfcctypeid };
 
 	virtual vdrect32f GetArea() const = 0;
 	virtual vdrect32 GetOffsets() const = 0;

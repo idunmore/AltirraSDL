@@ -26,6 +26,15 @@
 #ifndef f_VD2_SYSTEM_THREAD_H
 #define f_VD2_SYSTEM_THREAD_H
 
+// AltirraSDL: this header has been rewritten on the fork to use the C++11
+// concurrency primitives (std::mutex, std::recursive_mutex,
+// std::condition_variable, std::shared_mutex). Upstream test9 still uses
+// Win32 EnterCriticalSection/WaitForSingleObject calls but moved their
+// implementations out-of-line to thread.cpp, achieving the same goal of
+// decoupling thread.h from Win32 headers. The std::-based fork version
+// reaches that goal more directly and works unchanged on MSVC, GCC, Clang
+// and the Android NDK without per-OS branches.
+
 #ifdef _MSC_VER
 	#pragma once
 #endif

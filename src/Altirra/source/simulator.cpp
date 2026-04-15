@@ -5357,6 +5357,13 @@ void ATSimulator::InitMemoryMap() {
 	}
 }
 
+// offsetof() is conditionally supported starting with C++17 and works fine, but
+// Clang still warns on it.
+#ifdef VD_COMPILER_CLANG
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Winvalid-offsetof"
+#endif
+
 void ATSimulator::RecreateMemLayerPOKEY() {
 	mpMemMan->DeleteLayerPtr(&mpMemLayerPOKEY);
 
@@ -5387,6 +5394,10 @@ void ATSimulator::RecreateMemLayerPOKEY() {
 	mpMemMan->EnableLayer(mpMemLayerGTIA, true);
 	mpMemMan->EnableLayer(mpMemLayerPOKEY, true);
 }
+
+#ifdef VD_COMPILER_CLANG
+#pragma clang diagnostic pop
+#endif
 
 void ATSimulator::ShutdownMemoryMap() {
 	if (mpUltimate1MB) {

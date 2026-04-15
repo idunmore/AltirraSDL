@@ -32,7 +32,7 @@ struct ATTraceChannelCPUHistoryCursor {
 
 class ATTraceChannelCPUHistory final : public vdrefcounted<IATTraceChannel> {
 public:
-	static const uint32 kTypeID = 'tcch';
+	static const uint32 kTypeID = "tcch"_vdfcctypeid;
 
 	ATTraceChannelCPUHistory(uint64 tickOffset, double tickScale, const wchar_t *name, ATDebugDisasmMode disasmMode, uint32 subCycles, ATTraceMemoryTracker *memTracker, bool enableAsync);
 

@@ -23,6 +23,16 @@
 //	3.	This notice may not be removed or altered from any source
 //		distribution.
 
+// AltirraSDL: this translation unit has been rewritten on the fork to
+// support both the Windows backend (CreateThread / WaitForSingleObject)
+// AND a POSIX/std::-based backend used by the SDL3 build on Linux,
+// macOS and Android. Upstream test9 only adds out-of-line definitions
+// for the Win32 VDCriticalSection / VDSemaphore methods that used to be
+// inline in thread.h. The fork already implements these out-of-line as
+// part of the std::mutex / std::condition_variable rewrite (see
+// thread.h), so upstream's added symbols correspond to functions that
+// already exist here under the std:: backend. No upstream-source change
+// is mechanically applicable.
 #include <stdafx.h>
 #include <thread>
 #include <chrono>

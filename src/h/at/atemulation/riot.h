@@ -25,7 +25,7 @@ class ATConsoleOutput;
 
 class ATRIOT6532Emulator final : public IATSchedulerCallback {
 public:
-	enum : uint32 { kTypeID = 'RIOT' };
+	enum : uint32 { kTypeID = "RIOT"_vdfcctypeid };
 
 	ATRIOT6532Emulator();
 	~ATRIOT6532Emulator();

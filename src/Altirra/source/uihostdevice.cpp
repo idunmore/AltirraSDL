@@ -123,7 +123,7 @@ bool ATUIDialogHostDevice::OnCommand(uint32 id, uint32 extcode) {
 		case IDC_BROWSE2:	++index;
 		case IDC_BROWSE1:
 			{
-				VDStringW s(VDGetDirectory('host', (VDGUIHandle)mhdlg, L"Select base directory"));
+				VDStringW s(VDGetDirectory("host"_vdfcctypeid, (VDGUIHandle)mhdlg, L"Select base directory"));
 				if (!s.empty())
 					SetControlText(kPathIds[index], s.c_str());
 			}

@@ -18,7 +18,7 @@
 
 #if VD_CPU_X86 || VD_CPU_X64
 
-#ifdef _MSC_VER
+#ifdef VD_COMPILER_MSVC
 #pragma runtime_checks("", off)
 #pragma check_stack(off)
 #pragma optimize("gt", on)
@@ -451,7 +451,7 @@ VDNOINLINE uint16 ATFLACUpdateCRC16_PCMUL(uint16 crc16v, const void *buf, size_t
 	return (uint16)_mm_cvtsi128_si32(crc16);
 }
 
-#ifdef _MSC_VER
+#ifdef VD_COMPILER_MSVC
 #pragma optimize("", on)
 #pragma runtime_checks("", restore)
 #pragma check_stack()

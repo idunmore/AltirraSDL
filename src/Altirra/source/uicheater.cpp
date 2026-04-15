@@ -369,7 +369,7 @@ bool ATUIDialogCheater::OnCommand(uint32 id, uint32 extcode) {
 
 		case IDC_LOAD:
 			{
-				const VDStringW& fn = VDGetLoadFileName('CHET'
+				const VDStringW& fn = VDGetLoadFileName("CHET"_vdfcctypeid
 					, (VDGUIHandle)mhdlg
 					, L"Load cheat file"
 					, g_ATUIFileFilter_Cheats
@@ -389,7 +389,7 @@ bool ATUIDialogCheater::OnCommand(uint32 id, uint32 extcode) {
 
 		case IDC_SAVE:
 			{
-				const VDStringW& fn = VDGetSaveFileName('CHET', (VDGUIHandle)mhdlg, L"Save cheat file", L"Altirra cheat set\0*.atcheats\0", L"atcheats");
+				const VDStringW& fn = VDGetSaveFileName("CHET"_vdfcctypeid, (VDGUIHandle)mhdlg, L"Save cheat file", L"Altirra cheat set\0*.atcheats\0", L"atcheats");
 
 				if (!fn.empty()) {
 					try {

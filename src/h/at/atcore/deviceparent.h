@@ -77,7 +77,7 @@ public:
 // host zero or more devices.
 class IATDeviceParent : public IVDUnknown {
 public:
-	enum { kTypeID = 'adpt' };
+	enum { kTypeID = "adpt"_vdfcctypeid };
 
 	// Retrieve a device bus by device bus ID. Returns null if the ID does not
 	// correspond to a valid bus.

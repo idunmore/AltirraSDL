@@ -80,7 +80,7 @@ class ATVBXEEmulator final : public IATSchedulerCallback {
 	ATVBXEEmulator(const ATVBXEEmulator&) = delete;
 	ATVBXEEmulator& operator=(const ATVBXEEmulator&) = delete;
 public:
-	enum : uint32 { kTypeID = 'vbxe' };
+	enum : uint32 { kTypeID = "vbxe"_vdfcctypeid };
 
 	ATVBXEEmulator();
 	~ATVBXEEmulator();
@@ -396,7 +396,7 @@ private:
 
 class IATVBXEDevice : public IVDUnknown {
 public:
-	enum : uint32 { kTypeID = 'vbxd' };
+	enum : uint32 { kTypeID = "vbxd"_vdfcctypeid };
 
 	virtual void SetSharedMemory(void *mem) = 0;
 

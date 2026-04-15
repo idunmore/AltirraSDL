@@ -15,76 +15,26 @@
 //	with this program. If not, see <http://www.gnu.org/licenses/>.
 
 #include <stdafx.h>
-#include <vd2/Dita/services.h>
 #include <at/atcore/propertyset.h>
-#include <at/atnativeui/dialog.h>
-#include "oshelper.h"
-#include "resource.h"
-
-///////////////////////////////////////////////////////////////////////////
-
-class ATUIDialogDeviceParFileWriter final : public VDDialogFrameW32 {
-public:
-	ATUIDialogDeviceParFileWriter(ATPropertySet& props);
-
-	bool OnLoaded() override;
-	void OnDataExchange(bool write) override;
-	bool OnCommand(uint32 id, uint32 extcode) override;
-
-protected:
-	uint32 mInhibitUpdateLocks;
-	ATPropertySet& mProps;
-};
-
-ATUIDialogDeviceParFileWriter::ATUIDialogDeviceParFileWriter(ATPropertySet& props)
-	: VDDialogFrameW32(IDD_DEVICE_PARFILEWRITER)
-	, mInhibitUpdateLocks(0)
-	, mProps(props)
-{
-}
-
-bool ATUIDialogDeviceParFileWriter::OnLoaded() {
-	ATUIEnableEditControlAutoComplete(GetControl(IDC_PATH));
-
-	return VDDialogFrameW32::OnLoaded();
-}
-
-void ATUIDialogDeviceParFileWriter::OnDataExchange(bool write) {
-	if (!write) {
-		SetControlText(IDC_PATH, mProps.GetString("path"));
-		CheckButton(IDC_TEXTMODE, mProps.GetBool("text_mode"));
-	} else {
-		const bool textMode = IsButtonChecked(IDC_TEXTMODE);
-
-		VDStringW path;
-		GetControlText(IDC_PATH, path);
-
-		if (path.empty()) {
-			FailValidation(IDC_PATH);
-			return;
-		}
-
-		mProps.SetString("path", path.c_str());
-		mProps.SetBool("text_mode", textMode);
-	}
-}
-
-bool ATUIDialogDeviceParFileWriter::OnCommand(uint32 id, uint32 extcode) {
-	switch(id) {
-		case IDC_BROWSE:
-			{
-				VDStringW s(VDGetSaveFileName('prnt', (VDGUIHandle)mhdlg, L"Select file for parallel port output", L"All files\0*.*\0", nullptr));
-				if (!s.empty())
-					SetControlText(IDC_PATH, s.c_str());
-			}
-			return true;
-	}
-
-	return false;
-}
+#include "uiconfgeneric.h"
 
 bool ATUIConfDevParFileWriter(VDGUIHandle hParent, ATPropertySet& props) {
-	ATUIDialogDeviceParFileWriter dlg(props);
+	return ATUIShowDialogGenericConfig(
+		hParent,
+		props,
+		L"Parallel File Writer",
+		[](IATUIConfigView& view) {
+			view.AddPath()
+				.SetLabel(L"Output &path")
+				.SetTag("path")
+				.SetBrowseCaption(L"Select file for parallel port output")
+				.SetBrowseKey("print"_vdtypeid)
+				.SetSave()
+				.SetType(L"All files\0*.*\0", nullptr);
 
-	return dlg.ShowDialog(hParent) != 0;
+			view.AddCheckbox()
+				.SetTag("text_mode")
+				.SetText(L"Enable &text translation");
+		}
+	);
 }

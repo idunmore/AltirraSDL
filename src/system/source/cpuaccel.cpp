@@ -23,6 +23,15 @@
 //	3.	This notice may not be removed or altered from any source
 //		distribution.
 
+// AltirraSDL: this file extends upstream cpuaccel.cpp with ARM64 feature
+// detection on Linux (sys/auxv.h, HWCAP_AES / HWCAP_CRC32) and macOS
+// (sysctlbyname hw.optional.arm.FEAT_AES / armv8_crc32). Upstream test9
+// adds a `vdcpuid` macro to abstract the GCC <cpuid.h> __cpuid signature
+// difference; the fork already solves the same problem in
+// vd2/system/win32/intrin.h by redefining __cpuid itself to forward to
+// __cpuid_count, so call sites in this file work unchanged on MSVC,
+// Clang and GCC. Keep both: the fork's intrin.h shim plus upstream's
+// existing CPU-feature loop, with the ARM64 platform additions below.
 #include <stdafx.h>
 #ifdef _WIN32
 #include <wtypes.h>
@@ -228,11 +237,11 @@ void VDCPUCleanupExtensions() {
 	#endif
 
 	if (g_lCPUExtensionsEnabled & CPUF_SUPPORTS_AVX) {
-#if defined(VD_COMPILER_CLANG) || defined(VD_COMPILER_GCC)
+#if defined(VD_COMPILER_CLANG_OR_GCC)
 		[] VD_CPU_TARGET_LAMBDA("avx") {
 #endif
 		_mm256_zeroupper();
-#if defined(VD_COMPILER_CLANG) || defined(VD_COMPILER_GCC)
+#if defined(VD_COMPILER_CLANG_OR_GCC)
 		}();
 #endif
 	}

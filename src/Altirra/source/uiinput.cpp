@@ -1886,7 +1886,7 @@ class ATUIDialogInputMapListItem;
 
 class ATUIDialogInputMapControllerItem : public vdrefcounted<IVDUITreeViewVirtualItem> {
 public:
-	enum { kTypeID = 'adic' };
+	enum { kTypeID = "adic"_vdfcctypeid };
 
 	ATUIDialogInputMapControllerItem(ATInputControllerType controllerType, int unit, uint32 flagCheckBits);
 	~ATUIDialogInputMapControllerItem();
@@ -1926,7 +1926,7 @@ protected:
 
 class ATUIDialogInputMapListItem : public vdrefcounted<IVDUITreeViewVirtualItem> {
 public:
-	enum { kTypeID = 'adil' };
+	enum { kTypeID = "adil"_vdfcctypeid };
 
 	ATUIDialogInputMapListItem(ATInputManager& iman, uint32 inputCode, uint32 targetCode);
 
@@ -1957,7 +1957,7 @@ protected:
 ///////////////////////////////////////////////////////////////////////////
 
 ATUIDialogInputMapControllerItem::ATUIDialogInputMapControllerItem(ATInputControllerType controllerType, int unit, uint32 flagCheckBits)
-	: mNodeRef(NULL)
+	: mNodeRef()
 	, mFlagCheckBits(flagCheckBits)
 	, mControllerType(controllerType)
 	, mControllerUnit(unit)
@@ -2104,7 +2104,7 @@ void ATUIDialogInputMapControllerItem::GetText(VDStringW& s) const {
 ///////////////////////////////////////////////////////////////////////////
 
 ATUIDialogInputMapListItem::ATUIDialogInputMapListItem(ATInputManager& iman, uint32 inputCode, uint32 targetCode)
-	: mNodeRef(NULL)
+	: mNodeRef()
 	, mpController(NULL)
 	, mInputCode(inputCode)
 	, mTargetCode(targetCode)

@@ -323,7 +323,7 @@ private:
 
 class ATContainerWindow : public ATUINativeWindow {
 public:
-	enum { kTypeID = 'uicw' };
+	enum { kTypeID = "uicw"_vdfcctypeid };
 
 	ATContainerWindow();
 	~ATContainerWindow();
@@ -447,7 +447,7 @@ protected:
 
 class ATFrameWindow final : public ATUINativeWindow {
 public:
-	enum { kTypeID = 'uifr' };
+	enum { kTypeID = "uifr"_vdfcctypeid };
 
 	enum FrameMode {
 		kFrameModeUndocked,

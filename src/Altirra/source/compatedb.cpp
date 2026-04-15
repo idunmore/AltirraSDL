@@ -114,7 +114,7 @@ void ATLoadCompatEDB(const wchar_t *path, ATCompatEDB& edb) {
 
 		uint32 size32 = (uint32)size;
 		vdblock<char> data(size32);
-		f.read(data.data(), (long)size32);
+		f.read(data.data(), (sint32)size32);
 
 		VDJSONReader reader;
 		reader.Parse(data.data(), size32, doc);

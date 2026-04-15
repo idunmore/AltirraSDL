@@ -494,6 +494,19 @@ void VDDialogFrameW32::SetFocusToControl(uint32 id) {
 		SendMessage(mhdlg, WM_NEXTDLGCTL, (WPARAM)hwnd, TRUE);
 }
 
+void VDDialogFrameW32::SetFocusToNextControl(uint32 id) {
+	if (!mhdlg)
+		return;
+
+	HWND hwnd = GetDlgItem(mhdlg, id);
+	if (hwnd) {
+		hwnd = GetNextDlgTabItem(mhdlg, hwnd, FALSE);
+
+		if (hwnd)
+			SendMessage(mhdlg, WM_NEXTDLGCTL, (WPARAM)hwnd, TRUE);
+	}
+}
+
 void VDDialogFrameW32::SetCurrentCursor(const ATUICursorImage& image) {
 	switch(image) {
 		case kATUICursorImage_Hidden:
@@ -2027,6 +2040,32 @@ vdsize32 VDDialogFrameW32::DLUsToPixelSize(const vdsize32& dluSize) const {
 	return vdsize32(MulDiv(dluSize.w, mDialogUnits.mWidth4, 4), MulDiv(dluSize.h, mDialogUnits.mHeight8, 8));
 }
 
+vdsize32 VDDialogFrameW32::DLUsToPixelSizeCeil(const vdsize32& dluSize) const {
+	const auto mulDivRoundToInf = [](sint32 a, sint32 b, sint32 c) {
+		const sint64 product = (sint64)a * b;
+
+		return (product + c + (c < 0 ? 1 : -1)) / c;
+	};
+
+	return vdsize32(
+		mulDivRoundToInf(dluSize.w, mDialogUnits.mWidth4, 4),
+		mulDivRoundToInf(dluSize.h, mDialogUnits.mHeight8, 8)
+	);
+}
+
+vdsize32 VDDialogFrameW32::PixelSizeToDLUsCeil(const vdsize32& dluSize) const {
+	const auto mulDivRoundToInf = [](sint32 a, sint32 b, sint32 c) {
+		const sint64 product = (sint64)a * b;
+
+		return (product + c + (c < 0 ? 1 : -1)) / c;
+	};
+
+	return vdsize32(
+		mulDivRoundToInf(dluSize.w, 4, mDialogUnits.mWidth4),
+		mulDivRoundToInf(dluSize.h, 8, mDialogUnits.mHeight8)
+	);
+}
+
 vdsize32 VDDialogFrameW32::ComputeTemplatePixelSize() const {
 	return ComputeTemplatePixelSize(mDialogUnits, mCurrentDpi);
 }
@@ -2787,6 +2826,26 @@ void VDDialogResizerW32::AddWithOffsets(VDZHWND hwnd, sint32 x1, sint32 y1, sint
 
 		SetWindowPos(ce->mhwnd, nullptr, x1, y1, w, h, flags);
 	}
+}
+
+void VDDialogResizerW32::SetOffsets(VDZHWND hwnd, sint32 x1, sint32 y1, sint32 x2, sint32 y2, uint32 alignment, bool dlus) {
+	auto it = std::find_if(mControls.begin(), mControls.end(),
+		[=](const ControlEntry& ce) { return ce.mhwnd == hwnd; });
+
+	if (it == mControls.end())
+		return;
+
+	ControlEntry *ce = &*it;
+
+	ce->mX1			= x1;
+	ce->mY1			= y1;
+	ce->mX2			= x2;
+	ce->mY2			= y2;
+	ce->mRefX		= dlus ? 4 : mRefX;
+	ce->mRefY		= dlus ? 8 : mRefY;
+	ce->mhwnd		= hwnd;
+	ce->mAlignment	= alignment;
+
 }
 
 void VDDialogResizerW32::AddAlias(VDZHWND hwndTarget, VDZHWND hwndSource, uint32 mergeFlags) {

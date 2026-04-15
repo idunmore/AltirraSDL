@@ -33,9 +33,9 @@
 #include "resample_stages_x64.h"
 
 // These two classes delegate to MASM assembly (vdasm_resize_table_*_SSE2).
-// On the portable CMake build there is no MASM assembler, so they are excluded
-// and the generic reference implementations are used instead.
-#ifndef AT_SDL3_PORTABLE
+// On the portable CMake build / GCC there is no MASM assembler, so they are
+// excluded and the generic reference implementations are used instead.
+#if !defined(AT_SDL3_PORTABLE) && !defined(VD_COMPILER_GCC)
 extern "C" long VDCDECL vdasm_resize_table_col_SSE2(uint32 *out, const uint32 *const*in_table, const int *filter, int filter_width, uint32 w);
 extern "C" long VDCDECL vdasm_resize_table_row_SSE2(uint32 *out, const uint32 *in, const int *filter, int filter_width, uint32 w, long accum, long frac);
 
@@ -60,7 +60,7 @@ void VDResamplerSeparableTableColStageSSE2::Process(void *dst, const void *const
 
 	vdasm_resize_table_col_SSE2((uint32*)dst, (const uint32 *const *)src, (const int *)mFilterBank.data() + filtSize*((phase >> 8) & 0xff), filtSize, w);
 }
-#endif // !AT_SDL3_PORTABLE
+#endif // !AT_SDL3_PORTABLE && !VD_COMPILER_GCC
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -301,7 +301,7 @@ void VDResamplerSeparableTableRowStage8SSE2::Process(void *dst, const void *src,
 	uint32 fastGroups = mNumFastGroups;
 	if (fastGroups) {
 		if (mbUseFastLerp) {
-#ifdef VD_COMPILER_CLANG
+#ifdef VD_COMPILER_CLANG_OR_GCC
 			[&] __attribute__((target("ssse3"))) {
 #endif
 			const __m128i round8 = _mm_set1_epi16(0x40);
@@ -318,7 +318,7 @@ void VDResamplerSeparableTableRowStage8SSE2::Process(void *dst, const void *src,
 				rowFilter += 16;
 				dst8 += 8;
 			} while(--fastGroups);
-#ifdef VD_COMPILER_CLANG
+#ifdef VD_COMPILER_CLANG_OR_GCC
 			}();
 #endif
 
@@ -592,8 +592,12 @@ void VDResamplerSeparableTableColStage8SSE2::Process(void *dst0, const void *con
 					for(int i=0; i<w4; i += 4) {
 						__m128i accum = round;
 
-						__assume(ksize > 0);
-						for(unsigned j = 0; j < ksize; j += 2) {
+						accum = _mm_add_epi32(accum, _mm_madd_epi16(_mm_unpacklo_epi8(_mm_unpacklo_epi8(_mm_loadu_si32(src[0] + xoffset), _mm_loadu_si32(src[1] + xoffset)), zero), _mm_shuffle_epi32(_mm_loadu_si32(filter +  0), 0)));
+						accum = _mm_add_epi32(accum, _mm_madd_epi16(_mm_unpacklo_epi8(_mm_unpacklo_epi8(_mm_loadu_si32(src[2] + xoffset), _mm_loadu_si32(src[3] + xoffset)), zero), _mm_shuffle_epi32(_mm_loadu_si32(filter +  4), 0)));
+						accum = _mm_add_epi32(accum, _mm_madd_epi16(_mm_unpacklo_epi8(_mm_unpacklo_epi8(_mm_loadu_si32(src[4] + xoffset), _mm_loadu_si32(src[5] + xoffset)), zero), _mm_shuffle_epi32(_mm_loadu_si32(filter +  8), 0)));
+						accum = _mm_add_epi32(accum, _mm_madd_epi16(_mm_unpacklo_epi8(_mm_unpacklo_epi8(_mm_loadu_si32(src[6] + xoffset), _mm_loadu_si32(src[7] + xoffset)), zero), _mm_shuffle_epi32(_mm_loadu_si32(filter + 12), 0)));
+						accum = _mm_add_epi32(accum, _mm_madd_epi16(_mm_unpacklo_epi8(_mm_unpacklo_epi8(_mm_loadu_si32(src[8] + xoffset), _mm_loadu_si32(src[9] + xoffset)), zero), _mm_shuffle_epi32(_mm_loadu_si32(filter + 16), 0)));
+						for(unsigned j = 10; j < ksize; j += 2) {
 							accum = _mm_add_epi32(accum, _mm_madd_epi16(_mm_unpacklo_epi8(_mm_unpacklo_epi8(_mm_loadu_si32(src[j+0] + xoffset), _mm_loadu_si32(src[j+1] + xoffset)), zero), _mm_shuffle_epi32(_mm_loadu_si32(filter + j*2), 0)));
 						}
 

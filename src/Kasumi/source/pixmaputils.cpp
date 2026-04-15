@@ -396,11 +396,11 @@ void VDPixmapBuffer::init(sint32 width, sint32 height, int f) {
 	pitch	= mainpitch;
 	p += mainsize;
 
-	palette	= NULL;
-	data2	= NULL;
-	pitch2	= NULL;
-	data3	= NULL;
-	pitch3	= NULL;
+	palette	= nullptr;
+	data2	= nullptr;
+	pitch2	= 0;
+	data3	= nullptr;
+	pitch3	= 0;
 	w		= width;
 	h		= height;
 	format	= f;

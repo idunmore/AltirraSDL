@@ -17,53 +17,21 @@
 
 #include <stdafx.h>
 #include <at/atcore/propertyset.h>
-#include <at/atnativeui/dialog.h>
-#include <at/atnativeui/uiproxies.h>
-#include "resource.h"
-
-class ATUIDialogDeviceDiskDriveFull : public VDDialogFrameW32 {
-public:
-	ATUIDialogDeviceDiskDriveFull(ATPropertySet& props);
-
-protected:
-	bool OnLoaded();
-	void OnDataExchange(bool write);
-
-	ATPropertySet& mPropSet;
-	VDUIProxyComboBoxControl mComboDriveSelect;
-};
-
-ATUIDialogDeviceDiskDriveFull::ATUIDialogDeviceDiskDriveFull(ATPropertySet& props)
-	: VDDialogFrameW32(IDD_DEVICE_DISKDRIVEFULL)
-	, mPropSet(props)
-{
-}
-
-bool ATUIDialogDeviceDiskDriveFull::OnLoaded() {
-	AddProxy(&mComboDriveSelect, IDC_DRIVESELECT);
-
-	VDStringW s;
-	for(int i=1; i<=4; ++i) {
-		s.sprintf(L"Drive %d (D%d:)", i, i);
-
-		mComboDriveSelect.AddItem(s.c_str());
-	}
-
-	mComboDriveSelect.SetSelection(0);
-
-	return VDDialogFrameW32::OnLoaded();
-}
-
-void ATUIDialogDeviceDiskDriveFull::OnDataExchange(bool write) {
-	if (write) {
-		mPropSet.SetUint32("id", mComboDriveSelect.GetSelection());
-	} else {
-		mComboDriveSelect.SetSelection(mPropSet.GetUint32("id", 0));
-	}
-}
+#include "uiconfgeneric.h"
 
 bool ATUIConfDevDiskDriveFull(VDGUIHandle hParent, ATPropertySet& props) {
-	ATUIDialogDeviceDiskDriveFull dlg(props);
-
-	return dlg.ShowDialog(hParent) != 0;
+	return ATUIShowDialogGenericConfig(
+		hParent,
+		props,
+		L"Disk Drive Options",
+		[](IATUIConfigView& view) {
+			view.AddIntDropDown()
+				.SetTag("id")
+				.SetLabel(L"&Drive select")
+				.AddChoice(0, L"Drive 1 (D1:)")
+				.AddChoice(1, L"Drive 2 (D2:)")
+				.AddChoice(2, L"Drive 3 (D3:)")
+				.AddChoice(3, L"Drive 4 (D4:)");
+		}
+	);
 }

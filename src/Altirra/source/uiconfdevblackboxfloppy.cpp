@@ -45,7 +45,7 @@ bool ATUIConfDevBlackBoxFloppy(VDGUIHandle hParent, ATPropertySet& props) {
 				
 				driveTypeOption.SetTag(tag.c_str());
 
-				driveTypeOption.SetDefaultValue(ATBlackBoxFloppyType::FiveInch180K);
+				driveTypeOption.SetDefault(ATBlackBoxFloppyType::FiveInch180K);
 				driveTypeOption.AddChoice(ATBlackBoxFloppyType::FiveInch180K, L"180K 5.25\" 40 track, single-sided");
 				driveTypeOption.AddChoice(ATBlackBoxFloppyType::FiveInch360K, L"360K 5.25\" 40 track, double-sided");
 				driveTypeOption.AddChoice(ATBlackBoxFloppyType::FiveInch12M, L"1.2M 5.25\" 80 track, double-sided HD");
@@ -59,7 +59,7 @@ bool ATUIConfDevBlackBoxFloppy(VDGUIHandle hParent, ATPropertySet& props) {
 				tag.sprintf("drivemapping%u", slot);
 				driveMappingTypeOption.SetTag(tag.c_str());
 
-				driveMappingTypeOption.SetDefaultValue(ATBlackBoxFloppyMappingType::XF551);
+				driveMappingTypeOption.SetDefault(ATBlackBoxFloppyMappingType::XF551);
 				driveMappingTypeOption.AddChoice(ATBlackBoxFloppyMappingType::XF551, L"Map double-sided as XF551");
 				driveMappingTypeOption.AddChoice(ATBlackBoxFloppyMappingType::ATR8000, L"Map double-sided as ATR8000");
 				driveMappingTypeOption.AddChoice(ATBlackBoxFloppyMappingType::Percom, L"Map double-sided as PERCOM");
