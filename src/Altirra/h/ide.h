@@ -30,11 +30,11 @@ template<typename T> class vdrefptr;
 class IATObjectState;
 struct ATSnapshotStatus;
 
-class ATIDEEmulator : protected IVDTimerCallback {
-	ATIDEEmulator(const ATIDEEmulator&);
-	ATIDEEmulator& operator=(const ATIDEEmulator&);
+class ATIDEEmulator final : private IVDTimerCallback {
+	ATIDEEmulator(const ATIDEEmulator&) = delete;
+	ATIDEEmulator& operator=(const ATIDEEmulator&) = delete;
 public:
-	enum : uint32 { kTypeID = 'ata ' };
+	enum : uint32 { kTypeID = "ata "_vdfcctypeid };
 
 	ATIDEEmulator();
 	~ATIDEEmulator();

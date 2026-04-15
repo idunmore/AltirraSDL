@@ -17,108 +17,79 @@
 
 #include <stdafx.h>
 #include <at/atcore/propertyset.h>
-#include <at/atnativeui/dialog.h>
-#include <at/atnativeui/uiproxies.h>
-#include "resource.h"
-
-class ATUIDialogDeviceKMKJZIDE2 : public VDDialogFrameW32 {
-public:
-	ATUIDialogDeviceKMKJZIDE2(ATPropertySet& props);
-
-protected:
-	bool OnLoaded() override;
-	void OnDataExchange(bool write) override;
-
-	ATPropertySet& mPropSet;
-	VDUIProxyComboBoxControl mComboVersion;
-	VDUIProxyComboBoxControl mComboId;
-};
-
-ATUIDialogDeviceKMKJZIDE2::ATUIDialogDeviceKMKJZIDE2(ATPropertySet& props)
-	: VDDialogFrameW32(IDD_DEVICE_KMKJZIDEV2)
-	, mPropSet(props)
-{
-}
-
-bool ATUIDialogDeviceKMKJZIDE2::OnLoaded() {
-	AddProxy(&mComboVersion, IDC_REVISION);
-	AddProxy(&mComboId, IDC_DEVICE_ID);
-	mComboVersion.AddItem(L"Rev. C");
-	mComboVersion.AddItem(L"Rev. D");
-	mComboVersion.AddItem(L"Rev. Ds/S (rev.D with Covox)");
-	mComboVersion.AddItem(L"Rev. E");
-
-	for(uint32 i=0; i<8; ++i) {
-		const wchar_t idstr[] = { (wchar_t)(L'0' + i), 0 };
-
-		mComboId.AddItem(idstr);
-	}
-
-	OnDataExchange(false);
-	SetFocusToControl(IDC_VERSION);
-	return true;
-}
-
-void ATUIDialogDeviceKMKJZIDE2::OnDataExchange(bool write) {
-	if (write) {
-		mPropSet.Clear();
-		mPropSet.SetBool("enablesdx", IsButtonChecked(IDC_ENABLE_SDX));
-
-		const wchar_t *rev;
-		switch(mComboVersion.GetSelection()) {
-			case 0:
-				rev = L"c";
-				break;
-
-			case 1:
-			default:
-				rev = L"d";
-				break;
-
-			case 2:
-				rev = L"s";
-				break;
-
-			case 3:
-				rev = L"e";
-				break;
-		}
-
-		mPropSet.SetString("revision", rev);
-
-		if (IsButtonChecked(IDC_WRITE_PROTECT))
-			mPropSet.SetBool("writeprotect", true);
-
-		mPropSet.SetBool("nvramguard", IsButtonChecked(IDC_NVRAM_PROTECT));
-
-		int id = mComboId.GetSelection();
-
-		if (id >= 0 && id <= 7)
-			mPropSet.SetUint32("id", (uint32)id);
-	} else {
-		CheckButton(IDC_ENABLE_SDX, mPropSet.GetBool("enablesdx", true));
-
-		const VDStringSpanW rev(mPropSet.GetString("revision", L"d"));
-
-		if (rev == L"e")
-			mComboVersion.SetSelection(3);
-		else if (rev == L"s")
-			mComboVersion.SetSelection(2);
-		else if (rev == L"c")
-			mComboVersion.SetSelection(0);
-		else
-			mComboVersion.SetSelection(1);
-
-		CheckButton(IDC_WRITE_PROTECT, mPropSet.GetBool("writeprotect", false));
-		CheckButton(IDC_NVRAM_PROTECT, mPropSet.GetBool("nvramguard", true));
-
-		uint32 id = mPropSet.GetUint32("id", 0);
-		mComboId.SetSelection(id < 8 ? id : 0);
-	}
-}
+#include "uiconfgeneric.h"
 
 bool ATUIConfDevKMKJZIDE2(VDGUIHandle hParent, ATPropertySet& props) {
-	ATUIDialogDeviceKMKJZIDE2 dlg(props);
+	return ATUIShowDialogGenericConfig(
+		hParent,
+		props,
+		L"KMK/JZ IDE Options",
+		[](IATUIConfigView& view) {
+			view.AddCustomDropDown()
+				.SetLabel(L"&Revision")
+				.SetDefault(4)
+				.AddChoice(
+					L"Rev. C",
+					[](const ATPropertySet& pset) -> bool {
+						return VDStringSpanW(pset.GetString("revision", L"")) == L"c";
+					},
+					[](ATPropertySet& pset) {
+						pset.SetString("revision", L"c");
+					}
+				)
+				.AddChoice(
+					L"Rev. D",
+					[](const ATPropertySet& pset) -> bool {
+						return VDStringSpanW(pset.GetString("revision", L"")) == L"d";
+					},
+					[](ATPropertySet& pset) {
+						pset.SetString("revision", L"d");
+					}
+				)
+				.AddChoice(
+					L"Rev. Ds/S (rev.D with Covox)",
+					[](const ATPropertySet& pset) -> bool {
+						return VDStringSpanW(pset.GetString("revision", L"")) == L"s";
+					},
+					[](ATPropertySet& pset) {
+						pset.SetString("revision", L"s");
+					}
+				)
+				.AddChoice(
+					L"Rev. E",
+					[](const ATPropertySet& pset) -> bool {
+						return VDStringSpanW(pset.GetString("revision", L"")) == L"e";
+					},
+					[](ATPropertySet& pset) {
+						pset.SetString("revision", L"e");
+					}
+				);
 
-	return dlg.ShowDialog(hParent) != 0;
+			view.AddIntDropDown()
+				.SetTag("id")
+				.SetLabel(L"&PBI device ID")
+				.AddChoice(0, L"ID 0")
+				.AddChoice(1, L"ID 1")
+				.AddChoice(2, L"ID 2")
+				.AddChoice(3, L"ID 3")
+				.AddChoice(4, L"ID 4")
+				.AddChoice(5, L"ID 5")
+				.AddChoice(6, L"ID 6")
+				.AddChoice(7, L"ID 7");
+
+			view.AddCheckbox()
+				.SetTag("enablesdx")
+				.SetText(L"&Enable SpartaDOS X module on boot")
+				.SetDefault(true, true);
+
+			view.AddCheckbox()
+				.SetTag("writeprotect")
+				.SetText(L"&Write protect hard disks");
+
+			view.AddCheckbox()
+				.SetTag("nvramguard")
+				.SetText(L"Protect &NVRAM contents against reset during clock read")
+				.SetDefault(true, true);
+		}
+	);
 }

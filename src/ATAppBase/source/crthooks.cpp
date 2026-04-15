@@ -21,23 +21,23 @@
 #include <at/atappbase/exceptionfilter.h>
 
 void __cdecl ATOnAbort(int) {
-	__try {
+	AT_EXCEPTIONFILTER_TRY {
 		*(volatile char *)0 = 10;
-	} __except(ATExceptionFilter(GetExceptionCode(), GetExceptionInformation())) {
+	} AT_EXCEPTIONFILTER_EXCEPT {
 	}
 }
 
 void __cdecl ATOnPureCall() {
-	__try {
+	AT_EXCEPTIONFILTER_TRY {
 		*(volatile char *)0 = 11;
-	} __except(ATExceptionFilter(GetExceptionCode(), GetExceptionInformation())) {
+	} AT_EXCEPTIONFILTER_EXCEPT {
 	}
 }
 
 void __cdecl ATOnInvalidParameter(const wchar_t *, const wchar_t *, const wchar_t *, unsigned int, uintptr_t) {
-	__try {
+	AT_EXCEPTIONFILTER_TRY {
 		*(volatile char *)0 = 12;
-	} __except(ATExceptionFilter(GetExceptionCode(), GetExceptionInformation())) {
+	} AT_EXCEPTIONFILTER_EXCEPT {
 	}
 }
 

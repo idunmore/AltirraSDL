@@ -35,7 +35,7 @@ void OnCommandCassetteLoadNew() {
 }
 
 void OnCommandCassetteLoad() {
-	VDStringW fn(VDGetLoadFileName('cass', ATUIGetNewPopupOwner(), L"Load cassette tape", g_ATUIFileFilter_LoadTape, nullptr));
+	VDStringW fn(VDGetLoadFileName("cass"_vdfcctypeid, ATUIGetNewPopupOwner(), L"Load cassette tape", g_ATUIFileFilter_LoadTape, nullptr));
 
 	if (!fn.empty()) {
 		ATCassetteEmulator& cas = g_sim.GetCassette();
@@ -53,7 +53,7 @@ void OnCommandCassetteSave() {
 	if (!cas.IsLoaded())
 		return;
 
-	VDStringW fn(VDGetSaveFileName('cass', ATUIGetNewPopupOwner(), L"Save cassette tape", g_ATUIFileFilter_SaveTape, L"cas"));
+	VDStringW fn(VDGetSaveFileName("cass"_vdfcctypeid, ATUIGetNewPopupOwner(), L"Save cassette tape", g_ATUIFileFilter_SaveTape, L"cas"));
 
 	if (fn.empty())
 		return;
@@ -69,7 +69,7 @@ void OnCommandCassetteExportAudioTape() {
 	if (!cas.IsLoaded())
 		return;
 
-	VDStringW fn(VDGetSaveFileName('casa', ATUIGetNewPopupOwner(), L"Export cassette tape audio", g_ATUIFileFilter_SaveTapeAudio, L"wav"));
+	VDStringW fn(VDGetSaveFileName("casa"_vdfcctypeid, ATUIGetNewPopupOwner(), L"Export cassette tape audio", g_ATUIFileFilter_SaveTapeAudio, L"wav"));
 
 	if (fn.empty())
 		return;

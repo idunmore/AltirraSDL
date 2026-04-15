@@ -1117,6 +1117,12 @@
     <ClCompile Include="source\uicommandline.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="source\printerrasterizer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\printerexport.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="h\antic.h">
@@ -1837,6 +1843,12 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="h\karinmaxidrive.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\printerrasterizer.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\printerexport.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

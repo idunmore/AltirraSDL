@@ -163,7 +163,7 @@ public:
 
 class IATCassetteImage : public IATImage {
 public:
-	enum : uint32 { kTypeID = 'csim' };
+	enum : uint32 { kTypeID = "csim"_vdfcctypeid };
 
 	// Returns length of data track, in data samples.
 	virtual uint32 GetDataLength() const = 0;

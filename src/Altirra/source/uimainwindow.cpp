@@ -135,9 +135,10 @@ void ATMainWindow::TestMenuAutoShow(const vdpoint32& pointerScreenPos) {
 
 LRESULT ATMainWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 	LRESULT r;
-	__try {
+
+	AT_EXCEPTIONFILTER_TRY {
 		r = WndProc2(msg, wParam, lParam);
-	} __except(ATExceptionFilter(GetExceptionCode(), GetExceptionInformation())) {
+	} AT_EXCEPTIONFILTER_EXCEPT {
 	}
 
 	return r;

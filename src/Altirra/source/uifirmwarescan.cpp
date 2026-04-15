@@ -27,7 +27,7 @@
 #include "firmwaredetect.h"
 
 void ATUIScanForFirmware(VDGUIHandle hParent, ATFirmwareManager& fwmgr) {
-	const VDStringW& path = VDGetDirectory('FMWR', hParent, L"Select folder to scan for firmware");
+	const VDStringW& path = VDGetDirectory("FMWR"_vdfcctypeid, hParent, L"Select folder to scan for firmware");
 
 	if (path.empty())
 		return;
@@ -74,7 +74,7 @@ void ATUIScanForFirmware(VDGUIHandle hParent, ATFirmwareManager& fwmgr) {
 			uint32 size32 = (uint32)size;
 
 			vdblock<char> buf(size32);
-			f.read(buf.data(), (long)buf.size());
+			f.read(buf.data(), (sint32)buf.size());
 
 			ATSpecificFirmwareType specificType;
 			sint32 knownFirmwareIndex = -1;

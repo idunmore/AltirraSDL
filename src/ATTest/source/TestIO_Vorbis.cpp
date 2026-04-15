@@ -36,7 +36,7 @@ AT_DEFINE_TEST_NONAUTO(IO_VorbisPlayback) {
 		throw MyError("File too big");
 
 	vdblock<uint8> data((size_t)fileSize);
-	f.read(data.data(), (long)fileSize);
+	f.read(data.data(), (sint32)fileSize);
 	f.close();
 
 	vdautoptr dec { new ATVorbisDecoder };
@@ -101,7 +101,7 @@ AT_DEFINE_TEST_NONAUTO(IO_VorbisBench) {
 		throw MyError("File too big");
 
 	vdblock<uint8> data((size_t)fileSize);
-	f.read(data.data(), (long)fileSize);
+	f.read(data.data(), (sint32)fileSize);
 	f.close();
 
 	vdblock<sint16> buf(16384);
@@ -149,7 +149,7 @@ AT_DEFINE_TEST_NONAUTO(IO_VorbisDecode) {
 		throw MyError("File too big");
 
 	vdblock<uint8> data((size_t)fileSize);
-	f.read(data.data(), (long)fileSize);
+	f.read(data.data(), (sint32)fileSize);
 	f.close();
 
 	vdblock<sint16> buf(16384);

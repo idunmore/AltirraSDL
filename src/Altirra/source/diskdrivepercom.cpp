@@ -153,10 +153,13 @@ void ATDeviceDiskDrivePercom::GetSettingsBlurb(VDStringW& buf) {
 }
 
 void ATDeviceDiskDrivePercom::GetSettings(ATPropertySet& settings) {
+	if (mHardwareType == HardwareType::RFD)
+		settings.SetUint32("id", mDriveId);
+	else
+		settings.SetBool("use1795", mbAT1795Mode);
+
 	if (mHardwareType == HardwareType::AT88)
 		settings.SetBool("ddcapable", mbIsAT88DoubleDensity);
-	else if (mHardwareType == HardwareType::RFD)
-		settings.SetUint32("id", mDriveId);
 
 	VDStringA s;
 	for(uint32 i=0; i<kNumDrives; ++i) {

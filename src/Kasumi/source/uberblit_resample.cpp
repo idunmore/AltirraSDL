@@ -212,7 +212,7 @@ void VDPixmapGenResampleRow::Init(IVDPixmapGen *src, uint32 srcIndex, uint32 wid
 			{ kVDPixType_8,			false,	nsVDPixmap::kFilterSharpLinear,	CPUF_SUPPORTS_MMX,	RowFactorySharpLinear<VDResamplerSeparableTableRowStage8MMX> },
 			{ kVDPixType_8888,		false,	nsVDPixmap::kFilterSharpLinear,	CPUF_SUPPORTS_SSE2,	RowFactorySharpLinear<VDResamplerSeparableTableRowStageSSE2> },
 			{ kVDPixType_8888,		false,	nsVDPixmap::kFilterSharpLinear,	CPUF_SUPPORTS_MMX,	RowFactorySharpLinear<VDResamplerSeparableTableRowStageMMX> },
-#elif defined _M_AMD64
+#elif defined(_M_AMD64) && !defined(VD_COMPILER_GCC)
 			// AMD64 — intrinsics-only 8-bit stages (no MASM dependency)
 			{ kVDPixType_8,			false,	nsVDPixmap::kFilterLinear,		CPUF_SUPPORTS_SSE2,	RowFactoryLinear<VDResamplerSeparableTableRowStage8SSE2> },
 			{ kVDPixType_8,			false,	nsVDPixmap::kFilterCubic,		CPUF_SUPPORTS_SSE2,	RowFactoryCubic<VDResamplerSeparableTableRowStage8SSE2> },
@@ -586,7 +586,7 @@ void VDPixmapGenResampleCol::Init(IVDPixmapGen *src, uint32 srcIndex, uint32 hei
 		{ kVDPixType_8,			false,	nsVDPixmap::kFilterSharpLinear,	CPUF_SUPPORTS_MMX,	ColFactorySharpLinear<VDResamplerSeparableTableColStage8MMX> },
 		{ kVDPixType_8888,		false,	nsVDPixmap::kFilterSharpLinear,	CPUF_SUPPORTS_SSE2,	ColFactorySharpLinear<VDResamplerSeparableTableColStageSSE2> },
 		{ kVDPixType_8888,		false,	nsVDPixmap::kFilterSharpLinear,	CPUF_SUPPORTS_MMX,	ColFactorySharpLinear<VDResamplerSeparableTableColStageMMX> },
-#elif defined _M_AMD64
+#elif defined(_M_AMD64) && !defined(VD_COMPILER_GCC)
 		// AMD64 — intrinsics-only 8-bit stages (no MASM dependency)
 		{ kVDPixType_8,			false,	nsVDPixmap::kFilterLinear,		CPUF_SUPPORTS_SSE2,	ColFactoryLinear<VDResamplerSeparableTableColStage8SSE2> },
 		{ kVDPixType_8,			false,	nsVDPixmap::kFilterCubic,		CPUF_SUPPORTS_SSE2,	ColFactoryCubic<VDResamplerSeparableTableColStage8SSE2> },

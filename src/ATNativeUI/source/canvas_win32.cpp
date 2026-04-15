@@ -82,7 +82,7 @@ VDZHDC ATUICanvasW32::BeginDirect(VDZPAINTSTRUCT& ps, bool enableDoubleBuffering
 void ATUICanvasW32::EndDirect(VDZPAINTSTRUCT& ps) {
 	if (mhdc) {
 		if (mhPaintBuffer) {
-			EndBufferedPaint(mhPaintBuffer, TRUE);
+			EndBufferedPaint((HPAINTBUFFER)mhPaintBuffer, TRUE);
 			mhPaintBuffer = nullptr;
 		}
 

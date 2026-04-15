@@ -1467,7 +1467,7 @@ public:
 					mpFileDialogResult->mbAccepted = true;
 					mpFileDialogResult->mPath = path;
 				} else {
-					mpFileDialogResult = ATUIShowOpenFileDialog('load', L"Load disk, cassette, cartridge, or program image",
+					mpFileDialogResult = ATUIShowOpenFileDialog("load"_vdfcctypeid, L"Load disk, cassette, cartridge, or program image",
 						L"All supported types\0*.atr;*.xfd;*.dcm;*.pro;*.atx;*.xex;*.obx;*.com;*.car;*.rom;*.a52;*.bin;*.cas;*.wav;*.flac;*.ogg;*.zip;*.atz;*.gz;*.bas;*.arc;*.sap;*.vgm;*.vgz\0"
 						L"Atari program (*.xex,*.obx,*.com)\0*.xex;*.obx;*.com\0"
 						L"BASIC program (*.bas)\0*.bas\0"
@@ -2076,7 +2076,7 @@ void OnCommandQuickSaveState() {
 }
 
 void OnCommandLoadState() {
-	const VDStringW fn(VDGetLoadFileName('save', (VDGUIHandle)g_hwnd, L"Load save state",
+	const VDStringW fn(VDGetLoadFileName("save"_vdfcctypeid, (VDGUIHandle)g_hwnd, L"Load save state",
 		g_ATUIFileFilter_LoadState,
 		L"atstate2"
 		));
@@ -2090,7 +2090,7 @@ void OnCommandSaveState() {
 	if (!ATUIConfirmPartiallyAccurateSnapshot())
 		return;
 
-	const VDStringW fn(VDGetSaveFileName('save', (VDGUIHandle)g_hwnd, L"Save save state",
+	const VDStringW fn(VDGetSaveFileName("save"_vdfcctypeid, (VDGUIHandle)g_hwnd, L"Save save state",
 		g_ATUIFileFilter_SaveState,
 		L"atstate2"
 		));
@@ -2110,7 +2110,7 @@ void OnCommandSaveFirmware(int idx) {
 	if (!g_sim.IsStoragePresent(storageId))
 		throw MyError("The selected type of firmware is not present.");
 
-	VDStringW fn(VDGetSaveFileName('rom ', (VDGUIHandle)g_hwnd, L"Save firmware image",
+	VDStringW fn(VDGetSaveFileName("rom "_vdfcctypeid, (VDGUIHandle)g_hwnd, L"Save firmware image",
 		L"Raw firmware image\0*.rom\0",
 		L"rom"));
 
@@ -2496,7 +2496,7 @@ public:
 				}
 
 				mpConfirmResult.clear();
-				mpFileDialogResult = ATUIShowOpenFileDialog('disk', L"Attach disk image",
+				mpFileDialogResult = ATUIShowOpenFileDialog("disk"_vdfcctypeid, L"Attach disk image",
 					L"All supported types\0*.atr;*.pro;*.atx;*.xfd;*.dcm;*.zip;*.gz;*.atz;*.arc\0"
 					L"Atari disk image (*.atr, *.xfd)\0*.atr;*.xfd;*.dcm\0"
 					L"Protected disk image (*.pro)\0*.pro\0"
@@ -3306,9 +3306,9 @@ int RunMainLoop2(HWND hwnd) {
 int RunMainLoop(HWND hwnd) {
 	int rc;
 
-	__try {
+	AT_EXCEPTIONFILTER_TRY {
 		rc = RunMainLoop2(hwnd);
-	} __except(ATExceptionFilter(GetExceptionCode(), GetExceptionInformation())) {
+	} AT_EXCEPTIONFILTER_EXCEPT {
 	}
 
 	return rc;

@@ -26,23 +26,37 @@ stereo			dta		0
 playfield:		;0123456789012345678901234567890123456789
 		dta		"  Name:                                 "
 		dta		"  Author:                               "
+		dta		"  Time:   "
+timestamp:
+		dta		          "00:00:00 / 00:00:00   PAL     "
 
 dlist:
 		:7 dta	$70
 		dta		$42,a(playfield)
 		dta		$02
+		dta		$70
+		dta		$02
 		dta		$41,a(dlist)
 
 ;==========================================================================
-linecount	dta		0
-lineaccum	dta		0
-lastvcount	dta		0
+linecount	= $80
+lineaccum	= $81
+lastvcount	= $82
+secondcnt	= $83
+			; $84
+
+;average between NTSC and PAL (~0.5% off ideal)
+VCOUNTS_PER_SEC = 15628/2
 
 ;==========================================================================
 .proc Main
 		;turn off interrupts
 		sei
 		mva		#0 nmien
+
+		;clear zp
+		tax
+		sta:rpl	$80,x+
 
 		;wait for VBI
 		lda		#248/2
@@ -101,10 +115,10 @@ pmclear_loop:
 		ldx		#3
 		mva:rpl	pmcolors,x colpm0,x-
 
-		mva		#$03 missiles+$30
-		mva		#$0c missiles+$32
-		mva		#$30 missiles+$34
-		mva		#$c0 missiles+$36
+		mva		#$03 missiles+$38
+		mva		#$0c missiles+$3A
+		mva		#$30 missiles+$3C
+		mva		#$c0 missiles+$3E
 		lda		#$40
 		sta		hposp0
 		sta		hposp1
@@ -185,12 +199,12 @@ pmcolors:
 		dta		$18,$38,$58,$78
 
 pmypos:
-		dta		$30,$32,$34,$36
+		dta		$38,$3A,$3C,$3E
 .endp
 
 ;==========================================================================
-musptr		= $80
-deltamask	= $83
+musptr		= $88
+deltamask	= $8B
 
 tmpptr		= $90
 
@@ -221,14 +235,66 @@ player3		= $0780
 		ldx		#15
 		sta:rpl	dmhistory,x-
 
-		lda		#1
-		sta		musdelay
-		sta		musdelay-$20
+		ldx		#1
+		stx		musdelay
+		stx		musdelay-$20
+
+		;reset timestamp
+		mwa		#VCOUNTS_PER_SEC secondcnt
+
+		lda		#"0"
+tsreset_loop:
+		sta		timestamp,x
+		sta		timestamp+3,x
+		sta		timestamp+6,x
+		dex
+		bpl		tsreset_loop
 		rts
 .endp
 
 ;==========================================================================
+inc10:
+		dta		"1234567890"
+inc6:
+		dta		"123450"
+
+;==========================================================================
 .proc PlayMusic
+		;update timestamp
+		sec
+		lda		secondcnt
+		sbc		vcountsPerTick
+		sta		secondcnt
+		bcs		tsupdate_end
+		dec		secondcnt+1
+		bpl		tsupdate_end
+
+		adc		#<VCOUNTS_PER_SEC
+		sta		secondcnt
+		lda		#$ff
+		adc		#>VCOUNTS_PER_SEC
+		sta		secondcnt+1
+
+		;BCD increment timestamp
+		ldy		#7
+tsupdate_loop:
+		ldx		timestamp,y
+		lda		inc10-$10,x
+		sta		timestamp,y
+		cmp		#$10
+		bne		tsupdate_end
+		dey
+		ldx		timestamp,y
+		lda		inc6-$10,x
+		sta		timestamp,y
+		cmp		#$10
+		bne		tsupdate_end
+		dey
+		dey
+		bpl		tsupdate_loop
+
+tsupdate_end:
+
 		bit		stereo
 		bpl		update_pokey
 

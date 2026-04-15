@@ -17,60 +17,26 @@
 
 #include <stdafx.h>
 #include <at/atcore/propertyset.h>
-#include <at/atnativeui/dialog.h>
-#include <at/atnativeui/uiproxies.h>
-#include "resource.h"
+#include "uiconfgeneric.h"
 
-class ATUIDialogDeviceKMKJZIDE : public VDDialogFrameW32 {
-public:
-	ATUIDialogDeviceKMKJZIDE(ATPropertySet& props);
-
-protected:
-	bool OnLoaded() override;
-	void OnDataExchange(bool write) override;
-
-	ATPropertySet& mPropSet;
-	VDUIProxyComboBoxControl mComboId;
-};
-
-ATUIDialogDeviceKMKJZIDE::ATUIDialogDeviceKMKJZIDE(ATPropertySet& props)
-	: VDDialogFrameW32(IDD_DEVICE_KMKJZIDE)
-	, mPropSet(props)
-{
-}
-
-bool ATUIDialogDeviceKMKJZIDE::OnLoaded() {
-	AddProxy(&mComboId, IDC_DEVICE_ID);
-
-	for(uint32 i=0; i<8; ++i) {
-		const wchar_t idstr[] = { (wchar_t)(L'0' + i), 0 };
-
-		mComboId.AddItem(idstr);
-	}
-
-	OnDataExchange(false);
-	SetFocusToControl(IDC_DEVICE_ID);
-	return true;
-}
-
-void ATUIDialogDeviceKMKJZIDE::OnDataExchange(bool write) {
-	if (write) {
-		mPropSet.Clear();
-
-		int id = mComboId.GetSelection();
-
-		if (id >= 0 && id <= 7)
-			mPropSet.SetUint32("id", (uint32)id);
-	} else {
-		CheckButton(IDC_ENABLE_SDX, mPropSet.GetBool("enablesdx", true));
-
-		uint32 id = mPropSet.GetUint32("id", 0);
-		mComboId.SetSelection(id < 8 ? id : 0);
-	}
-}
 
 bool ATUIConfDevKMKJZIDE(VDGUIHandle hParent, ATPropertySet& props) {
-	ATUIDialogDeviceKMKJZIDE dlg(props);
-
-	return dlg.ShowDialog(hParent) != 0;
+	return ATUIShowDialogGenericConfig(
+		hParent,
+		props,
+		L"KMK/JZ IDE Options",
+		[](IATUIConfigView& view) {
+			view.AddIntDropDown()
+				.SetTag("id")
+				.SetLabel(L"&PBI device ID")
+				.AddChoice(0, L"ID 0")
+				.AddChoice(1, L"ID 1")
+				.AddChoice(2, L"ID 2")
+				.AddChoice(3, L"ID 3")
+				.AddChoice(4, L"ID 4")
+				.AddChoice(5, L"ID 5")
+				.AddChoice(6, L"ID 6")
+				.AddChoice(7, L"ID 7");
+		}
+	);
 }

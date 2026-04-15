@@ -39,7 +39,7 @@ void OnCommandToolsExportROMSet() {
 		{ kATFirmwareId_5200_LLE, L"altirraos-5200.rom" },
 	};
 
-	const auto path = VDGetDirectory('erom', ATUIGetMainWindow(), L"Choose target folder for ROM export");
+	const auto path = VDGetDirectory("erom"_vdfcctypeid, ATUIGetMainWindow(), L"Choose target folder for ROM export");
 	if (path.empty())
 		return;
 
@@ -65,7 +65,7 @@ void OnCommandToolsExportROMSet() {
 			VDFile f(VDMakePath(path, VDStringSpanW(outputInfo.mpFilename)).c_str(),
 				nsVDFile::kWrite | nsVDFile::kCreateAlways | nsVDFile::kSequential);
 
-			f.write(buf.data(), (long)buf.size());
+			f.write(buf.data(), (sint32)buf.size());
 		}
 
 		ATUIShowInfo(ATUIGetMainWindow(), L"ROM set successfully exported.");

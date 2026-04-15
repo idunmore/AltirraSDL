@@ -58,9 +58,13 @@ void VDCache::Shutdown() {
 }
 
 int VDCache::GetStateCount(int state) {
+	int n = 0;
+
 	vdsynchronized(mLock) {
-		return mLists[state].size();
+		n = mLists[state].size();
 	}
+
+	return n;
 }
 
 void VDCache::DumpListStatus(int state) {

@@ -1291,7 +1291,7 @@ void ATInputManager::LoadSelections(VDRegistryKey& key, ATInputControllerType de
 }
 
 void ATInputManager::SaveMaps(VDRegistryKey& key) {
-	vdfastvector<std::pair<ATInputMap *, bool> > sortedMaps;
+	vdvector<std::pair<ATInputMap *, bool> > sortedMaps;
 
 	for(InputMaps::iterator it(mInputMaps.begin()), itEnd(mInputMaps.end()); it != itEnd; ++it)
 		sortedMaps.push_back(*it);
@@ -1317,7 +1317,7 @@ void ATInputManager::SaveMaps(VDRegistryKey& key) {
 }
 
 void ATInputManager::SaveSelections(VDRegistryKey& key) {
-	vdfastvector<std::pair<ATInputMap *, bool> > sortedMaps;
+	vdvector<std::pair<ATInputMap *, bool> > sortedMaps;
 
 	for(InputMaps::iterator it(mInputMaps.begin()), itEnd(mInputMaps.end()); it != itEnd; ++it)
 		sortedMaps.push_back(*it);

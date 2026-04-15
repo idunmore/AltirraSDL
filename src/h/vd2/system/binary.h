@@ -148,11 +148,18 @@
 	}
 #endif
 
-#if defined(__clang__) || defined(__GNUC__)
+#ifdef VD_COMPILER_CLANG_OR_GCC
+#ifdef VD_COMPILER_GCC
+template<typename T>
+struct __attribute__((packed)) VDUnalignedHelper {
+	T v;
+};
+#else
 template<typename T>
 struct VDUnalignedHelper {
 	T v __attribute__((packed));
 };
+#endif
 
 inline uint16 VDReadUnalignedU16(const void *p) { return ((VDUnalignedHelper<uint16> __attribute__((may_alias)) *)p)->v; }
 inline sint16 VDReadUnalignedS16(const void *p) { return ((VDUnalignedHelper<sint16> __attribute__((may_alias)) *)p)->v; }

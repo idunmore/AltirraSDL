@@ -1664,7 +1664,7 @@ void ATExchangeSettings(bool write, ATSettingsCategory mask) {
 		return;
 
 	typedef std::pair<uint32, uint32> ProfileMaskPair;
-	vdfastvector<ProfileMaskPair> profileMasks;
+	vdvector<ProfileMaskPair> profileMasks;
 
 	vdfastvector<uint32> seenProfiles;
 

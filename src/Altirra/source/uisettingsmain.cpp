@@ -56,7 +56,7 @@ public:
 	void RunInner() override {
 		switch(mStage) {
 			case 0:
-				mFileResult = ATUIShowOpenFileDialog('disk', L"Browse for disk", L"All files (*.*)\0*.*\0");
+				mFileResult = ATUIShowOpenFileDialog("disk"_vdfcctypeid, L"Browse for disk", L"All files (*.*)\0*.*\0");
 				Wait(mFileResult);
 				++mStage;
 				break;

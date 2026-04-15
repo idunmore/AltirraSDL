@@ -19,6 +19,7 @@
 #define f_AT_FDC_H
 
 #include <vd2/system/function.h>
+#include <vd2/system/unknown.h>
 #include <at/atio/diskimage.h>
 #include <at/atcore/scheduler.h>
 
@@ -36,7 +37,7 @@ enum ATFDCWPOverride {
 
 class ATFDCEmulator final : public IATSchedulerCallback {
 public:
-	enum : uint32 { kTypeID = 'FDC ' };
+	enum : uint32 { kTypeID = "FDC "_vdfcctypeid };
 
 	enum Type {
 		// 1771 (810): FM only, head load

@@ -16,12 +16,14 @@
 
 #include <stdafx.h>
 
+#define INITGUID
 #pragma warning(push)
 #pragma warning(disable: 4768)		// ShlObj.h(1065): warning C4768: __declspec attributes before linkage specification are ignored
 #pragma warning(disable: 4091)		// shlobj.h(1151): warning C4091: 'typedef ': ignored on left of 'tagGPFIDL_FLAGS' when no variable is declared
 #include <shlobj.h>
 #pragma warning(pop)
 
+#include <shlguid.h>
 #include <shellapi.h>
 #include <ole2.h>
 #include <windows.h>
@@ -1255,7 +1257,7 @@ bool ATUIDialogDiskExplorer::OnCommand(uint32 id, uint32 extcode) {
 		}
 	} else if (id == ID_DISKEXP_IMPORTFILE || id == ID_DISKEXP_IMPORTTEXT) {
 		const bool text = (id == ID_DISKEXP_IMPORTTEXT);
-		const VDStringW& fn = VDGetLoadFileName('dexp', (VDGUIHandle)mhdlg, text ? L"Import text file" : L"Import binary file", L"All files (*.*)\0*.*\0", nullptr);
+		const VDStringW& fn = VDGetLoadFileName("dexp"_vdfcctypeid, (VDGUIHandle)mhdlg, text ? L"Import text file" : L"Import binary file", L"All files (*.*)\0*.*\0", nullptr);
 
 		if (!fn.empty()) {
 			VDFile f(fn.c_str());
@@ -1355,20 +1357,20 @@ bool ATUIDialogDiskExplorer::OnCommand(uint32 id, uint32 extcode) {
 			if (exportedEntries.size() == 1) {
 				const FileListEntry *fle = exportedEntries.front();
 
-				VDSetLastLoadSaveFileName('dexp', fle->mFileName.c_str());
-				const VDStringW& fn = VDGetSaveFileName('dexp', (VDGUIHandle)mhdlg, text ? L"Export text file" : L"Export binary file", L"All files (*.*)\0*.*\0", nullptr);
+				VDSetLastLoadSaveFileName("dexp"_vdfcctypeid, fle->mFileName.c_str());
+				const VDStringW& fn = VDGetSaveFileName("dexp"_vdfcctypeid, (VDGUIHandle)mhdlg, text ? L"Export text file" : L"Export binary file", L"All files (*.*)\0*.*\0", nullptr);
 
 				if (!fn.empty()) {
 					VDFile f(fn.c_str(), nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kCreateAlways);
 
 					const auto& buf = exportedData.front();
-					f.write(buf.data(), (long)buf.size());
+					f.write(buf.data(), (sint32)buf.size());
 
 					if (fle->mbDateValid)
 						f.setCreationTime(VDDateFromLocalDate(fle->mDate));
 				}
 			} else if (!exportedEntries.empty()) {
-				const VDStringW& path = VDGetDirectory('dex2', (VDGUIHandle)mhdlg, text ? L"Export multiple text files" : L"Export multiple binary files");
+				const VDStringW& path = VDGetDirectory("dex2"_vdfcctypeid, (VDGUIHandle)mhdlg, text ? L"Export multiple text files" : L"Export multiple binary files");
 
 				if (path.empty())
 					return true;
@@ -1398,7 +1400,7 @@ bool ATUIDialogDiskExplorer::OnCommand(uint32 id, uint32 extcode) {
 
 					VDFile f(exportPath.c_str(), nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kCreateAlways);
 
-					f.write(buf.data(), (long)buf.size());
+					f.write(buf.data(), (sint32)buf.size());
 
 					if (fle->mbDateValid)
 						f.setCreationTime(VDDateFromLocalDate(fle->mDate));
@@ -1421,7 +1423,7 @@ bool ATUIDialogDiskExplorer::OnCommand(uint32 id, uint32 extcode) {
 		if (!pdview->IsUpdatable())
 			throw MyError("Cannot import disk image as partition is read-only.");
 
-		const VDStringW& s = VDGetLoadFileName('disk', (VDGUIHandle)mhdlg, L"Import disk image to partition",
+		const VDStringW& s = VDGetLoadFileName("disk"_vdfcctypeid, (VDGUIHandle)mhdlg, L"Import disk image to partition",
 			g_ATUIFileFilter_Disk, nullptr);
 
 		if (!s.empty()) {
@@ -1478,7 +1480,7 @@ bool ATUIDialogDiskExplorer::OnCommand(uint32 id, uint32 extcode) {
 
 		if (ple) {
 			VDStringW s(VDGetSaveFileName(
-					'disk',
+					"disk"_vdfcctypeid,
 					(VDGUIHandle)mhdlg,
 					L"Export partition to disk image",
 					L"Atari disk image (*.atr)\0*.atr\0"

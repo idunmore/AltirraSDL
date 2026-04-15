@@ -15,6 +15,7 @@
 //	with this program. If not, see <http://www.gnu.org/licenses/>.
 
 #include <stdafx.h>
+#include <float.h>
 #include <windows.h>
 #include <shellapi.h>
 #include <uxtheme.h>

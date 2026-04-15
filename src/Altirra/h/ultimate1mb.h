@@ -86,8 +86,8 @@ public:
 	bool IsPBIOverlayActive() const override;
 	uint8 ReadPBIStatus(uint8 busData, bool debugOnly) override;
 
-	virtual void ColdReset();
-	virtual void WarmReset();
+	void ColdReset();
+	void WarmReset();
 
 	void LoadNVRAM();
 	void SaveNVRAM();

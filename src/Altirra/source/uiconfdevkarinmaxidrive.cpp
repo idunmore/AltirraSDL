@@ -25,7 +25,7 @@ bool ATUIConfDevKarinMaxiDrive(VDGUIHandle hParent, ATPropertySet& props) {
 				.SetTag("hwversion")
 				.AddChoice(0, L"Original")
 				.AddChoice(1, L"PBI selection fix")
-				.SetDefaultValue(0)
+				.SetDefault(0)
 				;
 
 			view.AddVerticalSpace();
@@ -38,7 +38,7 @@ bool ATUIConfDevKarinMaxiDrive(VDGUIHandle hParent, ATPropertySet& props) {
 					.AddChoice(1, L"5.25\" Drive (40 tracks)")
 					.AddChoice(2, L"5.25\" Drive (80 tracks)")
 					.AddChoice(3, L"3.5\" Drive")
-					.SetDefaultValue(i ? 0 : 1)
+					.SetDefault(i ? 0 : 1)
 					;
 			}
 

@@ -61,14 +61,14 @@ public:
 
 class IATDeviceDebugTarget {
 public:
-	enum { kTypeID = 'addt' };
+	enum { kTypeID = "addt"_vdfcctypeid };
 
 	virtual IATDebugTarget *GetDebugTarget(uint32 index) = 0;
 };
 
 class IATDebugTargetBreakpoints {
 public:
-	enum { kTypeID = 'adtb' };
+	enum { kTypeID = "adtb"_vdfcctypeid };
 
 	virtual void SetBreakpointHandler(IATCPUBreakpointHandler *handler) = 0;
 
@@ -84,7 +84,7 @@ public:
 
 class IATDebugTargetHistory {
 public:
-	enum { kTypeID = 'adth' };
+	enum { kTypeID = "adth"_vdfcctypeid };
 
 	virtual bool GetHistoryEnabled() const = 0;
 	virtual void SetHistoryEnabled(bool enable) = 0;
@@ -97,7 +97,7 @@ public:
 
 class IATDebugTargetExecutionControl {
 public:
-	enum { kTypeID = 'adtx' };
+	enum { kTypeID = "adtx"_vdfcctypeid };
 
 	virtual void Break() = 0;
 	virtual bool StepInto(const vdfunction<void(bool)>& fn) = 0;

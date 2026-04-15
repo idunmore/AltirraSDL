@@ -121,7 +121,7 @@ void ATDeviceDiskDriveAMDC::GetDeviceInfo(ATDeviceInfo& info) {
 void ATDeviceDiskDriveAMDC::GetSettingsBlurb(VDStringW& buf) {
 	bool first = true;
 
-	for(uint32 i=1; i<4; ++i) {
+	for(uint32 i=0; i<3; ++i) {
 		if (mDrives[i].mType) {
 			if (first)
 				first = false;

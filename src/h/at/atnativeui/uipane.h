@@ -24,7 +24,7 @@ class ATUINativeWindow;
 
 class ATUIPane : public IVDRefUnknown {
 public:
-	enum { kTypeID = 'uipn' };
+	enum { kTypeID = "uipn"_vdfcctypeid };
 
 	ATUIPane(uint32 paneId, const wchar_t *name);
 	~ATUIPane();

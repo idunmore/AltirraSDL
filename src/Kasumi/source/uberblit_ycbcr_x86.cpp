@@ -27,7 +27,7 @@ void VDPixmapGenRGB32ToYCbCr601_SSE2::Compute(void *dst0, sint32 y) {
 	uint8 *dstCr = dstY + mWindowPitch;
 	const uint8 *srcRGB = (const uint8 *)mpSrc->GetRow(y, mSrcIndex);
 
-	static const __declspec(align(16)) struct {
+	alignas(16) static const struct {
 		sint16 rb_to_y[8];
 		sint16 rb_to_cb[8];
 		sint16 rb_to_cr[8];

@@ -11,11 +11,11 @@
 //	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 //	GNU General Public License for more details.
 //
-//	You should have received a copy of the GNU General Public License
-//	along with this program; if not, write to the Free Software
-//	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+//	You should have received a copy of the GNU General Public License along
+//	with this program. If not, see <http://www.gnu.org/licenses/>.
 
 #include <stdafx.h>
+#include <float.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/constexpr.h>
 #include <vd2/system/file.h>
@@ -3290,7 +3290,7 @@ void ATUITraceViewer::ExportToChromeTrace(const wchar_t *path) const {
 		}
 	};
 
-	vdfastvector<std::pair<uint32, uint32>> callFrameTable;
+	vdvector<std::pair<uint32, uint32>> callFrameTable;
 	vdhashmap<std::pair<uint32, uint32>, uint32, CallFrameHash> callFrameLookup;
 
 	auto cursor = cpuTrace.StartHistoryIteration(0, 0);

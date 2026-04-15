@@ -26,11 +26,8 @@
 #ifndef f_VD2_SYSTEM_VDALLOC_H
 #define f_VD2_SYSTEM_VDALLOC_H
 
-#ifdef _MSC_VER
-	#pragma once
-#endif
-
 #include <type_traits>
+#include <vd2/system/vdtypes.h>
 #include <stdlib.h>
 
 class IVDRefCount;
@@ -227,7 +224,7 @@ struct vddefaultdelete {
 
 template<typename T, class Deleter = vddefaultdelete<T>> class vduniqueptr {
 protected:
-	[[no_unique_address,msvc::no_unique_address]] Deleter deleter;
+	VD_NO_UNIQUE_ADDRESS Deleter deleter;
 	T *ptr = nullptr;
 
 public:

@@ -164,7 +164,7 @@ protected:
 
 class VDTTextureD3D11 : protected VDTResourceD3D11 {
 public:
-	enum { kTypeD3DShaderResView = 'dsrv' };
+	enum { kTypeD3DShaderResView = "dsrv"_vdfcctypeid };
 
 protected:
 	friend class VDTContextD3D11;
@@ -715,6 +715,5 @@ protected:
 };
 
 bool VDTCreateContextD3D11(IVDTContext **ppctx);
-bool VDTCreateContextD3D11(ID3D11Device *dev, IVDTContext **ppctx);
 
 #endif	// f_D3D11_CONTEXT_D3D11_H

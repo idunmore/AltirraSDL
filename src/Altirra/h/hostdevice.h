@@ -26,7 +26,7 @@ class IATUIRenderer;
 
 class IATHostDeviceEmulator : public IVDUnknown {
 public:
-	enum { kTypeID = 'ahdv' };
+	enum { kTypeID = "ahdv"_vdfcctypeid };
 
 	virtual bool IsReadOnly() const = 0;
 	virtual void SetReadOnly(bool enabled) = 0;

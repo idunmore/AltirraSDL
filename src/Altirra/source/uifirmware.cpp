@@ -477,7 +477,7 @@ namespace {
 	};
 
 	VDStringW BrowseForFirmware(VDDialogFrameW32 *parent) {
-		return VDGetLoadFileName('ROMI', (VDGUIHandle)parent->GetWindowHandle(), L"Browse for ROM image", L"ROM image\0*.rom;*.bin;*.epr;*.epm\0All files\0*.*\0", NULL);
+		return VDGetLoadFileName("ROMI"_vdfcctypeid, (VDGUIHandle)parent->GetWindowHandle(), L"Browse for ROM image", L"ROM image\0*.rom;*.bin;*.epr;*.epm\0All files\0*.*\0", NULL);
 	}
 }
 

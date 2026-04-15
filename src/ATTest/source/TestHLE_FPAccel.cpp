@@ -42,7 +42,6 @@ namespace {
 
 int ATTestHelper_HLE_FPAccel(bool bench, bool check) {
 	using namespace ATKernelSymbols;
-	using AccelFn = void(*)(IATFPAccelContext& ctx);
 
 	int errors = 0;
 

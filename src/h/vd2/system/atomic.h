@@ -26,6 +26,16 @@
 #ifndef f_VD2_SYSTEM_ATOMIC_H
 #define f_VD2_SYSTEM_ATOMIC_H
 
+// AltirraSDL: this header has been rewritten on the fork to use C++11
+// <atomic> primitives (std::atomic<T>). Upstream still uses MSVC
+// _Interlocked* / GCC-Clang __sync_* intrinsic branches; upstream's
+// test9 portability tweak (renaming VD_COMPILER_CLANG ->
+// VD_COMPILER_CLANG_OR_GCC in the intrinsic branches) does not apply
+// here because those branches no longer exist. The std::atomic version
+// is portable across MSVC, GCC, Clang, Apple Clang and the Android NDK
+// without per-compiler #if blocks, which is the goal upstream's macro
+// rename was working towards.
+
 #include <atomic>
 #include <vd2/system/vdtypes.h>
 

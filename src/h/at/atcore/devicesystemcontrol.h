@@ -82,7 +82,7 @@ public:
 
 class IATDeviceSystemControl {
 public:
-	enum : uint32 { kTypeID = 'dscn' };
+	enum : uint32 { kTypeID = "dscn"_vdfcctypeid };
 
 	virtual void InitSystemControl(IATSystemController *sysctrl) = 0;
 	virtual void SetROMLayers(
@@ -104,7 +104,7 @@ public:
 
 class IATDeviceCovoxControl {
 public:
-	enum : uint32 { kTypeID = 'dscv' };
+	enum : uint32 { kTypeID = "dscv"_vdfcctypeid };
 
 	virtual void InitCovoxControl(IATCovoxController& controller) = 0;
 };

@@ -17,79 +17,35 @@
 
 #include <stdafx.h>
 #include <at/atcore/propertyset.h>
-#include <at/atnativeui/dialog.h>
-#include <at/atnativeui/uiproxies.h>
-#include "resource.h"
-#include "simulator.h"
-#include "rs232.h"
 #include "uiconfgeneric.h"
 
-extern ATSimulator g_sim;
-
-class ATUIDialogDevice850 : public VDDialogFrameW32 {
-public:
-	ATUIDialogDevice850(ATPropertySet& props);
-
-protected:
-	bool OnLoaded();
-	void OnDataExchange(bool write);
-
-	ATPropertySet& mPropSet;
-	VDUIProxyComboBoxControl mComboSioModes;
-
-	static const wchar_t *const kSioEmuModes[];
-};
-
-const wchar_t *const ATUIDialogDevice850::kSioEmuModes[]={
-	L"None - Emulated R: handler only",
-	L"Minimal - Emulated R: handler + stub loader only",
-	L"Full - SIO protocol and 6502 R: handler",
-};
-
-ATUIDialogDevice850::ATUIDialogDevice850(ATPropertySet& props)
-	: VDDialogFrameW32(IDD_SERIAL_PORTS)
-	, mPropSet(props)
-{
-}
-
-bool ATUIDialogDevice850::OnLoaded() {
-	AddProxy(&mComboSioModes, IDC_SIOLEVEL);
-
-	for(size_t i=0; i<vdcountof(kSioEmuModes); ++i)
-		mComboSioModes.AddItem(kSioEmuModes[i]);
-
-	return VDDialogFrameW32::OnLoaded();
-}
-
-void ATUIDialogDevice850::OnDataExchange(bool write) {
-	if (write) {
-		mPropSet.Clear();
-		
-		if (IsButtonChecked(IDC_DISABLE_THROTTLING))
-			mPropSet.SetBool("unthrottled", true);
-
-		if (IsButtonChecked(IDC_EXTENDED_BAUD_RATES))
-			mPropSet.SetBool("baudex", true);
-
-		int sioLevel = mComboSioModes.GetSelection();
-		if (sioLevel >= 0 && sioLevel < kAT850SIOEmulationLevelCount)
-			mPropSet.SetUint32("emulevel", (uint32)sioLevel);
-	} else {
-		uint32 level = mPropSet.GetUint32("emulevel", 0);
-		if (level >= kAT850SIOEmulationLevelCount)
-			level = 0;
-
-		mComboSioModes.SetSelection(level);
-
-		CheckButton(IDC_DISABLE_THROTTLING, mPropSet.GetBool("unthrottled", false));
-		CheckButton(IDC_EXTENDED_BAUD_RATES, mPropSet.GetBool("baudex", false));
-	}
-}
-
 bool ATUIConfDev850(VDGUIHandle h, ATPropertySet& props) {
-	ATUIDialogDevice850 dlg(props);
+	return ATUIShowDialogGenericConfig(h,
+		props,
+		L"850 Interface Module (full emulation) Options",
+		[](IATUIConfigView& view) {
+			view.AddCheckbox()
+				.SetLabel(L"Baud rate")
+				.SetTag("baudex")
+				.SetDefault(false)
+				.SetText(L"Enable e&xtended baud rate support (57600, 115K, 230K baud)");
 
-	return dlg.ShowDialog(h) != 0;
+			view.AddCheckbox()
+				.SetTag("unthrottled")
+				.SetText(L"Disable serial port t&hrottling")
+				.SetDefault(false);
+
+			view.AddVerticalSpace();
+
+			view.AddIntDropDown()
+				.SetLabel(L"SIO emulation")
+				.SetTag("emulevel")
+				.AddChoice(0, L"None - Emulated R: handler only")
+				.AddChoice(1, L"Minimal - Emulated R: handler + stub loader only")
+				.AddChoice(2, L"Full - SIO protocol and 6502 R: handler")
+				.SetValue(0);
+		}
+	);
 }
 
 ////////////////////////////////////////////////////////////////////////////////

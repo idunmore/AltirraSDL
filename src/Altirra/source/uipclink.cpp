@@ -73,7 +73,7 @@ bool ATUIDialogPCLink::OnCommand(uint32 id, uint32 extcode) {
 	switch(id) {
 		case IDC_BROWSE:
 			{
-				VDStringW s(VDGetDirectory('pclk', (VDGUIHandle)mhdlg, L"Select base directory"));
+				VDStringW s(VDGetDirectory("pclk"_vdfcctypeid, (VDGUIHandle)mhdlg, L"Select base directory"));
 				if (!s.empty())
 					SetControlText(IDC_PATH, s.c_str());
 			}

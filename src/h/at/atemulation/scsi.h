@@ -28,7 +28,7 @@ public:
 
 class IATSCSIDevice : public IVDRefUnknown {
 public:
-	enum { kTypeID = 'scdv' };
+	enum { kTypeID = "scdv"_vdfcctypeid };
 
 	virtual void Attach(ATSCSIBusEmulator *bus) = 0;
 	virtual void Detach() = 0;

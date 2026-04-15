@@ -45,7 +45,7 @@ class ATSlightSIDEmulator final : public VDAlignedObject<16>, public IATSyncAudi
 	ATSlightSIDEmulator(const ATSlightSIDEmulator&) = delete;
 	ATSlightSIDEmulator& operator=(const ATSlightSIDEmulator&) = delete;
 public:
-	enum { kTypeID = 'ssid' };
+	enum { kTypeID = "ssid"_vdfcctypeid };
 
 	ATSlightSIDEmulator();
 	~ATSlightSIDEmulator();

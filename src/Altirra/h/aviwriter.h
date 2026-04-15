@@ -46,7 +46,7 @@ struct AVIStreamHeader_fixed {
 
 class IVDMediaOutputStream : public IVDUnknown {
 public:
-	enum { kTypeID = 'mots' };
+	enum { kTypeID = "mots"_vdfcctypeid };
 
 	virtual ~IVDMediaOutputStream() {}		// shouldn't be here but need to get rid of common delete in root destructor
 
@@ -74,7 +74,7 @@ public:
 
 class VDINTERFACE IVDMediaOutput : public IVDUnknown {
 public:
-	enum { kTypeID = 'mout' };
+	enum { kTypeID = "mout"_vdfcctypeid };
 
 	virtual ~IVDMediaOutput() {}
 

@@ -119,7 +119,7 @@ void ATDeviceExeLoader::Load(const wchar_t *path) {
 		len32 = (uint32)len;
 		newData.resize(len32);
 
-		f.read(newData.data(), (long)len32);
+		f.read(newData.data(), (sint32)len32);
 		f.close();
 	}
 

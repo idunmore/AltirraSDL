@@ -20,7 +20,7 @@
 #include <wincodec.h>
 #include <shellapi.h>
 #include <shlwapi.h>
-#include <shlobj_core.h>
+#include <shlobj.h>
 #include <vd2/system/error.h>
 #include <vd2/system/file.h>
 #include <vd2/system/filesys.h>
@@ -271,7 +271,7 @@ void ATLoadFrame(VDPixmapBuffer& px, const wchar_t *filename) {
 		throw MyError("File is too large to load.");
 
 	vdblock<unsigned char> buf((uint32)size);
-	f.read(buf.data(), (long)size);
+	f.read(buf.data(), (sint32)size);
 	f.close();
 
 	ATLoadFrameFromMemory(px, buf.data(), size);

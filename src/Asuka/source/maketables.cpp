@@ -61,7 +61,7 @@ void tool_maketables(const vdfastvector<const char *>& args, const vdfastvector<
 	fputs("\n", f);
 
 	fputs("#ifdef _M_IX86\n", f);
-	fputs("extern \"C\" const __declspec(align(16)) sint16 kVDCubicInterpTableFX14_075_MMX[256][8]={\n", f);
+	fputs("extern \"C\" alignas(16) const sint16 kVDCubicInterpTableFX14_075_MMX[256][8]={\n", f);
 	{
 		static const double A = -0.75;
 

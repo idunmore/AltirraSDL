@@ -28,7 +28,7 @@ class IVDRandomAccessStream;
 
 class VDINTERFACE IATBlobImage : public IATImage {
 public:
-	enum : uint32 { kTypeID = 'blim' };
+	enum : uint32 { kTypeID = "blim"_vdfcctypeid };
 
 	virtual uint32 GetSize() const = 0;
 	virtual const void *GetBuffer() const = 0;

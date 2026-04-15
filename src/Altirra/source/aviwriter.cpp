@@ -101,22 +101,22 @@ typedef struct _avistdindex_chunk {
 ///////////////////////////////////////////////////////////////////////////
 
 namespace {
-	const uint32	kChunkID_RIFF		= 'FFIR';		// RIFF: file format chunk
-	const uint32	kChunkID_LIST		= 'TSIL';		// LIST: encapsulation chunk
-	const uint32	kChunkID_AVI		= ' IVA';		// AVI : AVI format tag
-	const uint32	kChunkID_AVIX		= 'XIVA';		// AVI : AVI format tag
-	const uint32	kChunkID_movi		= 'ivom';		// movi: main data chunk
-	const uint32	kChunkID_hdrl		= 'lrdh';		// hdrl: header LIST
-	const uint32	kChunkID_odml		= 'lmdo';		// odml: OpenDML header LIST
-	const uint32	kChunkID_dmlh		= 'hlmd';		// dmlh: OpenDML header
-	const uint32	kChunkID_JUNK		= 'KNUJ';		// JUNK: padding
-	const uint32	kChunkID_avih		= 'hiva';		// avih: AVI header
-	const uint32	kChunkID_strl		= 'lrts';		// strl: stream LIST
-	const uint32	kChunkID_strh		= 'hrts';		// strh: stream header
-	const uint32	kChunkID_strf		= 'frts';		// strf: stream format
-	const uint32	kChunkID_idx1		= '1xdi';		// idx1: AVI1 index chunk
-	const uint32	kChunkID_indx		= 'xdni';		// indx: AVI2 index chunk
-	const uint32	kChunkID_segm		= 'mges';		// segm: VirtualDub segment chain chunk
+	const uint32	kChunkID_RIFF		= "FFIR"_vdfcctypeid;		// RIFF: file format chunk
+	const uint32	kChunkID_LIST		= "TSIL"_vdfcctypeid;		// LIST: encapsulation chunk
+	const uint32	kChunkID_AVI		= " IVA"_vdfcctypeid;		// AVI : AVI format tag
+	const uint32	kChunkID_AVIX		= "XIVA"_vdfcctypeid;		// AVI : AVI format tag
+	const uint32	kChunkID_movi		= "ivom"_vdfcctypeid;		// movi: main data chunk
+	const uint32	kChunkID_hdrl		= "lrdh"_vdfcctypeid;		// hdrl: header LIST
+	const uint32	kChunkID_odml		= "lmdo"_vdfcctypeid;		// odml: OpenDML header LIST
+	const uint32	kChunkID_dmlh		= "hlmd"_vdfcctypeid;		// dmlh: OpenDML header
+	const uint32	kChunkID_JUNK		= "KNUJ"_vdfcctypeid;		// JUNK: padding
+	const uint32	kChunkID_avih		= "hiva"_vdfcctypeid;		// avih: AVI header
+	const uint32	kChunkID_strl		= "lrts"_vdfcctypeid;		// strl: stream LIST
+	const uint32	kChunkID_strh		= "hrts"_vdfcctypeid;		// strh: stream header
+	const uint32	kChunkID_strf		= "frts"_vdfcctypeid;		// strf: stream format
+	const uint32	kChunkID_idx1		= "1xdi"_vdfcctypeid;		// idx1: AVI1 index chunk
+	const uint32	kChunkID_indx		= "xdni"_vdfcctypeid;		// indx: AVI2 index chunk
+	const uint32	kChunkID_segm		= "mges"_vdfcctypeid;		// segm: VirtualDub segment chain chunk
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -241,8 +241,8 @@ private:
 	typedef std::map<uint32, VDStringA> tTextInfo;
 	tTextInfo	mTextInfo;
 
-	void		HeaderWrite(const void *data, long len);
-	uint32		HeaderWriteChunk(uint32 ckid, const void *data, long len);
+	void		HeaderWrite(const void *data, sint32 len);
+	uint32		HeaderWriteChunk(uint32 ckid, const void *data, sint32 len);
 	uint32		HeaderBeginList(uint32 ckid);
 	void		HeaderEndList(uint32 pos);
 	void		HeaderFlush();
@@ -692,7 +692,7 @@ bool AVIOutputFile::init(const wchar_t *szFile) {
 	// write out segment hint block
 
 	if (!mSegmentHint.empty())
-		mSegmentHintPos = HeaderWriteChunk(kChunkID_segm, &mSegmentHint[0], (long)mSegmentHint.size());
+		mSegmentHintPos = HeaderWriteChunk(kChunkID_segm, &mSegmentHint[0], (sint32)mSegmentHint.size());
 
 	HeaderEndList(hdrl_pos);
 
@@ -838,7 +838,7 @@ void AVIOutputFile::finalize() {
 
 	if (!mSegmentHint.empty()) {
 		HeaderSeek(mSegmentHintPos+8);
-		HeaderWrite(mSegmentHint.data(), (long)mSegmentHint.size());
+		HeaderWrite(mSegmentHint.data(), (sint32)mSegmentHint.size());
 	}
 
 	HeaderFlush();
@@ -861,7 +861,7 @@ uint32 AVIOutputFile::bufferStatus(uint32 *lplBufferSize) {
 
 ////////////////////////////
 
-void AVIOutputFile::HeaderWrite(const void *data, long len) {
+void AVIOutputFile::HeaderWrite(const void *data, sint32 len) {
 	uint32 cursize = (uint32)mHeaderBlock.size();
 
 	if (mHeaderPosition < cursize)
@@ -896,7 +896,7 @@ void AVIOutputFile::HeaderEndList(uint32 pos) {
 	HeaderSeek(currentPos);
 }
 
-uint32 AVIOutputFile::HeaderWriteChunk(uint32 ckid, const void *data, long len) {
+uint32 AVIOutputFile::HeaderWriteChunk(uint32 ckid, const void *data, sint32 len) {
 	uint32 dw[2];
 
 	dw[0] = ckid;
@@ -1127,7 +1127,7 @@ void AVIOutputFile::BlockClose() {
 				uint32 ckid;
 				uint32 size;
 				uint32 listid;
-			} infoList = { (uint32)'TSIL', (uint32)mTextInfoListSize, (uint32)'OFNI' };
+			} infoList = { (uint32)"TSIL"_vdfcctypeid, (uint32)mTextInfoListSize, (uint32)"OFNI"_vdfcctypeid };
 
 			FastWrite(&infoList, 12);
 
@@ -1140,7 +1140,7 @@ void AVIOutputFile::BlockClose() {
 					uint16	wLanguageCode;
 					uint16	wDialect;
 				} csetData = {
-					(uint32)'TESC',
+					(uint32)"TESC"_vdfcctypeid,
 					8,
 					(uint16)mTextInfoCodePage,
 					(uint16)mTextInfoCountryCode,

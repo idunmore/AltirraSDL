@@ -58,7 +58,7 @@ class ATPIAEmulator final : public IATDevicePIA {
 	ATPIAEmulator(const ATPIAEmulator&) = delete;
 	ATPIAEmulator& operator=(const ATPIAEmulator&) = delete;
 public:
-	enum : uint32 { kTypeID = 'PIA ' };
+	enum : uint32 { kTypeID = "PIA "_vdfcctypeid };
 
 	ATPIAEmulator();
 	~ATPIAEmulator();

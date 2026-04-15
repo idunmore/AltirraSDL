@@ -16,6 +16,7 @@
 
 #include <stdafx.h>
 #include <combaseapi.h>
+#include <propsys.h>
 #include <propvarutil.h>
 #include <UIAutomation.h>
 #include <vd2/system/binary.h>
@@ -115,6 +116,11 @@ private:
 	const vdrefptr<ATUIDisplayAccessibilityProviderW32> mpParent;
 };
 
+#ifdef VD_COMPILER_GCC
+class ATUIDisplayTextRangeProviderW32;
+__CRT_UUID_DECL(ATUIDisplayTextRangeProviderW32, 0x649B28C1, 0x57BB, 0x4212, 0x90, 0x8E, 0xD4, 0xED, 0x9C, 0x84, 0xC2, 0xDE);
+#endif
+
 class __declspec(uuid("{649B28C1-57BB-4212-908E-D4ED9C84C2DE}")) ATUIDisplayTextRangeProviderW32 final : public ATCOMQIW32<ATCOMBaseW32<ITextRangeProvider>, ITextRangeProvider, IUnknown, ATUIDisplayTextRangeProviderW32> {
 public:
 	ATUIDisplayTextRangeProviderW32(const ATUIDisplayAccessibilityTextPoint& start, const ATUIDisplayAccessibilityTextPoint& end, ATUIDisplayAccessibilityProviderW32& parent);
@@ -200,7 +206,7 @@ HRESULT STDMETHODCALLTYPE ATUIDisplayAccessibilityProviderW32::get_ProviderOptio
 		return E_POINTER;
 
 	// Must allow this to be called even when detached.
-	*pRetVal = ProviderOptions_ServerSideProvider | ProviderOptions_UseComThreading;
+	*pRetVal = static_cast<ProviderOptions>(ProviderOptions_ServerSideProvider | ProviderOptions_UseComThreading);
 	return S_OK;
 }
 

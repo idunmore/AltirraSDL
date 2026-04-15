@@ -76,7 +76,7 @@ public:
 
 	static const size_type npos = (size_type)-1;
 
-	[[nodiscard]] vdnothrow VDStringSpanA() vdnoexcept
+	[[nodiscard]] vdnothrow constexpr VDStringSpanA() vdnoexcept
 		: mpBegin(const_cast<value_type *>(sNull))
 		, mpEnd(const_cast<value_type *>(sNull))
 	{

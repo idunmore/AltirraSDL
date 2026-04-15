@@ -10,7 +10,7 @@ class VDDisplayCachedImageSoft : public vdrefcounted<IVDRefUnknown>, public vdli
 	VDDisplayCachedImageSoft(const VDDisplayCachedImageSoft&);
 	VDDisplayCachedImageSoft& operator=(const VDDisplayCachedImageSoft&);
 public:
-	enum { kTypeID = 'cimS' };
+	enum { kTypeID = "cimS"_vdfcctypeid };
 
 	VDDisplayCachedImageSoft();
 	~VDDisplayCachedImageSoft();

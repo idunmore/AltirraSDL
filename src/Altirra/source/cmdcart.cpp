@@ -40,7 +40,7 @@ void OnCommandAttachCartridge(bool cart2) {
 	if (!ATUIConfirmCartridgeChangeReset())
 		return;
 
-	VDStringW fn(VDGetLoadFileName('cart', ATUIGetNewPopupOwner(), L"Load cartridge",
+	VDStringW fn(VDGetLoadFileName("cart"_vdfcctypeid, ATUIGetNewPopupOwner(), L"Load cartridge",
 		g_ATUIFileFilter_LoadCartridge,
 		L"bin"));
 
@@ -135,7 +135,7 @@ void OnCommandSaveCartridge() {
 
 	int optval[1]={0};
 
-	VDStringW fn(VDGetSaveFileName('cart', ATUIGetNewPopupOwner(), L"Save cartridge",
+	VDStringW fn(VDGetSaveFileName("cart"_vdfcctypeid, ATUIGetNewPopupOwner(), L"Save cartridge",
 		L"Cartridge image with header (*.car)\0*.car\0"
 		L"Raw cartridge image (*.bin,*.rom)\0*.bin;*.rom\0",
 

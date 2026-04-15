@@ -210,16 +210,16 @@ sint64 VDFile::size() const {
 	return (sint64)st.st_size;
 }
 
-void VDFile::read(void *buffer, long length) {
+void VDFile::read(void *buffer, sint32 length) {
 	if (readData(buffer, length) != length)
 		ThrowReadError(mpFilename, EIO);
 }
 
-long VDFile::readData(void *buffer, long length) {
+sint32 VDFile::readData(void *buffer, sint32 length) {
 	if (length <= 0) return 0;
 
 	uint8 *dst = (uint8 *)buffer;
-	long total = 0;
+	sint32 total = 0;
 
 	while (total < length) {
 		ssize_t n = ::read(mhFile, dst + total, (size_t)(length - total));
@@ -228,23 +228,23 @@ long VDFile::readData(void *buffer, long length) {
 			ThrowReadError(mpFilename, errno);
 		}
 		if (n == 0) break; // EOF
-		total += (long)n;
+		total += (sint32)n;
 	}
 
 	mFilePosition += total;
 	return total;
 }
 
-void VDFile::write(const void *buffer, long length) {
+void VDFile::write(const void *buffer, sint32 length) {
 	if (writeData(buffer, length) != length)
 		ThrowWriteError(mpFilename, EIO);
 }
 
-long VDFile::writeData(const void *buffer, long length) {
+sint32 VDFile::writeData(const void *buffer, sint32 length) {
 	if (length <= 0) return 0;
 
 	const uint8 *src = (const uint8 *)buffer;
-	long total = 0;
+	sint32 total = 0;
 
 	while (total < length) {
 		ssize_t n = ::write(mhFile, src + total, (size_t)(length - total));
@@ -252,7 +252,7 @@ long VDFile::writeData(const void *buffer, long length) {
 			if (errno == EINTR) continue;
 			ThrowWriteError(mpFilename, errno);
 		}
-		total += (long)n;
+		total += (sint32)n;
 	}
 
 	mFilePosition += total;

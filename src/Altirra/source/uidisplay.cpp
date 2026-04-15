@@ -650,8 +650,8 @@ void ATUIInitManager() {
 	g_pATVideoDisplayWindow->AddRef();
 
 	ATDeviceManager& devMgr = *g_sim.GetDeviceManager();
-	g_pATVideoDisplayWindow->Init(*g_sim.GetEventManager(), *devMgr.GetService<IATDeviceVideoManager>());
 	g_ATUIManager.GetMainWindow()->AddChild(g_pATVideoDisplayWindow);
+	g_pATVideoDisplayWindow->Init(*g_sim.GetEventManager(), *devMgr.GetService<IATDeviceVideoManager>());
 	g_pATVideoDisplayWindow->SetPlacementFill();
 
 	g_sim.GetUIRenderer()->SetUIManager(&g_ATUIManager);

@@ -32,7 +32,7 @@ IVDUIHotKeyExControl *VDGetUIHotKeyExControl(VDGUIHandle h);
 
 class IVDUIHotKeyExControl : public IVDRefUnknown {
 public:
-	enum { kTypeID = 'uihk' };
+	enum { kTypeID = "uihk"_vdfcctypeid };
 
 	virtual void CaptureAnyNextKey() = 0;
 	virtual void SetCookedMode(bool enable) = 0;

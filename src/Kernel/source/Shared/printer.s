@@ -70,7 +70,7 @@ put_entry:
 	
 	;if we wrote an EOL, force flush now
 	cmp		#$9b
-	beq		fill_spaces
+	beq		fill_loop_entry
 			
 	;check for end of line and flush if so
 	cpx		pbufsz
@@ -96,11 +96,11 @@ close_entry:
 .endif
 
 	;fill remainder of buffer with spaces
-fill_spaces:
-	lda		#$20
 fill_loop:
+	lda		#$20
 	sta		prnbuf,x
 	inx
+fill_loop_entry:
 	cpx		pbufsz
 	bcc		fill_loop
 fill_done:

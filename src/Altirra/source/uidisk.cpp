@@ -1049,7 +1049,7 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 				if (!ConfirmEject(driveIndex))
 					return true;
 
-				VDStringW s(VDGetLoadFileName('disk', (VDGUIHandle)mhdlg, L"Load disk image",
+				VDStringW s(VDGetLoadFileName("disk"_vdfcctypeid, (VDGUIHandle)mhdlg, L"Load disk image",
 					g_ATUIFileFilter_DiskWithArchives,
 					L"atr"));
 
@@ -1205,7 +1205,7 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 					case ID_CONTEXT_MOUNTFOLDERDOS2:
 					case ID_CONTEXT_MOUNTFOLDERSDFS:
 						if (ConfirmEject(driveIndex)) {
-							const VDStringW& path = VDGetDirectory('vfol', (VDGUIHandle)mhdlg, L"Select folder for virtual disk image");
+							const VDStringW& path = VDGetDirectory("vfol"_vdfcctypeid, (VDGUIHandle)mhdlg, L"Select folder for virtual disk image");
 
 							if (!path.empty()) {
 								try {
@@ -1228,9 +1228,9 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 								if (image->GetBootSectorCount() != 3) {
 									throw MyError("The currently mounted disk image does not have standard DOS boot sectors.");
 								} else {
-									VDSetLastLoadSaveFileName('bsec', L"$dosboot.bin");
+									VDSetLastLoadSaveFileName("bsec"_vdfcctypeid, L"$dosboot.bin");
 									VDStringW s(VDGetSaveFileName(
-											'bsec',
+											"bsec"_vdfcctypeid,
 											(VDGUIHandle)mhdlg,
 											L"Save boot sectors",
 											L"Virtual disk boot sectors file\0$dosboot.bin\0All files\0*.*\0",
@@ -1285,7 +1285,7 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 							int optVals[1] = { 0 };
 
 							VDStringW s(VDGetSaveFileName(
-									'disk',
+									"disk"_vdfcctypeid,
 									(VDGUIHandle)mhdlg,
 									L"Save disk image",
 									L"Atari disk image (*.atr)\0*.atr\0"

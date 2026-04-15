@@ -420,9 +420,9 @@ bool ATConsoleConfirmScriptLoad() {
 
 void ATConsoleRequestFile(ATDebuggerRequestFileEvent& event) {
 	if (event.mbSave)
-		event.mPath = VDGetSaveFileName('dbgr', ATUIGetNewPopupOwner(), L"Select file to write for debugger command", L"All files\0*.*\0", nullptr);
+		event.mPath = VDGetSaveFileName("dbgr"_vdfcctypeid, ATUIGetNewPopupOwner(), L"Select file to write for debugger command", L"All files\0*.*\0", nullptr);
 	else
-		event.mPath = VDGetLoadFileName('dbgr', ATUIGetNewPopupOwner(), L"Select file to read for debugger command", L"All files\0*.*\0", nullptr);
+		event.mPath = VDGetLoadFileName("dbgr"_vdfcctypeid, ATUIGetNewPopupOwner(), L"Select file to read for debugger command", L"All files\0*.*\0", nullptr);
 }
 
 void ATInitUIPanes() {

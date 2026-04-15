@@ -34,7 +34,7 @@ class VDDisplayCachedImage3D : public vdrefcounted<IVDRefUnknown>, public vdlist
 	VDDisplayCachedImage3D(const VDDisplayCachedImage3D&) = delete;
 	VDDisplayCachedImage3D& operator=(const VDDisplayCachedImage3D&) = delete;
 public:
-	enum { kTypeID = 'cim3' };
+	enum { kTypeID = "cim3"_vdfcctypeid };
 
 	VDDisplayCachedImage3D();
 	~VDDisplayCachedImage3D();

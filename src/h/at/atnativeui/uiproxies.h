@@ -917,6 +917,8 @@ public:
 	void SetOnClicked(vdfunction<void()> fn);
 	void SetOnClickedWithUrl(vdfunction<void(const wchar_t *)> fn);
 
+	sint32 GetIdealHeightForWidth(sint32 w) const;
+
 private:
 	VDZLRESULT On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam) override;
 

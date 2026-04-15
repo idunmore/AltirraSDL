@@ -16,55 +16,23 @@
 
 #include <stdafx.h>
 #include <at/atcore/propertyset.h>
-#include <at/atnativeui/dialog.h>
-#include <at/atnativeui/uiproxies.h>
-#include "resource.h"
-
-class ATUIDialogDeviceXEP80 : public VDDialogFrameW32 {
-public:
-	ATUIDialogDeviceXEP80(ATPropertySet& props);
-
-protected:
-	bool OnLoaded();
-	void OnDataExchange(bool write);
-
-	ATPropertySet& mPropSet;
-	VDUIProxyComboBoxControl mComboJoyPort;
-};
-
-ATUIDialogDeviceXEP80::ATUIDialogDeviceXEP80(ATPropertySet& props)
-	: VDDialogFrameW32(IDD_DEVICE_XEP80)
-	, mPropSet(props)
-{
-}
-
-bool ATUIDialogDeviceXEP80::OnLoaded() {
-	AddProxy(&mComboJoyPort, IDC_PORT);
-
-	mComboJoyPort.AddItem(L"Port 1");
-	mComboJoyPort.AddItem(L"Port 2 (default)");
-	mComboJoyPort.AddItem(L"Port 3 (400/800 only)");
-	mComboJoyPort.AddItem(L"Port 4 (400/800 only)");
-
-	mComboJoyPort.SetSelection(1);
-
-	return VDDialogFrameW32::OnLoaded();
-}
-
-void ATUIDialogDeviceXEP80::OnDataExchange(bool write) {
-	if (write) {
-		mPropSet.Clear();
-
-		if (mComboJoyPort.GetSelection() >= 0)
-			mPropSet.SetUint32("port", (mComboJoyPort.GetSelection() & 3) + 1);
-	} else {
-		// default to port 2
-		mComboJoyPort.SetSelection(std::clamp<uint32>(mPropSet.GetUint32("port", 2) - 1, 0, 3));
-	}
-}
+#include "uiconfgeneric.h"
 
 bool ATUIConfDevXEP80(VDGUIHandle hParent, ATPropertySet& props) {
-	ATUIDialogDeviceXEP80 dlg(props);
-
-	return dlg.ShowDialog(hParent) != 0;
+	return ATUIShowDialogGenericConfig(
+		hParent,
+		props,
+		L"XEP80 Options",
+		[](IATUIConfigView& view) {
+			view.AddIntDropDown()
+				.AddChoice(1, L"Port 1")
+				.AddChoice(2, L"Port 2 (default)")
+				.AddChoice(3, L"Port 3 (400/800 only)")
+				.AddChoice(4, L"Port 4 (400/800 only)")
+				.SetDefault(2, true)
+				.SetValue(2)
+				.SetLabel(L"&Controller Port")
+				.SetTag("port");
+		}
+	);
 }

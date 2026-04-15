@@ -1,5 +1,5 @@
 //	Altirra - Atari 800/800XL/5200 emulator
-//	Copyright (C) 2009-2016 Avery Lee
+//	Copyright (C) 2009-2026 Avery Lee
 //
 //	This program is free software; you can redistribute it and/or modify
 //	it under the terms of the GNU General Public License as published by
@@ -11,58 +11,25 @@
 //	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 //	GNU General Public License for more details.
 //
-//	You should have received a copy of the GNU General Public License
-//	along with this program; if not, write to the Free Software
-//	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+//	You should have received a copy of the GNU General Public License along
+//	with this program. If not, see <http://www.gnu.org/licenses/>.
 
 #include <stdafx.h>
 #include <at/atcore/propertyset.h>
-#include <at/atnativeui/dialog.h>
-#include <at/atnativeui/uiproxies.h>
-#include "resource.h"
-
-class ATUIDialogDeviceMyIDE2 : public VDDialogFrameW32 {
-public:
-	ATUIDialogDeviceMyIDE2(ATPropertySet& props);
-
-protected:
-	bool OnLoaded();
-	void OnDataExchange(bool write);
-
-	ATPropertySet& mPropSet;
-	VDUIProxyComboBoxControl mComboVersion;
-};
-
-ATUIDialogDeviceMyIDE2::ATUIDialogDeviceMyIDE2(ATPropertySet& props)
-	: VDDialogFrameW32(IDD_DEVICE_MYIDE2)
-	, mPropSet(props)
-{
-}
-
-bool ATUIDialogDeviceMyIDE2::OnLoaded() {
-	AddProxy(&mComboVersion, IDC_VERSION);
-
-	mComboVersion.AddItem(L"Original");
-	mComboVersion.AddItem(L"Updated CPLD with video playback window");
-
-	mComboVersion.SetSelection(0);
-
-	return VDDialogFrameW32::OnLoaded();
-}
-
-void ATUIDialogDeviceMyIDE2::OnDataExchange(bool write) {
-	if (write) {
-		mPropSet.Clear();
-
-		if (mComboVersion.GetSelection() == 1)
-			mPropSet.SetUint32("cpldver", 2);
-	} else {
-		mComboVersion.SetSelection(mPropSet.GetUint32("cpldver") >= 2 ? 1 : 0);
-	}
-}
+#include "uiconfgeneric.h"
 
 bool ATUIConfDevMyIDE2(VDGUIHandle hParent, ATPropertySet& props) {
-	ATUIDialogDeviceMyIDE2 dlg(props);
-
-	return dlg.ShowDialog(hParent) != 0;
+	return ATUIShowDialogGenericConfig(
+		hParent,
+		props,
+		L"MyIDE-II Options",
+		[](IATUIConfigView& view) {
+			view.AddIntDropDown()
+				.AddChoice(0, L"Original")
+				.AddChoice(2, L"Updated CPLD with video playback window")
+				.SetDefault(0, true)
+				.SetLabel(L"&CPLD Version")
+				.SetTag("cpldver");
+		}
+	);
 }

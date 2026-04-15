@@ -141,8 +141,8 @@ private:
 	void MixMono(float *dst, const sint16 *src, uint32 n, float vol);
 	void MixStereo(float *dstL, float *dstR, const sint16 *src, uint32 n, float volumeL, float volumeR);
 
-	virtual uint64 MixMonoResample(float *dst, const sint16 *src, uint32 n, float vol, uint64 accum, uint64 step);
-	virtual uint64 MixStereoResample(float *dstL, float *dstR, const sint16 *src, uint32 n, float volumeL, float volumeR, uint64 accum, uint64 step);
+	uint64 MixMonoResample(float *dst, const sint16 *src, uint32 n, float vol, uint64 accum, uint64 step);
+	uint64 MixStereoResample(float *dstL, float *dstR, const sint16 *src, uint32 n, float volumeL, float volumeR, uint64 accum, uint64 step);
 
 	ATSoundId StartSound(Sound *s, IATAudioSoundGroup& soundGroup, uint64 startTime);
 	void FreeSound(Sound *s);

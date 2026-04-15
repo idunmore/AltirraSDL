@@ -38,6 +38,16 @@ namespace nsVDDisplay {
 	extern const TechniqueInfo g_technique_boxlinear_2_0;
 }
 
+// SEH is necessary to make dynamic buffer access stable with
+// XPDM drivers. GCC doesn't support _try/__except; GCC's problem.
+#ifdef VD_COMPILER_GCC
+	#define vd_d3d9_try if constexpr (true)
+	#define vd_d3d9_except else
+#else
+	#define vd_d3d9_try __try
+	#define vd_d3d9_except __except(1)
+#endif
+
 class VDDisplayRendererD3D9 final : public vdrefcounted<IVDDisplayRendererD3D9> {
 public:
 	bool Init(VDD3D9Manager *d3dmgr, IVDVideoDisplayDX9Manager *vidmgr) override;
@@ -204,13 +214,13 @@ void VDDisplayRendererD3D9::FillRect(sint32 x, sint32 y, sint32 w, sint32 h) {
 	y += mOffsetY;
 
 	bool valid = false;
-	__try {
+	vd_d3d9_try {
 		pvx[0].SetFF2((float)x,       (float)y,       mColor, 0, 0, 0, 0);
 		pvx[1].SetFF2((float)x,       (float)(y + h), mColor, 0, 0, 0, 0);
 		pvx[2].SetFF2((float)(x + w), (float)y,       mColor, 0, 0, 0, 0);
 		pvx[3].SetFF2((float)(x + w), (float)(y + h), mColor, 0, 0, 0, 0);
 		valid = true;
-	} __except(1) {
+	} vd_d3d9_except {
 		// lost device -> invalid dynamic pointer on XP - skip draw below
 	}
 
@@ -245,7 +255,8 @@ void VDDisplayRendererD3D9::MultiFillRect(const vdrect32 *rects, uint32 n) {
 		}
 
 		bool valid = false;
-		__try {
+
+		vd_d3d9_try {
 			for(uint32 i=0; i<c; ++i) {
 				vdrect32 r = *rects++;
 
@@ -271,7 +282,7 @@ void VDDisplayRendererD3D9::MultiFillRect(const vdrect32 *rects, uint32 n) {
 			}
 
 			valid = true;
-		} __except(1) {
+		} vd_d3d9_except {
 			// lost device -> invalid dynamic pointer on XP - skip draw below
 		}
 
@@ -303,13 +314,13 @@ void VDDisplayRendererD3D9::AlphaFillRect(sint32 x, sint32 y, sint32 w, sint32 h
 	y += mOffsetY;
 
 	bool valid = false;
-	__try {
+	vd_d3d9_try {
 		pvx[0].SetFF2((float)x,       (float)y,       alphaColor, 0, 0, 0, 0);
 		pvx[1].SetFF2((float)x,       (float)(y + h), alphaColor, 0, 0, 0, 0);
 		pvx[2].SetFF2((float)(x + w), (float)y,       alphaColor, 0, 0, 0, 0);
 		pvx[3].SetFF2((float)(x + w), (float)(y + h), alphaColor, 0, 0, 0, 0);
 		valid = true;
-	} __except(1) {
+	} vd_d3d9_except {
 		// lost device -> invalid dynamic pointer on XP - skip draw below
 	}
 
@@ -399,13 +410,13 @@ void VDDisplayRendererD3D9::Blt(sint32 x, sint32 y, VDDisplayImageView& imageVie
 		return;
 
 	bool valid = false;
-	__try {
+	vd_d3d9_try {
 		pvx[0].SetFF2((float)x,       (float)y,       mColor, u0, v0, 0, 0);
 		pvx[1].SetFF2((float)x,       (float)(y + h), mColor, u0, v1, 0, 0);
 		pvx[2].SetFF2((float)(x + w), (float)y,       mColor, u1, v0, 0, 0);
 		pvx[3].SetFF2((float)(x + w), (float)(y + h), mColor, u1, v1, 0, 0);
 		valid = true;
-	} __except(1) {
+	} vd_d3d9_except {
 		// lost device -> invalid dynamic pointer on XP - skip draw below
 	}
 
@@ -458,13 +469,13 @@ void VDDisplayRendererD3D9::Blt(sint32 x, sint32 y, VDDisplayImageView& imageVie
 		return;
 
 	bool valid = false;
-	__try {
+	vd_d3d9_try {
 		pvx[0].SetFF2((float)x,       (float)y,       mColor, u0, v0, 0, 0);
 		pvx[1].SetFF2((float)x,       (float)(y + h), mColor, u0, v1, 0, 0);
 		pvx[2].SetFF2((float)(x + w), (float)y,       mColor, u1, v0, 0, 0);
 		pvx[3].SetFF2((float)(x + w), (float)(y + h), mColor, u1, v1, 0, 0);
 		valid = true;
-	} __except(1) {
+	} vd_d3d9_except {
 		// lost device -> invalid dynamic pointer on XP - skip draw below
 	}
 
@@ -554,13 +565,13 @@ void VDDisplayRendererD3D9::StretchBlt(sint32 dx, sint32 dy, sint32 dw, sint32 d
 		nsVDD3D9::Vertex *pvx = mpD3DManager->LockVertices(4);
 		if (pvx) {
 			bool valid = false;
-			__try {
+			vd_d3d9_try {
 				pvx[0].SetFF2((float)dx,        (float)dy,        mColor, u0, v0, 0, 0);
 				pvx[1].SetFF2((float)dx,        (float)(dy + dh), mColor, u0, v1, 0, 0);
 				pvx[2].SetFF2((float)(dx + dw), (float)dy,        mColor, u1, v0, 0, 0);
 				pvx[3].SetFF2((float)(dx + dw), (float)(dy + dh), mColor, u1, v1, 0, 0);
 				valid = true;
-			} __except(1) {
+			} vd_d3d9_except {
 				// lost device -> invalid dynamic pointer on XP - skip draw below
 			}
 
@@ -632,7 +643,7 @@ void VDDisplayRendererD3D9::MultiBlt(const VDDisplayBlt *blts, uint32 n, VDDispl
 
 		bool valid = false;
 		uint32 rects = 0;
-		__try {
+		vd_d3d9_try {
 			for(uint32 i=0; i<n; ++i) {
 				const VDDisplayBlt& blt = blts[i];
 				sint32 x = blt.mDestX + mOffsetX;
@@ -677,7 +688,7 @@ void VDDisplayRendererD3D9::MultiBlt(const VDDisplayBlt *blts, uint32 n, VDDispl
 			}
 
 			valid = true;
-		} __except(1) {
+		} vd_d3d9_except {
 			// lost device -> invalid dynamic pointer on XP - skip draw below
 		}
 
@@ -720,7 +731,7 @@ void VDDisplayRendererD3D9::PolyLine(const vdpoint32 *points, uint32 numLines) {
 			break;
 
 		bool valid = false;
-		__try {
+		vd_d3d9_try {
 			for(uint32 i=0; i<=c; ++i) {
 				pvx[i].SetFF2((float)points[i].x + mOffsetX + 0.5f, (float)points[i].y + mOffsetY + 0.5f, mColor, 0, 0, 0, 0);
 			}
@@ -728,7 +739,7 @@ void VDDisplayRendererD3D9::PolyLine(const vdpoint32 *points, uint32 numLines) {
 			points += c;
 
 			valid = true;
-		} __except(1) {
+		} vd_d3d9_except {
 			// lost device -> invalid dynamic pointer on XP - skip draw below
 		}
 
@@ -763,7 +774,7 @@ void VDDisplayRendererD3D9::PolyLineF(const vdfloat2 *points, uint32 numLines, b
 			break;
 
 		bool valid = false;
-		__try {
+		vd_d3d9_try {
 			for(uint32 i=0; i<=c; ++i) {
 				pvx[i].SetFF2(points[i].x + offsetxf, points[i].y + offsetyf, mColor, 0, 0, 0, 0);
 			}
@@ -771,7 +782,7 @@ void VDDisplayRendererD3D9::PolyLineF(const vdfloat2 *points, uint32 numLines, b
 			points += c;
 
 			valid = true;
-		} __except(1) {
+		} vd_d3d9_except {
 			// lost device -> invalid dynamic pointer on XP - skip draw below
 		}
 

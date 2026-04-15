@@ -30,7 +30,7 @@ public:
 	virtual void WriteLogOutput(const char *s) = 0;
 };
 
-void VDCompilerWriteLogOutputF(IVDCompilerLogOutput& out, const char *format ...);
+void VDCompilerWriteLogOutputF(IVDCompilerLogOutput& out, const char *format, ...);
 
 namespace nsVDCompilerTokens {
 	enum VDCompilerToken {

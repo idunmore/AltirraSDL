@@ -289,7 +289,7 @@ void ATUIDialogCompatDBEditAlias::OnRemove() {
 }
 
 void ATUIDialogCompatDBEditAlias::OnFromFile() {
-	const VDStringW& fn = VDGetLoadFileName('cpif', (VDGUIHandle)mhdlg, L"Load image file for signatures", g_ATUIFileFilter_LoadCompatImageFile, nullptr);
+	const VDStringW& fn = VDGetLoadFileName("cpif"_vdfcctypeid, (VDGUIHandle)mhdlg, L"Load image file for signatures", g_ATUIFileFilter_LoadCompatImageFile, nullptr);
 
 	if (fn.empty())
 		return;
@@ -968,7 +968,7 @@ void ATUIDialogCompatDB::OnLoad() {
 	if (!ConfirmDiscard())
 		return;
 
-	const auto& path = VDGetLoadFileName('cpdb', (VDGUIHandle)mhdlg, L"Load compatibility database", L"Altirra CompatDB (*.atcompatdb)\0*.atcompatdb\0", L"atcompatdb");
+	const auto& path = VDGetLoadFileName("cpdb"_vdfcctypeid, (VDGUIHandle)mhdlg, L"Load compatibility database", L"Altirra CompatDB (*.atcompatdb)\0*.atcompatdb\0", L"atcompatdb");
 	
 	if (!path.empty()) {
 		try {
@@ -995,7 +995,7 @@ void ATUIDialogCompatDB::OnSave() {
 }
 
 void ATUIDialogCompatDB::OnSaveAs() {
-	const auto& path = VDGetSaveFileName('cpdb', (VDGUIHandle)mhdlg, L"Save compatibility database", L"Altirra CompatDB (*.atcompatdb)\0*.atcompatdb\0", L"atcompatdb");
+	const auto& path = VDGetSaveFileName("cpdb"_vdfcctypeid, (VDGUIHandle)mhdlg, L"Save compatibility database", L"Altirra CompatDB (*.atcompatdb)\0*.atcompatdb\0", L"atcompatdb");
 	
 	if (!path.empty()) {
 		try {
@@ -1034,7 +1034,7 @@ void ATUIDialogCompatDB::OnCompileTo() {
 			return;
 	}
 
-	const auto& path = VDGetSaveFileName('cpdc', (VDGUIHandle)mhdlg, L"Compile compatibility database", g_ATUIFileFilter_SaveCompatEngine, L"atcpengine");
+	const auto& path = VDGetSaveFileName("cpdc"_vdfcctypeid, (VDGUIHandle)mhdlg, L"Compile compatibility database", g_ATUIFileFilter_SaveCompatEngine, L"atcpengine");
 	
 	if (!path.empty()) {
 		try {
@@ -1073,7 +1073,7 @@ void ATUIDialogCompatDB::CompileTo(const wchar_t *path) {
 	ATCompileCompatEDB(buf, mEDB);
 
 	VDFile f(path, nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kCreateAlways);
-	f.write(buf.data(), (long)buf.size());
+	f.write(buf.data(), (sint32)buf.size());
 	f.close();
 
 	mCompilePath = path;

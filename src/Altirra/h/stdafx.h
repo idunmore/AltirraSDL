@@ -17,6 +17,11 @@
 
 #pragma once
 
+#ifdef _WIN32
+#define WINVER 0x0A00
+#define _WIN32_WINNT 0x0A00
+#endif
+
 #define _SCL_SECURE_NO_WARNINGS
 
 // Windows SDK 10.0.26100 UCRT <wchar.h> contains inline functions that

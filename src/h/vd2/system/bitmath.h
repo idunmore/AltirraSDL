@@ -36,7 +36,7 @@
 
 #ifdef VD_COMPILER_MSVC
 	#include <intrin.h>
-#elif defined(VD_COMPILER_GCC) || defined(VD_COMPILER_CLANG)
+#elif defined(VD_COMPILER_CLANG_OR_GCC)
 	#if defined(VD_CPU_X86) || defined(VD_CPU_X64)
 		#include <x86intrin.h>
 	#elif defined(VD_CPU_ARM64)

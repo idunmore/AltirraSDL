@@ -60,7 +60,7 @@ struct ATDeviceDiskDriveInterfaceClient {
 
 class IATDeviceDiskDrive {
 public:
-	enum : uint32 { kTypeID = 'atdd' };
+	enum : uint32 { kTypeID = "atdd"_vdfcctypeid };
 
 	virtual void InitDiskDrive(IATDiskDriveManager *ddm) = 0;
 

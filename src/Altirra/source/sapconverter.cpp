@@ -346,6 +346,7 @@ void ATConvertSAPToPlayer(const void *sap, uint32 len, vdfastvector<uint8>& resu
 		ATConvertATASCIIToINTERNAL(&result[18+40], author.data(), author.size());
 		ATConvertATASCIIToINTERNAL(&result[18], name.data(), name.size());
 
+		// add placeholder header for data segment
 		result.push_back(0x00);
 		result.push_back(0x10);
 		result.push_back(0x00);
@@ -364,6 +365,7 @@ void ATConvertSAPToPlayer(const void *sap, uint32 len, vdfastvector<uint8>& resu
 
 		bool firstTick = true;
 		ptrdiff_t nch = stereo ? 2 : 1;
+		const uint32 totalTicks = (uint32)(end - s) / (nch * 9);
 
 		while(end - s >= nch*9) {
 			for(ptrdiff_t ch = 0; ch < nch; ++ch) {
@@ -454,7 +456,27 @@ void ATConvertSAPToPlayer(const void *sap, uint32 len, vdfastvector<uint8>& resu
 		}
 
 		// push a terminate command
+		if (stereo)
+			result.push_back(0x80);
+
 		result.push_back(0x81);
+
+		// write total time into the player display; PAL/NTSC differ slightly,
+		// so currently this uses an average in between (15628 scans/second).
+		uint32 totalSeconds = (totalTicks * (pal ? 312 : 262) + 15627) / 15628;
+		const uint32 hours = (totalSeconds / 3600) % 100;
+		const uint32 minutes = (totalSeconds / 60) % 60;
+		const uint32 seconds = totalSeconds % 60;
+
+		result[109] = (uint8)(0x10 + (hours / 10));
+		result[110] = (uint8)(0x10 + (hours % 10));
+		result[112] = (uint8)(0x10 + (minutes / 10));
+		result[113] = (uint8)(0x10 + (minutes % 10));
+		result[115] = (uint8)(0x10 + (seconds / 10));
+		result[116] = (uint8)(0x10 + (seconds % 10));
+
+		// write NTSC or PAL as internal
+		VDWriteUnalignedBEU32(&result[120], pal ? 0x30212C00 : 0x2E343323);
 
 		// backpatch size
 		uint32 endAddr = (uint32)(result.size() - basePos) + 0x1000 - 1;
@@ -493,6 +515,6 @@ void ATConvertSAPToPlayer(const wchar_t *outputPath, const wchar_t *inputPath) {
 
 	VDFile fo;
 	fo.open(outputPath, nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kCreateAlways);
-	fo.write(result.data(), (long)result.size());
+	fo.write(result.data(), (sint32)result.size());
 	fo.close();
 }

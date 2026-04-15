@@ -144,8 +144,10 @@ no_send_frame:
 	tax
 
 	lda		#1
-	sta		timflg
 	jsr		setvbv
+
+	lda		#1
+	sta		timflg
 
 	ldx		#<temp
 	stx		bufrlo
@@ -254,11 +256,13 @@ no_receive_frame:
 	stx		nocksm
 	inx					;X=0 (MSB of timeout duration)
 	lda		#1			;set timer 1
-	sta		timflg
 	ldy		#2			;LSB of timeout duration
 	sty		bufrhi		;>temp = 2
 	sty		bfenhi		;>temp+1 = 2
 	jsr		setvbv
+
+	lda		#1
+	sta		timflg
 
 	;setup for receiving ACK
 	ldx		#<temp

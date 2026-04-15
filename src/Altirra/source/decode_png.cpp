@@ -21,6 +21,7 @@
 #include <vd2/system/vdstl.h>
 #include <vd2/system/zip.h>
 #include <vd2/system/binary.h>
+#include <vd2/system/unknown.h>
 #include <vd2/Kasumi/pixmap.h>
 #include <vd2/Kasumi/pixmaputils.h>
 #include "decode_png.h"
@@ -42,7 +43,7 @@ namespace {
 		uint8	interlacing;
 	};
 
-	unsigned long PNGDecodeNetwork32(const uint8 *src) {
+	uint32 PNGDecodeNetwork32(const uint8 *src) {
 		return (src[0]<<24) + (src[1]<<16) + (src[2]<<8) + src[3];
 	}
 
@@ -221,7 +222,7 @@ PNGDecodeError VDImageDecoderPNG::Decode(const void *src0, uint32 size) {
 
 		uint32 type = PNGDecodeNetwork32(src + 4);
 
-		if (type == 'IHDR') {
+		if (type == "IHDR"_vdfcctypeid) {
 			if (length < 13)
 				return kPNGDecodeBadHeader;
 
@@ -241,15 +242,15 @@ PNGDecodeError VDImageDecoderPNG::Decode(const void *src0, uint32 size) {
 				return kPNGDecodeUnsupportedInterlacingAlgorithm;
 
 			header_found = true;
-		} else if (type == 'IDAT') {
+		} else if (type == "IDAT"_vdfcctypeid) {
 			packeddata.resize(packeddata.size()+length);
 			memcpy(&packeddata[packeddata.size()-length], src+8, length);
-		} else if (type == 'PLTE') {
+		} else if (type == "PLTE"_vdfcctypeid) {
 			if (length%3)
 				return kPNGDecodeBadPalette;
 
 			memcpy(pal, src+8, length<768?length:768);
-		} else if (type == 'IEND') {
+		} else if (type == "IEND"_vdfcctypeid) {
 			break;
 		} else if (src[0] & 0x20) {
 			return kPNGDecodeUnknownRequiredChunk;
@@ -447,7 +448,7 @@ bool VDDecodePNGHeader(const void *src0, uint32 len, int& w, int& h, bool& hasal
 	const uint32 hlen = PNGDecodeNetwork32(src + 8);
 	const uint32 ckid = PNGDecodeNetwork32(src + 12);
 
-	if (ckid != 'IHDR')
+	if (ckid != "IHDR"_vdfcctypeid)
 		return false;
 
 	if (hlen < 13)

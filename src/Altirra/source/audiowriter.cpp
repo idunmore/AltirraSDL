@@ -226,7 +226,7 @@ void ATAudioWriter::WriteRawAudio(const float *left, const float *right, uint32 
 
 						WriteInterleaved(leftout, rightout, (uint32)outlevel);
 					} else {
-						mFile.writeData(leftout, (long)(sizeof(sint16)*outlevel));
+						mFile.writeData(leftout, (sint32)(sizeof(sint16)*outlevel));
 					}
 				}
 			}

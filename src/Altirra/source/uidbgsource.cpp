@@ -748,7 +748,7 @@ IATSourceWindow *ATOpenSourceWindow(const ATDebuggerSourceFileInfo& sourceFileIn
 		filter.append(std::begin(kCatchAllFilter), std::end(kCatchAllFilter));		// !! intentionally capturing end null
 
 		const auto parent = ATUIGetNewPopupOwner();
-		fn = VDGetLoadFileName('src ', parent, title.c_str(), filter.c_str(), NULL);
+		fn = VDGetLoadFileName("src "_vdfcctypeid, parent, title.c_str(), filter.c_str(), NULL);
 
 		if (fn.empty())
 			return nullptr;

@@ -74,6 +74,7 @@ namespace {
 		}
 	}
 
+	[[maybe_unused]]
 	const char *GetWinsockError(uint32 err) {
 		switch(err) {
 #define X(v) case v: return #v;

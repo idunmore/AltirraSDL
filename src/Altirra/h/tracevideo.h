@@ -28,7 +28,7 @@ class ATTraceMemoryTracker;
 
 class IATTraceChannelVideo : public IVDRefUnknown {
 public:
-	static constexpr uint32 kTypeID = 'tciv';
+	static constexpr uint32 kTypeID = "tciv"_vdfcctypeid;
 
 	virtual IATTraceChannel *AsTraceChannel() = 0;
 

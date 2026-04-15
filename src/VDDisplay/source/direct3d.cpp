@@ -578,7 +578,7 @@ VDD3D9Manager::VDD3D9Manager(HMONITOR hmonitor, bool use9ex)
 	, mpD3DDeviceEx(NULL)
 	, mpD3DRTMain(NULL)
 	, mhMonitor(hmonitor)
-	, mDevWndClass(NULL)
+	, mDevWndClass(0)
 	, mhwndDevice(NULL) 
 	, mThreadID(0)
 	, mbUseD3D9Ex(use9ex)
@@ -1091,7 +1091,7 @@ void VDD3D9Manager::Shutdown() {
 
 	if (mDevWndClass) {
 		UnregisterClass(MAKEINTATOM(mDevWndClass), VDGetLocalModuleHandleW32());
-		mDevWndClass = NULL;
+		mDevWndClass = 0;
 	}
 }
 

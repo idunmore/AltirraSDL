@@ -101,7 +101,7 @@ VDVideoDisplayManager::VDVideoDisplayManager()
 	, mPreciseModePeriod(0)
 	, mPreciseModeLastUse(0)
 	, mhPalette(NULL)
-	, mWndClass(NULL)
+	, mWndClass(0)
 	, mhwnd(NULL)
 	, mbAppActive(false)
 	, mThreadID(0)
@@ -578,22 +578,22 @@ bool VDVideoDisplayManager::RegisterWindowClass() {
 
 	mWndClass = RegisterClass(&wc);
 
-	return mWndClass != NULL;
+	return mWndClass != 0;
 }
 
 void VDVideoDisplayManager::UnregisterWindowClass() {
 	if (mWndClass) {
 		HMODULE hInst = VDGetLocalModuleHandleW32();
 		UnregisterClass(MAKEINTATOM(mWndClass), hInst);
-		mWndClass = NULL;
+		mWndClass = 0;
 	}
 }
 
 void VDVideoDisplayManager::RemapPalette() {
 	PALETTEENTRY pal[216];
 	struct {
-		LOGPALETTE hdr;
-		PALETTEENTRY palext[255];
+		LOGPALETTE hdr {};
+		PALETTEENTRY palext[255] {};
 	} physpal;
 
 	physpal.hdr.palVersion = 0x0300;
@@ -607,11 +607,16 @@ void VDVideoDisplayManager::RemapPalette() {
 		pal[i].peBlue	= (BYTE)((i%6) * 51);
 	}
 
-	for(i=0; i<256; ++i) {
-		physpal.hdr.palPalEntry[i].peRed	= 0;
-		physpal.hdr.palPalEntry[i].peGreen	= 0;
-		physpal.hdr.palPalEntry[i].peBlue	= (BYTE)i;
-		physpal.hdr.palPalEntry[i].peFlags	= PC_EXPLICIT;
+	physpal.hdr.palPalEntry[0].peRed	= 0;
+	physpal.hdr.palPalEntry[0].peGreen	= 0;
+	physpal.hdr.palPalEntry[0].peBlue	= 0;
+	physpal.hdr.palPalEntry[0].peFlags	= PC_EXPLICIT;
+
+	for(i=1; i<256; ++i) {
+		physpal.palext[i-1].peRed	= 0;
+		physpal.palext[i-1].peGreen	= 0;
+		physpal.palext[i-1].peBlue	= (BYTE)i;
+		physpal.palext[i-1].peFlags	= PC_EXPLICIT;
 	}
 
 	if (HDC hdc = GetDC(0)) {
@@ -645,18 +650,18 @@ void VDVideoDisplayManager::CreateDitheringPalette() {
 		return;
 
 	struct {
-		LOGPALETTE hdr;
-		PALETTEENTRY palext[255];
+		LOGPALETTE hdr {};
+		PALETTEENTRY palext[255] {};
 	} pal;
 
 	pal.hdr.palVersion = 0x0300;
 	pal.hdr.palNumEntries = 216;
 
-	for(int i=0; i<216; ++i) {
-		pal.hdr.palPalEntry[i].peRed	= (BYTE)((i / 36) * 51);
-		pal.hdr.palPalEntry[i].peGreen	= (BYTE)(((i%36) / 6) * 51);
-		pal.hdr.palPalEntry[i].peBlue	= (BYTE)((i%6) * 51);
-		pal.hdr.palPalEntry[i].peFlags	= 0;
+	for(int i=1; i<216; ++i) {
+		pal.palext[i-1].peRed	= (BYTE)((i / 36) * 51);
+		pal.palext[i-1].peGreen	= (BYTE)(((i%36) / 6) * 51);
+		pal.palext[i-1].peBlue	= (BYTE)((i%6) * 51);
+		pal.palext[i-1].peFlags	= 0;
 	}
 
 	mhPalette = CreatePalette(&pal.hdr);

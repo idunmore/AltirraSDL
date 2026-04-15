@@ -66,7 +66,7 @@ class ATDragonCartEmulator final : public IATEthernetEndpoint {
 	ATDragonCartEmulator(const ATDragonCartEmulator&) = delete;
 	ATDragonCartEmulator& operator=(const ATDragonCartEmulator&) = delete;
 public:
-	enum { kTypeID = 'atdr' };
+	enum { kTypeID = "atdr"_vdfcctypeid };
 
 	ATDragonCartEmulator();
 	~ATDragonCartEmulator();
