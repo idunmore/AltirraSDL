@@ -126,7 +126,27 @@ void main() {
 	c = corrected;
 
 	#ifdef FEAT_DOT_MASK
-		c *= texture(uMaskTex, uvScanMask).rgb;
+		// Get source texture size (e.g., 320x240) – kept for context, not strictly required
+		ivec2 srcSize = textureSize(uSourceTex, 0);
+
+		// Fragment position in window (viewport) pixel coordinates.
+		// gl_FragCoord.xy gives pixel coordinates relative to the lower-left corner.
+		vec2 fragCoordPx = gl_FragCoord.xy;
+
+		// Size of the mask texture (e.g., 3 for RGB triad, 4 for 2x2 aperture)
+		ivec2 maskSize = textureSize(uMaskTex, 0);
+
+		// Compute mask pixel index by wrapping screen pixel coordinates
+		// modulo the mask size. This ensures perfect pixel alignment.
+		vec2 maskCoord = mod(fragCoordPx, vec2(maskSize));
+
+		// Normalize to [0,1] range for texture sampling
+		vec2 maskUV = maskCoord / vec2(maskSize);
+
+		// Sample mask color
+		vec3 maskColor = texture(uMaskTex, maskUV).rgb;
+
+		c *= maskColor;
 	#endif
 #endif
 
