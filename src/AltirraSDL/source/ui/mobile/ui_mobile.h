@@ -82,8 +82,10 @@ struct ATMobileUIState {
 	int interfaceScale = 1;
 
 	// --- On-screen touch controls ---
-	// When false the joystick, fire buttons, console keys, and
-	// hamburger icon drawn by ATTouchControls_Render are hidden.
+	// When false the joystick, fire buttons, and console keys drawn by
+	// ATTouchControls_Render are hidden.  The hamburger icon has its
+	// own toggle (showHamburgerMenu) so a user watching a demo can
+	// leave only the menu button visible.
 	// Default true on Android (primary input), false on desktop
 	// (keyboard/mouse/gamepad are the primary input).
 #ifdef __ANDROID__
@@ -91,6 +93,12 @@ struct ATMobileUIState {
 #else
 	bool showTouchControls = false;
 #endif
+
+	// --- On-screen hamburger menu button ---
+	// Independent of showTouchControls so the user can hide the joystick
+	// / fire / console controls while keeping the menu icon visible
+	// (e.g. demoscene viewing).  Default: visible.
+	bool showHamburgerMenu = true;
 };
 
 // Initialize mobile UI (call once at startup, after ImGui init)

@@ -177,11 +177,12 @@ void RenderSettings(ATSimulator &sim, ATUIState &uiState,
 
 			cats[n++] = { "Controls",
 				mobileState.showTouchControls
-					? VDStringA().sprintf("Touch: on  \xC2\xB7  Size: %s  \xC2\xB7  Haptic: %s",
+					? VDStringA().sprintf("Touch: on  \xC2\xB7  Menu: %s  \xC2\xB7  Size: %s",
+						mobileState.showHamburgerMenu ? "on" : "off",
 						mobileState.layoutConfig.controlSize == ATTouchControlSize::Small  ? "Small"  :
-						mobileState.layoutConfig.controlSize == ATTouchControlSize::Large  ? "Large"  : "Medium",
-						mobileState.layoutConfig.hapticEnabled ? "on" : "off")
-					: VDStringA("Touch controls: off"),
+						mobileState.layoutConfig.controlSize == ATTouchControlSize::Large  ? "Large"  : "Medium")
+					: VDStringA().sprintf("Touch: off  \xC2\xB7  Menu: %s",
+						mobileState.showHamburgerMenu ? "on" : "off"),
 				ATMobileSettingsPage::Controls };
 
 			cats[n++] = { "Save State",
@@ -386,6 +387,13 @@ void RenderSettings(ATSimulator &sim, ATUIState &uiState,
 
 		// Show on-screen touch controls (joystick, fire, console keys)
 		if (ATTouchToggle("Show Touch Controls", &mobileState.showTouchControls)) {
+			SaveMobileConfig(mobileState);
+		}
+
+		// Show hamburger menu button — independent of the gameplay
+		// touch controls so the user can leave the menu visible while
+		// watching a demo with a gamepad or just the keyboard.
+		if (ATTouchToggle("Show Menu Button", &mobileState.showHamburgerMenu)) {
 			SaveMobileConfig(mobileState);
 		}
 

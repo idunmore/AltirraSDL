@@ -415,7 +415,7 @@ void RenderLoadGamePrompt(ATSimulator &sim, ATUIState &uiState,
 {
 	ImGuiIO &io = ImGui::GetIO();
 
-	const char *hintAscii = mobileState.showTouchControls
+	const char *hintAscii = mobileState.showHamburgerMenu
 		? "or tap the menu icon for more options"
 		: "press ESC or click Menu for more options";
 

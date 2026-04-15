@@ -72,6 +72,13 @@ bool s_menuTapped = false;
 static SDL_FingerID s_menuFinger = 0;
 static bool s_menuFingerActive = false;
 
+// Mouse-click tracking for the hamburger icon — lets desktop users
+// without a touchscreen open the menu by clicking the icon.  Separate
+// from the finger tracking so a mouse click and a stray touch can't
+// interfere with each other.  Only the hamburger has a mouse binding;
+// the gameplay controls (joystick / fire / console) remain touch-only.
+static bool s_menuMouseActive = false;
+
 // -------------------------------------------------------------------------
 // Direction conversion
 // -------------------------------------------------------------------------
@@ -186,6 +193,9 @@ void ATTouchControls_ReleaseAll() {
 	s_consoleActive = false;
 
 	s_menuTapped = false;
+	s_menuFingerActive = false;
+	s_menuFinger = 0;
+	s_menuMouseActive = false;
 }
 
 bool ATTouchControls_IsActive() {
@@ -225,8 +235,46 @@ static uint8 ComputeDirectionMask4(float dx, float dy, float deadZone) {
 }
 
 bool ATTouchControls_HandleEvent(const SDL_Event &ev, const ATTouchLayout &layout,
-	const ATTouchLayoutConfig &config)
+	const ATTouchLayoutConfig &config,
+	bool showControls, bool showMenu)
 {
+	// --- Mouse-click fallback for the hamburger icon ---
+	// Only the menu button has a mouse binding.  Gameplay controls
+	// stay touch-only — desktop users drive the game with keyboard /
+	// gamepad.  Synthetic mouse events that SDL emits from a touch
+	// (SDL_TOUCH_MOUSEID) are ignored so the finger path below is the
+	// sole owner of touches.
+	if (ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
+		ev.type == SDL_EVENT_MOUSE_BUTTON_UP)
+	{
+		if (ev.button.which == SDL_TOUCH_MOUSEID)
+			return false;
+		if (ev.button.button != SDL_BUTTON_LEFT)
+			return false;
+		if (!showMenu)
+			return false;
+
+		float mx = ev.button.x;
+		float my = ev.button.y;
+
+		if (ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
+			if (layout.btnMenu.Contains(mx, my) && !s_menuMouseActive) {
+				s_menuMouseActive = true;
+				return true;
+			}
+			return false;
+		}
+
+		// MOUSE_BUTTON_UP
+		if (s_menuMouseActive) {
+			if (layout.btnMenu.Contains(mx, my))
+				s_menuTapped = true;
+			s_menuMouseActive = false;
+			return true;
+		}
+		return false;
+	}
+
 	const ATTouchJoystickStyle style = config.joystickStyle;
 	const bool isDPad = (style != ATTouchJoystickStyle::Analog);
 	if (ev.type != SDL_EVENT_FINGER_DOWN &&
@@ -253,12 +301,15 @@ bool ATTouchControls_HandleEvent(const SDL_Event &ev, const ATTouchLayout &layou
 		// menu on DOWN means the same touch's eventual UP arrives at
 		// ImGui as a click on whatever menu Button has scrolled
 		// under the finger.
-		if (layout.btnMenu.Contains(px, py) && !s_menuFingerActive) {
+		if (showMenu && layout.btnMenu.Contains(px, py) && !s_menuFingerActive) {
 			s_menuFinger = fid;
 			s_menuFingerActive = true;
 			HapticPulse(10);
 			return true;
 		}
+
+		if (!showControls)
+			return false;
 
 		// --- CONSOLE KEYS (top bar) ---
 		if (topBarPx.Contains(px, py) && !s_consoleActive) {
@@ -606,7 +657,12 @@ static void DrawJoystick(ImDrawList *dl, float baseX, float baseY,
 	dl->AddCircleFilled(ImVec2(curX, curY), knobRadius, knobColor, 32);
 }
 
-void ATTouchControls_Render(const ATTouchLayout &layout, const ATTouchLayoutConfig &config) {
+void ATTouchControls_Render(const ATTouchLayout &layout, const ATTouchLayoutConfig &config,
+	bool showControls, bool showMenu)
+{
+	if (!showControls && !showMenu)
+		return;
+
 	float alpha = config.controlOpacity;
 	ImU32 btnNormal    = IM_COL32(80, 80, 80, (int)(140 * alpha));
 	ImU32 btnConsole   = IM_COL32(60, 60, 80, (int)(140 * alpha));
@@ -618,13 +674,15 @@ void ATTouchControls_Render(const ATTouchLayout &layout, const ATTouchLayoutConf
 	// Get foreground draw list (renders on top of everything)
 	ImDrawList *dl = ImGui::GetForegroundDrawList();
 
-	// --- Console keys ---
-	DrawButton(dl, layout.btnStart, "START", btnConsole, textColor, s_startHeld);
-	DrawButton(dl, layout.btnSelect, "SELECT", btnConsole, textColor, s_selectHeld);
-	DrawButton(dl, layout.btnOption, "OPTION", btnConsole, textColor, s_optionHeld);
+	if (showControls) {
+		// --- Console keys ---
+		DrawButton(dl, layout.btnStart, "START", btnConsole, textColor, s_startHeld);
+		DrawButton(dl, layout.btnSelect, "SELECT", btnConsole, textColor, s_selectHeld);
+		DrawButton(dl, layout.btnOption, "OPTION", btnConsole, textColor, s_optionHeld);
+	}
 
-	// --- Hamburger menu icon ---
-	{
+	if (showMenu) {
+		// --- Hamburger menu icon ---
 		const ATTouchRect &m = layout.btnMenu;
 		float cx = m.CenterX();
 		float cy = m.CenterY();
@@ -637,6 +695,9 @@ void ATTouchControls_Render(const ATTouchLayout &layout, const ATTouchLayoutConf
 			dl->AddLine(ImVec2(cx - hw, ly), ImVec2(cx + hw, ly), menuColor, thickness);
 		}
 	}
+
+	if (!showControls)
+		return;
 
 	// --- Fire buttons ---
 	// On a 5200 the single-label "A" is unused but we still only have

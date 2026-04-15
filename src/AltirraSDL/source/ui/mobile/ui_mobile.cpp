@@ -91,6 +91,7 @@ static void LoadMobileConfig(ATMobileUIState &mobileState) {
 #else
 	mobileState.showTouchControls = key.getBool("ShowTouchControls", false);
 #endif
+	mobileState.showHamburgerMenu = key.getBool("ShowHamburgerMenu", true);
 }
 
 void SaveMobileConfig(const ATMobileUIState &mobileState) {  // shared via mobile_internal.h
@@ -113,6 +114,7 @@ void SaveMobileConfig(const ATMobileUIState &mobileState) {  // shared via mobil
 		key.setInt("JoystickStyle", (int)mobileState.layoutConfig.joystickStyle);
 		key.setInt("InterfaceScale", mobileState.interfaceScale);
 		key.setBool("ShowTouchControls", mobileState.showTouchControls);
+		key.setBool("ShowHamburgerMenu", mobileState.showHamburgerMenu);
 	}
 	// Persist immediately — registry-only writes are lost if the user
 	// swipes the app away from recents before it backgrounds properly.
@@ -634,10 +636,16 @@ void ATMobileUI_Render(ATSimulator &sim, ATUIState &uiState,
 		// Render touch controls overlay — but hide them when the virtual
 		// keyboard is visible so they don't overlap the keyboard keys,
 		// when the error dialog is open, or when the user has disabled
-		// them (default on desktop).
-		if (mobileState.showTouchControls && !uiState.showVirtualKeyboard
-			&& !ATUIIsEmuErrorDialogOpen())
-			ATTouchControls_Render(mobileState.layout, mobileState.layoutConfig);
+		// them (default on desktop).  The hamburger menu icon has its
+		// own independent toggle so it can stay visible while the
+		// gameplay controls are hidden (e.g. watching a demo with a
+		// gamepad).
+		if (!uiState.showVirtualKeyboard && !ATUIIsEmuErrorDialogOpen()
+			&& (mobileState.showTouchControls || mobileState.showHamburgerMenu))
+		{
+			ATTouchControls_Render(mobileState.layout, mobileState.layoutConfig,
+				mobileState.showTouchControls, mobileState.showHamburgerMenu);
+		}
 		break;
 
 	case ATMobileUIScreen::HamburgerMenu:
@@ -720,8 +728,11 @@ bool ATMobileUI_HandleEvent(const SDL_Event &ev, ATMobileUIState &mobileState) {
 		// Forward to touch_controls so it can run its own release
 		// bookkeeping for the joystick / console / fire / menu
 		// buttons.  Ignored if the screen is no longer the gameplay
-		// overlay — the handler is robust to that.
-		ATTouchControls_HandleEvent(ev, mobileState.layout, mobileState.layoutConfig);
+		// overlay — the handler is robust to that.  Pass both flags
+		// true so in-flight releases are always processed even if the
+		// user toggled visibility while the finger was down.
+		ATTouchControls_HandleEvent(ev, mobileState.layout, mobileState.layoutConfig,
+			true, true);
 		if (ev.type == SDL_EVENT_FINGER_UP)
 			RemoveGameOwnedFinger(ev.tfinger.fingerID);
 		return true;
@@ -743,13 +754,32 @@ bool ATMobileUI_HandleEvent(const SDL_Event &ev, ATMobileUIState &mobileState) {
 			return true;
 		}
 
-		if (!mobileState.showTouchControls)
+		if (!mobileState.showTouchControls && !mobileState.showHamburgerMenu)
 			return false;
 
-		bool consumed = ATTouchControls_HandleEvent(ev, mobileState.layout, mobileState.layoutConfig);
+		bool consumed = ATTouchControls_HandleEvent(ev, mobileState.layout, mobileState.layoutConfig,
+			mobileState.showTouchControls, mobileState.showHamburgerMenu);
 		if (consumed && ev.type == SDL_EVENT_FINGER_DOWN)
 			AddGameOwnedFinger(ev.tfinger.fingerID);
 		return consumed;
+	}
+
+	// Mouse-click fallback for the hamburger icon — desktops without a
+	// touchscreen have no finger events, so route left-button clicks on
+	// the icon through the same handler.  The handler itself filters out
+	// synthetic touch-mouse events (SDL_TOUCH_MOUSEID) so this never
+	// double-fires with the finger path.  Suppressed while a modal info
+	// or confirm sheet is up so those clicks reach ImGui instead.
+	const bool isMouseButton = ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN
+		|| ev.type == SDL_EVENT_MOUSE_BUTTON_UP;
+	if (isMouseButton && mobileState.showHamburgerMenu
+		&& !g_uiState.showVirtualKeyboard
+		&& !s_infoModalOpen && !s_confirmActive
+		&& !ATUIIsEmuErrorDialogOpen())
+	{
+		if (ATTouchControls_HandleEvent(ev, mobileState.layout, mobileState.layoutConfig,
+				mobileState.showTouchControls, mobileState.showHamburgerMenu))
+			return true;
 	}
 
 	return false;
