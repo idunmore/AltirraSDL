@@ -245,7 +245,7 @@ VDFORCEINLINE uint32 ATAudioReaderFLAC::BitReader::GetUnaryValue() {
 	{
 		unsigned long oneBitPos;
 
-#ifdef VD_COMPILER_GCC
+#ifdef VD_COMPILER_CLANG_OR_GCC
 		oneBitPos = 31 - __builtin_clz(bitAccum);
 #else
 		_BitScanReverse(&oneBitPos, bitAccum);
