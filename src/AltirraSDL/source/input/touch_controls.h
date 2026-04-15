@@ -19,14 +19,23 @@ void ATTouchControls_Shutdown();
 
 // Process an SDL touch event. Returns true if the event was consumed
 // (i.e. it landed in a control zone and should not be forwarded to ImGui).
+// showControls gates the joystick / fire / console-key hit tests;
+// showMenu gates the hamburger button hit test.  Either or both may be
+// false (when both are false, nothing is hit-tested and the function
+// never claims the event).
 bool ATTouchControls_HandleEvent(const SDL_Event &ev, const ATTouchLayout &layout,
-	const ATTouchLayoutConfig &config);
+	const ATTouchLayoutConfig &config,
+	bool showControls, bool showMenu);
 
 // Release all held touch inputs (call on focus loss, pause, menu open)
 void ATTouchControls_ReleaseAll();
 
-// Render touch controls as ImGui overlay
-void ATTouchControls_Render(const ATTouchLayout &layout, const ATTouchLayoutConfig &config);
+// Render touch controls as ImGui overlay.  showControls toggles the
+// joystick / fire / console-key layer; showMenu toggles the hamburger
+// icon.  The two are independent so a user watching a demo can leave
+// the menu visible while hiding the gameplay controls.
+void ATTouchControls_Render(const ATTouchLayout &layout, const ATTouchLayoutConfig &config,
+	bool showControls, bool showMenu);
 
 // Returns true if any touch control is currently active (finger down)
 bool ATTouchControls_IsActive();
