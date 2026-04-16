@@ -2,8 +2,14 @@ name: Linux build
 
 # Builds AltirraSDL as a portable AppImage inside an ubuntu:22.04 container
 # so the glibc floor is pinned to 2.35 (compatible with Debian 12, Ubuntu
-# 22.04+, RHEL 9+, recent Fedora/Arch). Bundles SDL3 (built via FetchContent)
-# and librashader (built from source via Rust).
+# 22.04+, RHEL 9+, recent Fedora/Arch). SDL3 is linked statically into the
+# binary by default (ALTIRRA_STATIC_SDL3=ON), so the AppImage contains
+# just AltirraSDL + optional librashader.so plus the handful of libraries
+# linuxdeploy picks up via ldd (libc / libstdc++ / libgcc_s / libm).
+# X11/Wayland/PulseAudio/ALSA/libdecor are NOT bundled — SDL3 dlopens
+# them at runtime, so they must exist on the target system; this is
+# always true on a glibc-2.35+ desktop. librashader is built from source
+# via Rust.
 #
 # Two architectures are built in parallel via a matrix:
 #   - x86_64  on ubuntu-latest         (GitHub's standard x86_64 runner)
@@ -142,18 +148,24 @@ jobs:
         shell: bash
         run: |
           set -e
-          APPIMAGE=$(ls build/linux/AltirraSDL-*-${{ matrix.arch }}.AppImage | head -1)
+          APPIMAGE=$(ls build/linux/AltirraSDL-*-linux-${{ matrix.arch }}.AppImage | head -1)
           echo "Produced: $APPIMAGE"
           ls -lh "$APPIMAGE"
           "$APPIMAGE" --appimage-extract >/dev/null
-          echo "=== bundled libraries ==="
+          echo "=== bundled files ==="
           ls -l squashfs-root/usr/bin/ || true
           echo "=== ldd AltirraSDL ==="
           ldd squashfs-root/usr/bin/AltirraSDL | sed 's/^/  /' || true
-          echo "=== checking libSDL3 is bundled ==="
-          test -f squashfs-root/usr/bin/libSDL3.so.0 \
-            && echo "  libSDL3.so.0 bundled OK" \
-            || { echo "  ERROR: libSDL3.so.0 missing from AppImage"; exit 1; }
+          # SDL3 is linked statically by default — there is no libSDL3.so.0
+          # file to verify.  Confirm instead that the binary is NOT
+          # dynamically linked against libSDL3, which would mean the static
+          # build silently regressed.
+          if ldd squashfs-root/usr/bin/AltirraSDL 2>/dev/null | grep -q 'libSDL3'; then
+            echo "  WARNING: AltirraSDL is dynamically linked against libSDL3 — expected static build"
+            echo "           (Pass -DALTIRRA_STATIC_SDL3=OFF only if this was intentional.)"
+          else
+            echo "  libSDL3 is statically linked into AltirraSDL (expected)"
+          fi
           if [ -f squashfs-root/usr/bin/librashader.so ]; then
             echo "  librashader.so bundled OK"
           else
@@ -164,7 +176,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: AltirraSDL-linux-${{ matrix.arch }}
-          path: build/linux/AltirraSDL-*-${{ matrix.arch }}.AppImage
+          path: build/linux/AltirraSDL-*-linux-${{ matrix.arch }}.AppImage
           if-no-files-found: error
           retention-days: 30
 
@@ -201,10 +213,10 @@ jobs:
             **Linux:** Download the `.AppImage` matching your CPU
             architecture, `chmod +x`, and run.
 
-            | Architecture | File                               | Targets |
-            |--------------|------------------------------------|---------|
-            | x86_64       | `AltirraSDL-*-x86_64.AppImage`     | Intel / AMD 64-bit desktops & laptops |
-            | aarch64      | `AltirraSDL-*-aarch64.AppImage`    | Raspberry Pi 4 / 5 / 500 (64-bit OS), generic arm64 Linux |
+            | Architecture | File                                      | Targets |
+            |--------------|-------------------------------------------|---------|
+            | x86_64       | `AltirraSDL-*-linux-x86_64.AppImage`      | Intel / AMD 64-bit desktops & laptops |
+            | aarch64      | `AltirraSDL-*-linux-aarch64.AppImage`     | Raspberry Pi 4 / 5 / 500 (64-bit OS), generic arm64 Linux |
 
             Requires glibc ≥ 2.35 (Ubuntu 22.04+, Debian 12+ /
             Raspberry Pi OS Bookworm+, Fedora 36+, RHEL 9+).

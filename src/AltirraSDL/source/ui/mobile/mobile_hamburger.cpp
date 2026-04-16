@@ -56,9 +56,10 @@ void RenderHamburgerMenu(ATSimulator &sim, ATUIState &uiState,
 	if (menuW > maxW) menuW = maxW;
 
 	// Dim background
+	const ATMobilePalette &pal = ATMobileGetPalette();
 	ImGui::GetBackgroundDrawList()->AddRectFilled(
 		ImVec2(0, 0), io.DisplaySize,
-		IM_COL32(0, 0, 0, 128));
+		pal.backdropDim);
 
 	// Menu panel (slides from right), inset inside safe area so the
 	// title bar isn't eaten by the status bar and the last item isn't
@@ -99,18 +100,15 @@ void RenderHamburgerMenu(ATSimulator &sim, ATUIState &uiState,
 		const float headerH = dp(56.0f);
 		const float backW   = dp(56.0f);
 		const float headerTopY = ImGui::GetCursorPosY();
-		ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0.0f);
-		ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0, 0, 0, 0));
-		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1, 1, 1, 0.08f));
-		ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(1, 1, 1, 0.16f));
 		// Use ASCII "<" to match the back-arrow on every other mobile
 		// sub-screen (disk manager, file browser, settings).  The
 		// loaded UI font only carries Latin / Cyrillic / Greek glyph
 		// ranges, so a Unicode arrow (U+2190) would render as tofu.
-		if (ImGui::Button("<", ImVec2(backW, headerH)))
+		if (ATTouchButton("<", ImVec2(backW, headerH),
+			ATTouchButtonStyle::Subtle))
+		{
 			closeFromHeader = true;
-		ImGui::PopStyleColor(3);
-		ImGui::PopStyleVar();
+		}
 		ImGui::SameLine();
 		// Vertically centre the title text inside the 56dp header row.
 		ImGui::SetCursorPosY(headerTopY
@@ -139,14 +137,15 @@ void RenderHamburgerMenu(ATSimulator &sim, ATUIState &uiState,
 
 		// Resume — also serves as the default gamepad focus target so
 		// a controller user can press A immediately to dismiss the
-		// menu without D-padding first.
-		if (ImGui::Button("Resume", btnSize))
+		// menu without D-padding first.  Accent-gradient for the hero
+		// action; every other item is neutral.
+		if (ATTouchButton("Resume", btnSize, ATTouchButtonStyle::Accent))
 			ATMobileUI_CloseMenu(sim, mobileState);
 		ImGui::SetItemDefaultFocus();
 		ImGui::Spacing();
 
 		// Game Library — returns to the library home screen
-		if (ImGui::Button("Game Library", btnSize)) {
+		if (ATTouchButton("Game Library", btnSize)) {
 			sim.Pause();
 			mobileState.currentScreen = ATMobileUIScreen::GameBrowser;
 		}
@@ -169,7 +168,7 @@ void RenderHamburgerMenu(ATSimulator &sim, ATUIState &uiState,
 		if (mobileState.gameLoaded
 			&& GameBrowser_CurrentEntryNeedsArt())
 		{
-			if (ImGui::Button("Save Screenshot as Game Art", btnSize)) {
+			if (ATTouchButton("Save Screenshot as Game Art", btnSize)) {
 				VDStringA err = GameBrowser_SetCurrentFrameAsArt();
 				if (!err.empty())
 					ShowInfoModal("Save Game Art Failed", err.c_str());
@@ -182,7 +181,7 @@ void RenderHamburgerMenu(ATSimulator &sim, ATUIState &uiState,
 		}
 
 		// Disk Drives — mobile-friendly full-screen manager
-		if (ImGui::Button("Disk Drives", btnSize)) {
+		if (ATTouchButton("Disk Drives", btnSize)) {
 			mobileState.currentScreen = ATMobileUIScreen::DiskManager;
 		}
 		ImGui::Spacing();
@@ -190,7 +189,7 @@ void RenderHamburgerMenu(ATSimulator &sim, ATUIState &uiState,
 		// Virtual Keyboard toggle
 		{
 			const char *kbdLabel = uiState.showVirtualKeyboard ? "Keyboard: ON" : "Keyboard: OFF";
-			if (ImGui::Button(kbdLabel, btnSize)) {
+			if (ATTouchButton(kbdLabel, btnSize)) {
 				uiState.showVirtualKeyboard = !uiState.showVirtualKeyboard;
 				ATMobileUI_CloseMenu(sim, mobileState);
 				sim.Resume();
@@ -201,7 +200,7 @@ void RenderHamburgerMenu(ATSimulator &sim, ATUIState &uiState,
 		// Audio toggle
 		{
 			const char *audioLabel = mobileState.audioMuted ? "Audio: OFF" : "Audio: ON";
-			if (ImGui::Button(audioLabel, btnSize)) {
+			if (ATTouchButton(audioLabel, btnSize)) {
 				mobileState.audioMuted = !mobileState.audioMuted;
 				IATAudioOutput *audioOut = g_sim.GetAudioOutput();
 				if (audioOut)
@@ -215,7 +214,7 @@ void RenderHamburgerMenu(ATSimulator &sim, ATUIState &uiState,
 
 		// Quick Save State — with confirmation to prevent accidental
 		// overwrite of an earlier checkpoint.
-		if (ImGui::Button("Quick Save State", btnSize)) {
+		if (ATTouchButton("Quick Save State", btnSize)) {
 			ShowConfirmDialog("Quick Save State",
 				"Overwrite the current quick save with the "
 				"emulator's state right now?",
@@ -234,7 +233,7 @@ void RenderHamburgerMenu(ATSimulator &sim, ATUIState &uiState,
 
 		// Quick Load State — confirmation, with a distinct info
 		// dialog if no save is available.
-		if (ImGui::Button("Quick Load State", btnSize)) {
+		if (ATTouchButton("Quick Load State", btnSize)) {
 			VDStringW path = QuickSaveStatePath();
 			if (!VDDoesPathExist(path.c_str())) {
 				ShowInfoModal("No Quick Save",
@@ -267,7 +266,7 @@ void RenderHamburgerMenu(ATSimulator &sim, ATUIState &uiState,
 		ImGui::Spacing();
 
 		// Warm Reset — with confirmation.
-		if (ImGui::Button("Warm Reset", btnSize)) {
+		if (ATTouchButton("Warm Reset", btnSize)) {
 			ShowConfirmDialog("Warm Reset",
 				"Reset the emulator without clearing memory?",
 				[&sim, &mobileState]() {
@@ -279,7 +278,7 @@ void RenderHamburgerMenu(ATSimulator &sim, ATUIState &uiState,
 		ImGui::Spacing();
 
 		// Cold Reset — with confirmation.
-		if (ImGui::Button("Cold Reset", btnSize)) {
+		if (ATTouchButton("Cold Reset", btnSize, ATTouchButtonStyle::Danger)) {
 			ShowConfirmDialog("Cold Reset",
 				"Power-cycle the emulator?  This clears RAM and "
 				"reboots, just like unplugging the machine.",
@@ -295,7 +294,7 @@ void RenderHamburgerMenu(ATSimulator &sim, ATUIState &uiState,
 		ImGui::Spacing();
 
 		// Settings
-		if (ImGui::Button("Settings", btnSize)) {
+		if (ATTouchButton("Settings", btnSize)) {
 			s_settingsPage = ATMobileSettingsPage::Home;
 			s_settingsReturnScreen = ATMobileUIScreen::HamburgerMenu;
 			mobileState.currentScreen = ATMobileUIScreen::Settings;
@@ -306,7 +305,7 @@ void RenderHamburgerMenu(ATSimulator &sim, ATUIState &uiState,
 		ImGui::Spacing();
 
 		// About — mobile-friendly full-screen panel
-		if (ImGui::Button("About", btnSize)) {
+		if (ATTouchButton("About", btnSize)) {
 			mobileState.currentScreen = ATMobileUIScreen::About;
 		}
 		ImGui::Spacing();
@@ -315,7 +314,7 @@ void RenderHamburgerMenu(ATSimulator &sim, ATUIState &uiState,
 		ImGui::Separator();
 		ImGui::Spacing();
 
-		if (ImGui::Button("Switch to Desktop Mode", btnSize)) {
+		if (ATTouchButton("Switch to Desktop Mode", btnSize)) {
 			ATUISetMode(ATUIMode::Desktop);
 			ATUISaveMode();
 			ATMobileUI_CloseMenu(sim, mobileState);

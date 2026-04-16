@@ -21,6 +21,7 @@ extern void ATRegistryFlushToDisk();
 
 void RenderSettingsPage_Firmware(ATMobileUIState &mobileState) {
 	ATFirmwareManager *fwm = g_sim.GetFirmwareManager();
+	const ATMobilePalette &pal = ATMobileGetPalette();
 
 	auto nameForId = [&](uint64 id) -> VDStringA {
 		if (!id) return VDStringA("(internal)");
@@ -35,15 +36,24 @@ void RenderSettingsPage_Firmware(ATMobileUIState &mobileState) {
 
 		if (!s_romDir.empty()) {
 			VDStringA dirU8 = VDTextWToU8(s_romDir);
+			ImGui::PushStyleColor(ImGuiCol_Text, ATMobileCol(pal.text));
 			ImGui::TextWrapped("ROM Directory: %s", dirU8.c_str());
+			ImGui::PopStyleColor();
 		} else {
+			ImGui::PushStyleColor(ImGuiCol_Text, ATMobileCol(pal.textMuted));
 			ImGui::Text("ROM Directory: (not set)");
+			ImGui::PopStyleColor();
 		}
-		if (s_romScanResult >= 0)
+		if (s_romScanResult >= 0) {
+			ImGui::PushStyleColor(ImGuiCol_Text, ATMobileCol(pal.textMuted));
 			ImGui::Text("Status: %d ROMs found", s_romScanResult);
+			ImGui::PopStyleColor();
+		}
 
 		ImGui::Spacing();
-		if (ImGui::Button("Select Firmware Folder", ImVec2(-1, dp(56.0f)))) {
+		if (ATTouchButton("Select Firmware Folder",
+			ImVec2(-1, dp(56.0f)), ATTouchButtonStyle::Accent))
+		{
 			s_romFolderMode = true;
 			s_fileBrowserNeedsRefresh = true;
 			mobileState.currentScreen = ATMobileUIScreen::FileBrowser;
@@ -66,41 +76,29 @@ void RenderSettingsPage_Firmware(ATMobileUIState &mobileState) {
 			{ "Atari BASIC",         kATFirmwareType_Basic          },
 		};
 
-		float rowH = dp(72.0f);
 		for (size_t i = 0; i < sizeof(kSlots)/sizeof(kSlots[0]); ++i) {
 			ImGui::PushID((int)i);
 			uint64 curId = fwm->GetDefaultFirmware(kSlots[i].type);
 			VDStringA curName = nameForId(curId);
 
-			ImVec2 cursor = ImGui::GetCursorScreenPos();
-			float availW = ImGui::GetContentRegionAvail().x;
-			ImDrawList *dl = ImGui::GetWindowDrawList();
-			dl->AddRectFilled(cursor,
-				ImVec2(cursor.x + availW, cursor.y + rowH),
-				IM_COL32(30, 35, 50, 200), dp(10.0f));
-
-			if (ImGui::InvisibleButton("##fwslot", ImVec2(availW, rowH)))
+			// Two-line card with chevron — matches the Settings home
+			// category rows so the firmware slots feel like part of the
+			// same navigation surface.
+			if (ATTouchListItem(kSlots[i].title, curName.c_str(),
+				/*selected*/ false, /*chevron*/ true))
+			{
 				s_fwPicker = kSlots[i].type;
+			}
 
-			dl->AddText(ImVec2(cursor.x + dp(16.0f), cursor.y + dp(10.0f)),
-				IM_COL32(240, 242, 248, 255), kSlots[i].title);
-			dl->AddText(ImVec2(cursor.x + dp(16.0f), cursor.y + dp(40.0f)),
-				IM_COL32(160, 175, 200, 255), curName.c_str());
-			dl->AddText(ImVec2(cursor.x + availW - dp(28.0f),
-					cursor.y + rowH * 0.5f - dp(8.0f)),
-				IM_COL32(160, 175, 200, 255), ">");
-
-			ImGui::Dummy(ImVec2(0, dp(8.0f)));
+			ImGui::Dummy(ImVec2(0, dp(6.0f)));
 			ImGui::PopID();
 		}
 
 		ImGui::Dummy(ImVec2(0, dp(12.0f)));
-		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.65f, 0.70f, 0.78f, 1));
-		ImGui::TextWrapped(
+		ATTouchMutedText(
 			"Tap a slot to choose which ROM to use.  Selections "
 			"apply on the next cold reset.  The built-in HLE "
 			"kernel is used as a fallback if no ROM is picked.");
-		ImGui::PopStyleColor();
 	} else {
 		// --- Firmware picker ---
 		ATFirmwareType picking = s_fwPicker;
@@ -116,8 +114,11 @@ void RenderSettingsPage_Firmware(ATMobileUIState &mobileState) {
 		}
 		ATTouchSection(slotTitle);
 
-		if (ImGui::Button("< Back", ImVec2(dp(120.0f), dp(48.0f))))
+		if (ATTouchButton("< Back", ImVec2(dp(120.0f), dp(48.0f)),
+			ATTouchButtonStyle::Subtle))
+		{
 			s_fwPicker = kATFirmwareType_Unknown;
+		}
 
 		ImGui::Dummy(ImVec2(0, dp(8.0f)));
 
@@ -130,28 +131,17 @@ void RenderSettingsPage_Firmware(ATMobileUIState &mobileState) {
 		// default so the simulator falls back to the bundled
 		// HLE kernel at next cold reset.
 		{
-			float rowH = dp(64.0f);
-			ImVec2 cursor = ImGui::GetCursorScreenPos();
-			float availW = ImGui::GetContentRegionAvail().x;
-			ImDrawList *dl = ImGui::GetWindowDrawList();
 			bool selected = (curId == 0);
-			dl->AddRectFilled(cursor,
-				ImVec2(cursor.x + availW, cursor.y + rowH),
-				selected ? IM_COL32(40, 90, 160, 220)
-				         : IM_COL32(30, 35, 50, 200),
-				dp(10.0f));
-			if (ImGui::InvisibleButton("##fwhle", ImVec2(availW, rowH))) {
+			if (ATTouchListItem("Built-in HLE (fallback)",
+				/*subtitle*/ nullptr, selected, /*chevron*/ false))
+			{
 				fwm->SetDefaultFirmware(picking, 0);
 				ATRegistryFlushToDisk();
 				g_sim.LoadROMs();
 				g_sim.ColdReset();
 				s_fwPicker = kATFirmwareType_Unknown;
 			}
-			dl->AddText(ImVec2(cursor.x + dp(16.0f),
-					cursor.y + rowH * 0.5f - dp(8.0f)),
-				IM_COL32(240, 242, 248, 255),
-				"Built-in HLE (fallback)");
-			ImGui::Dummy(ImVec2(0, dp(8.0f)));
+			ImGui::Dummy(ImVec2(0, dp(6.0f)));
 		}
 
 		int shown = 0;
@@ -163,42 +153,31 @@ void RenderSettingsPage_Firmware(ATMobileUIState &mobileState) {
 			++shown;
 
 			ImGui::PushID((int)info.mId ^ (int)(info.mId >> 32));
-			float rowH = dp(64.0f);
-			ImVec2 cursor = ImGui::GetCursorScreenPos();
-			float availW = ImGui::GetContentRegionAvail().x;
-			ImDrawList *dl = ImGui::GetWindowDrawList();
+
+			VDStringA nm = VDTextWToU8(info.mName);
+			VDStringA ph = VDTextWToU8(info.mPath);
 			bool selected = (curId == info.mId);
-			dl->AddRectFilled(cursor,
-				ImVec2(cursor.x + availW, cursor.y + rowH),
-				selected ? IM_COL32(40, 90, 160, 220)
-				         : IM_COL32(30, 35, 50, 200),
-				dp(10.0f));
-			if (ImGui::InvisibleButton("##fw", ImVec2(availW, rowH))) {
+
+			if (ATTouchListItem(nm.c_str(), ph.c_str(), selected,
+				/*chevron*/ false))
+			{
 				fwm->SetDefaultFirmware(picking, info.mId);
 				ATRegistryFlushToDisk();
 				g_sim.LoadROMs();
 				g_sim.ColdReset();
 				s_fwPicker = kATFirmwareType_Unknown;
 			}
-			VDStringA nm = VDTextWToU8(info.mName);
-			VDStringA ph = VDTextWToU8(info.mPath);
-			dl->AddText(ImVec2(cursor.x + dp(16.0f), cursor.y + dp(8.0f)),
-				IM_COL32(240, 242, 248, 255), nm.c_str());
-			dl->AddText(ImVec2(cursor.x + dp(16.0f), cursor.y + dp(36.0f)),
-				IM_COL32(160, 175, 200, 255), ph.c_str());
-			ImGui::Dummy(ImVec2(0, dp(8.0f)));
+
+			ImGui::Dummy(ImVec2(0, dp(6.0f)));
 			ImGui::PopID();
 		}
 
 		if (shown == 0) {
-			ImGui::PushStyleColor(ImGuiCol_Text,
-				ImVec4(0.65f, 0.70f, 0.78f, 1));
-			ImGui::TextWrapped(
+			ATTouchMutedText(
 				"No ROMs of this type were found in your "
 				"firmware folder.  Tap 'Select Firmware "
 				"Folder' on the previous screen to scan "
 				"a directory containing Atari ROM images.");
-			ImGui::PopStyleColor();
 		}
 	}
 }

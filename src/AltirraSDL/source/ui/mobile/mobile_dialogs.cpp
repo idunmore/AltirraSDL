@@ -9,6 +9,7 @@
 
 #include "ui_mobile.h"
 #include "mobile_internal.h"
+#include "touch_widgets.h"
 
 // Render the global mobile dialog sheet — serves both info popups
 // (ShowInfoModal, single OK button) and confirmation popups
@@ -21,13 +22,15 @@ void RenderMobileModalSheet(const ATMobileUIState &mobileState) {
 	if (!(haveInfo || haveConfirm))
 		return;
 
+	const ATMobilePalette &pal = ATMobileGetPalette();
+
 	// Full-screen dim backdrop.  Use the BACKGROUND draw list so
 	// the rectangle renders *beneath* every ImGui window this
 	// frame — otherwise the foreground list paints over the sheet
 	// card and visibly darkens it.
 	ImGui::GetBackgroundDrawList()->AddRectFilled(
 		ImVec2(0, 0), ImGui::GetIO().DisplaySize,
-		IM_COL32(0, 0, 0, 160));
+		pal.backdropDim);
 
 	float insetL = (float)mobileState.layout.insets.left;
 	float insetR = (float)mobileState.layout.insets.right;
@@ -60,8 +63,8 @@ void RenderMobileModalSheet(const ATMobileUIState &mobileState) {
 	float prevB = style.WindowBorderSize;
 	style.WindowRounding = dp(14.0f);
 	style.WindowBorderSize = dp(1.0f);
-	ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.10f, 0.12f, 0.18f, 0.98f));
-	ImGui::PushStyleColor(ImGuiCol_Border,   ImVec4(0.27f, 0.51f, 0.82f, 1.0f));
+	ImGui::PushStyleColor(ImGuiCol_WindowBg, ATMobileCol(pal.modalBg));
+	ImGui::PushStyleColor(ImGuiCol_Border,   ATMobileCol(pal.modalBorder));
 
 	const char *winId = haveConfirm ? "##MobileConfirm" : "##MobileInfo";
 	ImGui::Begin(winId, nullptr,
@@ -75,11 +78,23 @@ void RenderMobileModalSheet(const ATMobileUIState &mobileState) {
 	const char *body  = haveConfirm
 		? s_confirmBody.c_str()  : s_infoModalBody.c_str();
 
+	// Subtle gradient backdrop for the sheet card — a touch of depth so
+	// the modal reads as a lifted surface instead of a flat rectangle.
+	// Use the shared helper so the gradient respects the window's
+	// rounded corners (WindowRounding = dp(14.0f) above) instead of
+	// overwriting them with a rectangular bleed.
+	{
+		ImVec2 wpos = ImGui::GetWindowPos();
+		ImVec2 wsize = ImGui::GetWindowSize();
+		ATMobileDrawGradientRect(
+			wpos, ImVec2(wpos.x + wsize.x, wpos.y + wsize.y),
+			pal.modalBgTop, pal.modalBg, style.WindowRounding);
+	}
+
 	ImGui::Dummy(ImVec2(0, dp(8.0f)));
 	if (title && *title) {
 		ImGui::SetWindowFontScale(1.25f);
-		ImGui::PushStyleColor(ImGuiCol_Text,
-			ImVec4(0.40f, 0.70f, 1.00f, 1.0f));
+		ImGui::PushStyleColor(ImGuiCol_Text, ATMobileCol(pal.textTitle));
 		ImGui::TextUnformatted(title);
 		ImGui::PopStyleColor();
 		ImGui::SetWindowFontScale(1.0f);
@@ -88,7 +103,7 @@ void RenderMobileModalSheet(const ATMobileUIState &mobileState) {
 		ImGui::Spacing();
 	}
 	ImGui::PushTextWrapPos(sheetW - dp(24.0f));
-	ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.90f, 0.92f, 0.96f, 1));
+	ImGui::PushStyleColor(ImGuiCol_Text, ATMobileCol(pal.text));
 	ImGui::TextUnformatted(body);
 	ImGui::PopStyleColor();
 	ImGui::PopTextWrapPos();
@@ -120,44 +135,29 @@ void RenderMobileModalSheet(const ATMobileUIState &mobileState) {
 		float gap = dp(12.0f);
 		float halfW = (rowW - gap) * 0.5f;
 
-		ImGui::PushStyleColor(ImGuiCol_Button,
-			ImVec4(0.30f, 0.32f, 0.38f, 1));
-		ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
-			ImVec4(0.38f, 0.40f, 0.48f, 1));
-		ImGui::PushStyleColor(ImGuiCol_ButtonActive,
-			ImVec4(0.22f, 0.24f, 0.30f, 1));
-		if (ImGui::Button("Cancel", ImVec2(halfW, btnH))) {
+		// Cancel = neutral card surface; Confirm = accent.  Matches the
+		// rest of Gaming Mode's lifted-card button silhouette.
+		if (ATTouchButton("Cancel", ImVec2(halfW, btnH))) {
 			s_confirmActive = false;
 			s_confirmAction = nullptr;
 		}
-		ImGui::PopStyleColor(3);
 
 		ImGui::SameLine(0.0f, gap);
 
-		ImGui::PushStyleColor(ImGuiCol_Button,
-			ImVec4(0.25f, 0.55f, 0.90f, 1));
-		ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
-			ImVec4(0.30f, 0.62f, 0.95f, 1));
-		ImGui::PushStyleColor(ImGuiCol_ButtonActive,
-			ImVec4(0.20f, 0.48f, 0.85f, 1));
-		if (ImGui::Button("Confirm", ImVec2(halfW, btnH))) {
+		if (ATTouchButton("Confirm", ImVec2(halfW, btnH),
+			ATTouchButtonStyle::Accent))
+		{
 			auto act = s_confirmAction;
 			s_confirmActive = false;
 			s_confirmAction = nullptr;
 			if (act) act();
 		}
-		ImGui::PopStyleColor(3);
 	} else {
-		ImGui::PushStyleColor(ImGuiCol_Button,
-			ImVec4(0.25f, 0.55f, 0.90f, 1));
-		ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
-			ImVec4(0.30f, 0.62f, 0.95f, 1));
-		ImGui::PushStyleColor(ImGuiCol_ButtonActive,
-			ImVec4(0.20f, 0.48f, 0.85f, 1));
-		if (ImGui::Button("OK", ImVec2(-1, btnH))) {
+		if (ATTouchButton("OK", ImVec2(-1, btnH),
+			ATTouchButtonStyle::Accent))
+		{
 			s_infoModalOpen = false;
 		}
-		ImGui::PopStyleColor(3);
 	}
 
 	ImGui::End();

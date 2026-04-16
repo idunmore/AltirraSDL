@@ -48,10 +48,12 @@ void RenderMobileAbout(ATSimulator &sim, ATUIState &uiState,
 	ATMobileUIState &mobileState, SDL_Window *window)
 {
 	ImGuiIO &io = ImGui::GetIO();
+	const ATMobilePalette &pal = ATMobileGetPalette();
 
-	// Full-screen dark background
+	// Full-screen palette-aware background so the About screen adopts
+	// the current theme's window colour instead of a flat dark slab.
 	ImGui::GetBackgroundDrawList()->AddRectFilled(
-		ImVec2(0, 0), io.DisplaySize, IM_COL32(20, 22, 30, 255));
+		ImVec2(0, 0), io.DisplaySize, pal.windowBg);
 
 	float insetT = (float)mobileState.layout.insets.top;
 	float insetB = (float)mobileState.layout.insets.bottom;
@@ -85,13 +87,14 @@ void RenderMobileAbout(ATSimulator &sim, ATUIState &uiState,
 
 		ImGui::Dummy(ImVec2(0, dp(24.0f)));
 
-		// Large Altirra title
+		// Large Altirra title — uses the palette's title accent so the
+		// light theme gets a readable dark-blue instead of pale grey.
 		{
 			const char *title = "Altirra";
 			ImGui::SetWindowFontScale(2.2f);
 			float tw = ImGui::CalcTextSize(title).x;
 			ImGui::SetCursorPosX((w - tw) * 0.5f);
-			ImGui::TextColored(ImVec4(1, 1, 1, 1), "%s", title);
+			ImGui::TextColored(ATMobileCol(pal.textTitle), "%s", title);
 			ImGui::SetWindowFontScale(1.0f);
 		}
 
@@ -102,7 +105,7 @@ void RenderMobileAbout(ATSimulator &sim, ATUIState &uiState,
 			const char *sub = "Atari 800/XL/5200 Emulator";
 			float tw = ImGui::CalcTextSize(sub).x;
 			ImGui::SetCursorPosX((w - tw) * 0.5f);
-			ImGui::TextColored(ImVec4(0.75f, 0.80f, 0.90f, 1), "%s", sub);
+			ImGui::TextColored(ATMobileCol(pal.text), "%s", sub);
 		}
 
 		ImGui::Dummy(ImVec2(0, dp(6.0f)));
@@ -112,7 +115,7 @@ void RenderMobileAbout(ATSimulator &sim, ATUIState &uiState,
 			const char *sub2 = "SDL3 + Dear ImGui cross-platform frontend";
 			float tw = ImGui::CalcTextSize(sub2).x;
 			ImGui::SetCursorPosX((w - tw) * 0.5f);
-			ImGui::TextColored(ImVec4(0.60f, 0.65f, 0.75f, 1), "%s", sub2);
+			ImGui::TextColored(ATMobileCol(pal.textMuted), "%s", sub2);
 		}
 
 		ImGui::Dummy(ImVec2(0, dp(24.0f)));
@@ -133,25 +136,29 @@ void RenderMobileAbout(ATSimulator &sim, ATUIState &uiState,
 		ATTouchDragScroll();
 
 		ImGui::PushTextWrapPos(w - dp(16.0f));
-		ImGui::TextColored(ImVec4(0.85f, 0.88f, 0.94f, 1),
+		ImGui::TextColored(ATMobileCol(pal.text),
 			"Altirra is an Atari 800/800XL/5200 emulator authored by "
 			"Avery Lee.  This Android build uses the AltirraSDL "
 			"cross-platform frontend, which replaces the original Win32 "
 			"UI with SDL3 + Dear ImGui for portability.");
 		ImGui::Dummy(ImVec2(0, dp(12.0f)));
 
-		ImGui::TextColored(ImVec4(0.85f, 0.88f, 0.94f, 1),
+		ImGui::TextColored(ATMobileCol(pal.text),
 			"The emulation core is cycle-accurate and identical across "
 			"platforms — only the UI, display, audio and input layers "
 			"are platform-specific.");
 		ImGui::Dummy(ImVec2(0, dp(12.0f)));
 
-		ImGui::TextColored(ImVec4(0.85f, 0.88f, 0.94f, 1),
+		ImGui::TextColored(ATMobileCol(pal.text),
 			"Original Altirra Copyright (C) Avery Lee.\n"
 			"Licensed under GNU GPL v2 or later.");
 		ImGui::Dummy(ImVec2(0, dp(8.0f)));
 
-		ImGui::TextColored(ImVec4(0.95f, 0.90f, 0.70f, 1),
+		// Contribution credit — palette's accent for a subtle highlight
+		// in both themes (warm amber on dark → dark-blue accent on
+		// light).  Uses the accent since that's the colour already
+		// reserved for "highlighted foreground".
+		ImGui::TextColored(ATMobileCol(pal.accent),
 			"SDL / Android port by Jakub 'Ilmenit' Debski.");
 		ImGui::Dummy(ImVec2(0, dp(4.0f)));
 
@@ -163,13 +170,13 @@ void RenderMobileAbout(ATSimulator &sim, ATUIState &uiState,
 			case 2: presetLabel = "Quality"; break;
 			case 3: presetLabel = "Custom"; break;
 			}
-			ImGui::TextColored(ImVec4(0.70f, 0.75f, 0.85f, 1),
+			ImGui::TextColored(ATMobileCol(pal.textMuted),
 				"Performance preset: %s (change in Settings > "
 				"Performance).", presetLabel);
 		}
 		ImGui::Dummy(ImVec2(0, dp(12.0f)));
 
-		ImGui::TextColored(ImVec4(0.85f, 0.88f, 0.94f, 1),
+		ImGui::TextColored(ATMobileCol(pal.text),
 			"Third-party components:\n"
 			"  - SDL3  (zlib license)\n"
 			"  - Dear ImGui  (MIT license)\n"
@@ -180,16 +187,14 @@ void RenderMobileAbout(ATSimulator &sim, ATUIState &uiState,
 		ATTouchEndDragScroll();
 		ImGui::EndChild();
 
-		// Close button pinned to the bottom
-		ImGui::PushStyleColor(ImGuiCol_Button,
-			ImVec4(0.25f, 0.55f, 0.90f, 1.0f));
-		ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
-			ImVec4(0.30f, 0.62f, 0.95f, 1.0f));
-		ImGui::PushStyleColor(ImGuiCol_ButtonActive,
-			ImVec4(0.20f, 0.48f, 0.85f, 1.0f));
-		if (ImGui::Button("Close", ImVec2(-1, closeH)))
+		// Close button pinned to the bottom — Accent variant so it
+		// reads as the primary action and matches the rest of Gaming
+		// Mode's visual language.
+		if (ATTouchButton("Close", ImVec2(-1, closeH),
+			ATTouchButtonStyle::Accent))
+		{
 			mobileState.currentScreen = ATMobileUIScreen::HamburgerMenu;
-		ImGui::PopStyleColor(3);
+		}
 	}
 	ImGui::End();
 }
@@ -202,10 +207,11 @@ void RenderFirstRunWizard(ATSimulator &sim, ATUIState &uiState,
 	ATMobileUIState &mobileState, SDL_Window *window)
 {
 	ImGuiIO &io = ImGui::GetIO();
+	const ATMobilePalette &pal = ATMobileGetPalette();
 
-	// Full-screen dark background
+	// Full-screen palette-aware background — themes switch cleanly.
 	ImGui::GetBackgroundDrawList()->AddRectFilled(
-		ImVec2(0, 0), io.DisplaySize, IM_COL32(20, 22, 30, 255));
+		ImVec2(0, 0), io.DisplaySize, pal.windowBg);
 
 	// Inset window inside safe area so the title doesn't disappear
 	// under the status bar and the skip button doesn't hide behind
@@ -250,7 +256,8 @@ void RenderFirstRunWizard(ATSimulator &sim, ATUIState &uiState,
 				ImGui::SetWindowFontScale(2.0f);
 				float tw = ImGui::CalcTextSize(title).x;
 				ImGui::SetCursorPosX((w - tw) * 0.5f);
-				ImGui::TextColored(ImVec4(1, 1, 1, 1), "%s", title);
+				ImGui::TextColored(ATMobileCol(pal.textTitle),
+					"%s", title);
 				ImGui::SetWindowFontScale(1.0f);
 			}
 
@@ -260,7 +267,7 @@ void RenderFirstRunWizard(ATSimulator &sim, ATUIState &uiState,
 				const char *sub = "Step 1 of 2";
 				ImVec2 ts = ImGui::CalcTextSize(sub);
 				ImGui::SetCursorPosX((w - ts.x) * 0.5f);
-				ImGui::TextColored(ImVec4(0.75f, 0.75f, 0.82f, 1),
+				ImGui::TextColored(ATMobileCol(pal.textMuted),
 					"%s", sub);
 			}
 
@@ -280,8 +287,7 @@ void RenderFirstRunWizard(ATSimulator &sim, ATUIState &uiState,
 				float bodyX = (w - wrapW) * 0.5f;
 				ImGui::SetCursorPosX(bodyX);
 				ImGui::PushTextWrapPos(bodyX + wrapW);
-				ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.90f, 1),
-					"%s", body);
+				ImGui::TextColored(ATMobileCol(pal.text), "%s", body);
 				ImGui::PopTextWrapPos();
 			}
 
@@ -291,23 +297,17 @@ void RenderFirstRunWizard(ATSimulator &sim, ATUIState &uiState,
 			float pgBtnH = dp(56.0f);
 
 			ImGui::SetCursorPosX((w - pgBtnW) * 0.5f);
-			ImGui::PushStyleColor(ImGuiCol_Button,
-				ImVec4(0.25f, 0.55f, 0.90f, 1));
-			ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
-				ImVec4(0.30f, 0.60f, 0.95f, 1));
-			ImGui::PushStyleColor(ImGuiCol_ButtonActive,
-				ImVec4(0.20f, 0.50f, 0.85f, 1));
-			if (ImGui::Button("Open Android Settings",
-				ImVec2(pgBtnW, pgBtnH)))
+			if (ATTouchButton("Open Android Settings",
+				ImVec2(pgBtnW, pgBtnH),
+				ATTouchButtonStyle::Accent))
 			{
 				ATAndroid_OpenManageStorageSettings();
 			}
-			ImGui::PopStyleColor(3);
 
 			ImGui::Dummy(ImVec2(0, dp(12.0f)));
 
 			ImGui::SetCursorPosX((w - pgBtnW) * 0.5f);
-			if (ImGui::Button("Continue Without Access",
+			if (ATTouchButton("Continue Without Access",
 				ImVec2(pgBtnW, pgBtnH)))
 			{
 				// Advance to the ROM-folder step.  The file browser
@@ -333,7 +333,7 @@ void RenderFirstRunWizard(ATSimulator &sim, ATUIState &uiState,
 			ImGui::SetWindowFontScale(2.0f);
 			float tw = ImGui::CalcTextSize(title).x;
 			ImGui::SetCursorPosX((w - tw) * 0.5f);
-			ImGui::TextColored(ImVec4(1, 1, 1, 1), "%s", title);
+			ImGui::TextColored(ATMobileCol(pal.textTitle), "%s", title);
 			ImGui::SetWindowFontScale(1.0f);
 		}
 
@@ -344,7 +344,7 @@ void RenderFirstRunWizard(ATSimulator &sim, ATUIState &uiState,
 			const char *sub = "Atari 800/XL/5200 Emulator";
 			ImVec2 ts = ImGui::CalcTextSize(sub);
 			ImGui::SetCursorPosX((w - ts.x) * 0.5f);
-			ImGui::TextColored(ImVec4(0.75f, 0.75f, 0.82f, 1), "%s", sub);
+			ImGui::TextColored(ATMobileCol(pal.textMuted), "%s", sub);
 		}
 
 		ImGui::Dummy(ImVec2(0, dp(24.0f)));
@@ -358,7 +358,7 @@ void RenderFirstRunWizard(ATSimulator &sim, ATUIState &uiState,
 			float bodyX = (w - wrapW) * 0.5f;
 			ImGui::SetCursorPosX(bodyX);
 			ImGui::PushTextWrapPos(bodyX + wrapW);
-			ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.90f, 1), "%s", body);
+			ImGui::TextColored(ATMobileCol(pal.text), "%s", body);
 			ImGui::PopTextWrapPos();
 		}
 
@@ -369,26 +369,23 @@ void RenderFirstRunWizard(ATSimulator &sim, ATUIState &uiState,
 		float btnH = dp(56.0f);
 
 		ImGui::SetCursorPosX((w - btnW) * 0.5f);
-		ImGui::PushStyleColor(ImGuiCol_Button,
-			ImVec4(0.25f, 0.55f, 0.90f, 1));
-		ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
-			ImVec4(0.30f, 0.60f, 0.95f, 1));
-		ImGui::PushStyleColor(ImGuiCol_ButtonActive,
-			ImVec4(0.20f, 0.50f, 0.85f, 1));
-		if (ImGui::Button("Select ROM Folder", ImVec2(btnW, btnH))) {
+		if (ATTouchButton("Select ROM Folder", ImVec2(btnW, btnH),
+			ATTouchButtonStyle::Accent))
+		{
 			s_romFolderMode = true;
 			s_fileBrowserNeedsRefresh = true;
 			mobileState.currentScreen = ATMobileUIScreen::FileBrowser;
 			SetFirstRunComplete();
 		}
-		ImGui::PopStyleColor(3);
 
 		ImGui::Dummy(ImVec2(0, dp(12.0f)));
 
 		ImGui::SetCursorPosX((w - btnW) * 0.5f);
 		// Note: avoid Unicode dashes — ImGui's default font doesn't ship
 		// the U+2014 em-dash glyph, so it renders as a fallback '?'.
-		if (ImGui::Button("Skip - Use Built-in Kernel", ImVec2(btnW, btnH))) {
+		if (ATTouchButton("Skip - Use Built-in Kernel",
+			ImVec2(btnW, btnH)))
+		{
 			mobileState.currentScreen = ATMobileUIScreen::None;
 			SetFirstRunComplete();
 		}
@@ -405,15 +402,16 @@ void RenderFirstRunWizard(ATSimulator &sim, ATUIState &uiState,
 // Design:
 //   - Positioned just below the top bar (console keys), centered
 //     horizontally.  Visible without covering the display area.
-//   - Solid opaque pill with an accent-tinted button.
+//   - Palette-aware opaque pill with an accent button — readable on
+//     both Dark and Light themes (the previous hard-coded near-black
+//     pill washed out the Load Game button on a light background).
 //   - No separate title — the button label and a compact subtitle
 //     carry the message.
-//   - Single ImGui window with an opaque WindowBg (no ForegroundDraw
-//     overlay, which would cover the button text).
 void RenderLoadGamePrompt(ATSimulator &sim, ATUIState &uiState,
 	ATMobileUIState &mobileState)
 {
 	ImGuiIO &io = ImGui::GetIO();
+	const ATMobilePalette &pal = ATMobileGetPalette();
 
 	const char *hintAscii = mobileState.showHamburgerMenu
 		? "or tap the menu icon for more options"
@@ -452,9 +450,9 @@ void RenderLoadGamePrompt(ATSimulator &sim, ATUIState &uiState,
 	float pillX = (io.DisplaySize.x - pillW) * 0.5f;
 	float pillY = insetT + topBarH + dp(16.0f);
 
-	// Opaque dark pill with accent outline.  Drawing via WindowBg
-	// avoids the earlier bug where a ForegroundDrawList overlay was
-	// covering the button text.
+	// Palette-driven pill background + accent border.  Using the
+	// modal-sheet colours keeps Light theme legible against a bright
+	// AltirraOS boot screen underneath.
 	ImGui::SetNextWindowPos(ImVec2(pillX, pillY));
 	ImGui::SetNextWindowSize(ImVec2(pillW, pillH));
 
@@ -464,11 +462,8 @@ void RenderLoadGamePrompt(ATSimulator &sim, ATUIState &uiState,
 	style.WindowRounding   = dp(16.0f);
 	style.WindowBorderSize = dp(2.0f);
 
-	ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.08f, 0.10f, 0.15f, 0.96f));
-	ImGui::PushStyleColor(ImGuiCol_Border,    ImVec4(0.27f, 0.51f, 0.82f, 1.0f));
-	ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.25f, 0.55f, 0.90f, 1.0f));
-	ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.62f, 0.95f, 1.0f));
-	ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.20f, 0.48f, 0.85f, 1.0f));
+	ImGui::PushStyleColor(ImGuiCol_WindowBg, ATMobileCol(pal.modalBg));
+	ImGui::PushStyleColor(ImGuiCol_Border,   ATMobileCol(pal.modalBorder));
 
 	ImGui::Begin("##LoadPrompt", nullptr,
 		ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize
@@ -477,7 +472,9 @@ void RenderLoadGamePrompt(ATSimulator &sim, ATUIState &uiState,
 
 	// Primary action button — centered horizontally inside the pill.
 	ImGui::SetCursorPos(ImVec2((pillW - btnW) * 0.5f, padY));
-	if (ImGui::Button("Load Game", ImVec2(btnW, btnH))) {
+	if (ATTouchButton("Load Game", ImVec2(btnW, btnH),
+		ATTouchButtonStyle::Accent))
+	{
 		s_romFolderMode = false;
 		mobileState.currentScreen = ATMobileUIScreen::FileBrowser;
 		s_fileBrowserNeedsRefresh = true;
@@ -489,13 +486,13 @@ void RenderLoadGamePrompt(ATSimulator &sim, ATUIState &uiState,
 		ImGui::Dummy(ImVec2(0, dp(6.0f)));
 		if (hintSize.y <= ImGui::GetTextLineHeight() + 1.0f) {
 			ImGui::SetCursorPosX((pillW - hintSingleLineW) * 0.5f);
-			ImGui::TextColored(ImVec4(0.70f, 0.75f, 0.82f, 1),
+			ImGui::TextColored(ATMobileCol(pal.textMuted),
 				"%s", hintAscii);
 		} else {
 			ImGui::SetCursorPosX(padX);
 			ImGui::PushTextWrapPos(padX + hintWrapW);
 			ImGui::PushStyleColor(ImGuiCol_Text,
-				ImVec4(0.70f, 0.75f, 0.82f, 1));
+				ATMobileCol(pal.textMuted));
 			ImGui::TextWrapped("%s", hintAscii);
 			ImGui::PopStyleColor();
 			ImGui::PopTextWrapPos();
@@ -504,7 +501,7 @@ void RenderLoadGamePrompt(ATSimulator &sim, ATUIState &uiState,
 
 	ImGui::End();
 
-	ImGui::PopStyleColor(5);
+	ImGui::PopStyleColor(2);
 	style.WindowRounding   = prevRounding;
 	style.WindowBorderSize = prevBorder;
 }

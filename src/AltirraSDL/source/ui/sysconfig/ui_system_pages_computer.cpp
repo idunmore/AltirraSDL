@@ -622,23 +622,33 @@ void RenderMemoryCategory(ATSimulator &sim) {
 
 	ImGui::SeparatorText("65C816 high memory");
 
-	// Matches Windows System.HighMemBanks (Auto/-1, or explicit bank counts)
+	// Matches Windows System.HighMemBanks menu items (cmds.cpp:927-933).
+	// Bank counts map to (banks * 64K) of extended memory above bank 0:
+	//   -1 = Auto, 0 = None, 1 = 64K, 3 = 192K, 15 = 960K, 63 = 4032K, 255 = 16320K.
+	// 65C816 exposes banks 1..255 (256 total banks including bank 0), so
+	// 255 is the canonical maximum — ATSimulator::SetHighMemoryBanks
+	// clamps anything above 255. The previous value 256 was silently
+	// clamped to 255, then the combo lookup failed to match 256 and the
+	// selector snapped back to "Auto".
 	static const char *kHighMemLabels[] = {
-		"Auto", "None (0)", "4 MB", "8 MB", "16 MB"
+		"Auto", "None", "64K", "192K", "960K", "4032K", "16320K"
 	};
-	static const sint32 kHighMemValues[] = { -1, 0, 64, 128, 256 };
-	bool is65C816 = (sim.GetCPU().GetCPUMode() == kATCPUMode_65C816);
+	static const sint32 kHighMemValues[] = { -1, 0, 1, 3, 15, 63, 255 };
+	constexpr int kHighMemCount = (int)(sizeof(kHighMemValues) / sizeof(kHighMemValues[0]));
+	const bool is65C816 = (sim.GetCPU().GetCPUMode() == kATCPUMode_65C816);
+	const bool highMemOverridden = sim.GetHighMemoryBanksOverridden();
 	sint32 curHighMem = sim.GetHighMemoryBanks();
 	int hmIdx = 0;
-	for (int i = 0; i < 5; ++i)
+	for (int i = 0; i < kHighMemCount; ++i)
 		if (kHighMemValues[i] == curHighMem) { hmIdx = i; break; }
-	if (!is65C816) ImGui::BeginDisabled();
-	if (ImGui::Combo("High memory banks", &hmIdx, kHighMemLabels, 5)) {
+	const bool hmDisabled = !is65C816 || highMemOverridden;
+	if (hmDisabled) ImGui::BeginDisabled();
+	if (ImGui::Combo("High memory banks", &hmIdx, kHighMemLabels, kHighMemCount)) {
 		sim.SetHighMemoryBanks(kHighMemValues[hmIdx]);
 		sim.ColdReset();
 	}
 	ImGui::SetItemTooltip("Set the amount of memory available above bank 0 for the 65C816 CPU.");
-	if (!is65C816) ImGui::EndDisabled();
+	if (hmDisabled) ImGui::EndDisabled();
 
 	ImGui::Separator();
 

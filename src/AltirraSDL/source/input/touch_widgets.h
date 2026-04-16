@@ -19,6 +19,114 @@
 #pragma once
 
 #include <vd2/system/vdtypes.h>
+#include <imgui.h>  // for ImVec2 / ImVec4 used by inline helpers below
+
+// -------------------------------------------------------------------------
+// Mobile / Gaming-Mode palette
+//
+// The Gaming-Mode UI paints most of its widgets by hand with ImDrawList
+// so colour choices are not driven by the default ImGui Dark/Light
+// themes.  This palette is the single source of truth that every
+// mobile_*.cpp file consults so a change to `g_ATOptions.mThemeMode`
+// (System / Light / Dark) re-colours the whole UI uniformly.
+//
+// Each colour is an ImU32 (premultiplied RGBA packed little-endian —
+// the value format returned by IM_COL32) and is resolved once per call
+// to ATMobileGetPalette() against the currently resolved theme.  The
+// struct is cheap to copy and safe to capture by value.
+// -------------------------------------------------------------------------
+
+struct ATMobilePalette {
+	bool dark;
+
+	// Page / panel surfaces
+	uint32 windowBg;            // overall settings / menu background
+	uint32 windowBgTop;         // top of subtle window gradient
+	uint32 cardBg;              // resting card / category row background
+	uint32 cardBgTop;            // top of card gradient (lighter in dark, darker in light)
+	uint32 cardBgHover;         // hovered / focused card background
+	uint32 cardBgHoverTop;      // top of hovered card gradient
+	uint32 cardBorder;          // subtle 1px border around cards
+	uint32 backdropDim;         // full-screen modal dim backdrop
+
+	// Primary accent (blue on both themes, calibrated for contrast)
+	uint32 accent;
+	uint32 accentHover;
+	uint32 accentPressed;
+	uint32 accentSoft;          // low-alpha accent for focus rings
+	uint32 accentTop;           // gradient top for accent fills
+
+	// Text
+	uint32 text;                // primary body text
+	uint32 textMuted;           // secondary / subtitle text
+	uint32 textOnAccent;        // text drawn on an accent background
+	uint32 textSection;         // section header text (slightly tinted)
+	uint32 textTitle;           // title text in modal sheets
+
+	// Toggle / slider track
+	uint32 trackOff;
+	uint32 trackOn;
+	uint32 thumb;
+
+	// Segmented control
+	uint32 segBgInactive;
+	uint32 segBgInactiveTop;
+	uint32 segBgHover;
+	uint32 segBgHoverTop;
+	uint32 segBgActive;
+	uint32 segBgActiveTop;
+	uint32 segBorder;
+	uint32 segFocus;
+
+	// Row hover / focus overlay (drawn on top of card bg)
+	uint32 rowHover;
+	uint32 rowFocus;
+
+	// Modal sheet
+	uint32 modalBg;
+	uint32 modalBgTop;
+	uint32 modalBorder;
+
+	// Generic button (e.g. header back-arrow) — tints only
+	uint32 buttonHover;         // low-alpha foreground tint on hover
+	uint32 buttonActive;        // same, pressed
+
+	// Semantic state colours (calibrated per-theme for readability)
+	uint32 warning;             // amber — e.g. "disk modified" tag
+	uint32 danger;              // red   — e.g. destructive state warnings
+	uint32 success;             // green — e.g. "saved" confirmation tag
+};
+
+// Fetch the palette for the currently active theme.  Cheap; call per
+// frame rather than caching across frames so a live theme switch takes
+// effect without an explicit invalidation pass.
+const ATMobilePalette &ATMobileGetPalette();
+
+// ImU32 → ImVec4 conversion for ImGui PushStyleColor / TextColored
+// sites that need a palette colour.  Inline so there is no link-time
+// duplication — each TU gets its own stamp.
+inline ImVec4 ATMobileCol(uint32 c) {
+	return ImVec4(
+		((c >> IM_COL32_R_SHIFT) & 0xFF) / 255.0f,
+		((c >> IM_COL32_G_SHIFT) & 0xFF) / 255.0f,
+		((c >> IM_COL32_B_SHIFT) & 0xFF) / 255.0f,
+		((c >> IM_COL32_A_SHIFT) & 0xFF) / 255.0f);
+}
+
+// Convenience: wrap TextWrapped in a PushStyleColor(textMuted).  Saves
+// the six-line Push/TextWrapped/Pop boilerplate that appears on every
+// hint caption in the mobile settings pages.
+void ATTouchMutedText(const char *text);
+
+// Draw a subtle vertical gradient inside [p1,p2] going from `topCol`
+// at the top to `bottomCol` at the bottom, with rounded corners.
+// Thin wrapper around ImDrawList::AddRectFilledMultiColor that also
+// handles the rounded-corner fallback (ImGui's multi-colour rect does
+// not natively support rounding — we stamp a matching rounded rect on
+// top at `bottomCol` alpha 0 and rely on the gradient showing through).
+// Using the simpler non-rounded multicolor rect where rounding==0.
+void ATMobileDrawGradientRect(const ImVec2 &p1, const ImVec2 &p2,
+	uint32 topCol, uint32 bottomCol, float rounding);
 
 // Animated toggle switch.  Full-row (56dp tall) hit area, label on
 // the left, pill track on the right.  Returns true on change.
@@ -42,6 +150,44 @@ bool ATTouchSlider(const char *label, int *value, int minv, int maxv,
 // standard spacing above and below.  Drop-in replacement for
 // `ImGui::SeparatorText` that matches the rest of the touch UI.
 void ATTouchSection(const char *label);
+
+// Styled button.  Card-surface gradient background, palette-aware
+// hover/focus/active states, 56dp minimum touch height, full-width
+// or custom-sized.  Replaces raw ImGui::Button inside Gaming Mode so
+// every interactive surface shares the same lifted-card aesthetic as
+// the Settings category rows.
+//
+// Variants:
+//   Neutral — card-gradient background, body text colour.  Use for
+//             list items, menu entries, secondary actions.
+//   Accent  — primary-blue gradient, white text.  Use for the hero
+//             action on a screen (Boot Game, Confirm, etc.).
+//   Danger  — warning-red gradient, white text.  Destructive actions
+//             (Delete, Exit without saving, etc.).
+//   Subtle  — fully transparent background with a low-alpha hover
+//             tint.  Use for header icon buttons (back arrow, close)
+//             where a card would crowd the layout.
+//
+// `size` follows the ImGui::Button convention: pass 0 in either axis
+// to auto-size, -FLT_MIN (or -1) to fill the available axis extent.
+// Returns true on the frame the button is clicked.
+enum class ATTouchButtonStyle {
+	Neutral,
+	Accent,
+	Danger,
+	Subtle,
+};
+
+bool ATTouchButton(const char *label, const ImVec2 &size,
+	ATTouchButtonStyle style = ATTouchButtonStyle::Neutral);
+
+// List-item row.  Full-width, two-line (title + subtitle) card with
+// an optional chevron on the right.  Used by the Settings home screen
+// for category rows, and by the file browser / hamburger menu for
+// list entries.  Returns true on click.  The `selected` flag paints
+// the accent colour so the row stands out from its peers.
+bool ATTouchListItem(const char *title, const char *subtitle,
+	bool selected = false, bool chevron = true);
 
 // Touch-drag scroll for the current scrollable window / BeginChild.
 // Call at the top of any child that the user should be able to

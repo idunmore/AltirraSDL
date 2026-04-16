@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # appimage.sh — Wrap the package_altirra output in an AppDir and produce
-# a distro-independent AltirraSDL-<ver>-x86_64.AppImage.
+# a distro-independent AltirraSDL-<ver>-linux-<arch>.AppImage.
 #
 # Prerequisites (satisfied by build.sh --appimage):
 #   - The CMake "package_altirra" target has been built, producing
-#     build/<preset>/AltirraSDL-<ver>/ with AltirraSDL, libSDL3.so.0,
-#     optionally librashader.so, extras/, and Copying.
+#     build/<preset>/AltirraSDL-<ver>/ with AltirraSDL (SDL3 linked
+#     statically by default), optionally librashader.so, extras/, and
+#     Copying.  If ALTIRRA_STATIC_SDL3=OFF was passed, libSDL3.so.0
+#     will also be present and is bundled automatically.
 #
 # Requires on the host:
 #   - wget or curl (to fetch linuxdeploy on first run)
@@ -14,7 +16,7 @@
 #     is used as a fallback.
 #
 # Produces:
-#   build/linux/AltirraSDL-<version>-x86_64.AppImage
+#   build/linux/AltirraSDL-<version>-linux-<arch>.AppImage
 
 [ -z "${C_RESET:-}" ] && source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
@@ -63,11 +65,15 @@ if [ -f "$PKG_DIR/libSDL3.so.0" ]; then
     cp -a "$PKG_DIR/libSDL3.so.0" "$APPDIR/usr/bin/"
     # Some loaders look for libSDL3.so; provide a symlink to be safe.
     ln -sf libSDL3.so.0 "$APPDIR/usr/bin/libSDL3.so"
-    ok "Bundled libSDL3.so.0"
+    ok "Bundled libSDL3.so.0 (shared-SDL3 build)"
 else
-    # System SDL3 path — the user linked against a distro package.
-    # linuxdeploy will pick it up via ldd.
-    warn "libSDL3.so.0 not found in package dir — relying on linuxdeploy to bundle it"
+    # Default path — SDL3 is linked statically into the AltirraSDL
+    # binary, so there is no libSDL3.so.0 to bundle.  linuxdeploy still
+    # copies ldd-visible dependencies (libc, libstdc++, libgcc_s, libm,
+    # libdl, libpthread), but NOT X11/Wayland/PulseAudio/ALSA/libdecor —
+    # those are dlopen'd by SDL3 at runtime and must exist on the target
+    # system.  This is always true on a glibc-2.35+ desktop Linux.
+    info "libSDL3.so.0 not present — SDL3 is linked statically into the binary"
 fi
 
 if [ -f "$PKG_DIR/librashader.so" ]; then
@@ -146,8 +152,9 @@ fi
 # appimage plugin.  OUTPUT / VERSION are the deprecated aliases — set both
 # so the script keeps working across linuxdeploy versions.
 cd "$OUT_DIR"
-LDAI_OUTPUT="AltirraSDL-${VERSION}-${LD_ARCH}.AppImage" \
-OUTPUT="AltirraSDL-${VERSION}-${LD_ARCH}.AppImage" \
+APPIMAGE_NAME="AltirraSDL-${VERSION}-linux-${LD_ARCH}.AppImage"
+LDAI_OUTPUT="$APPIMAGE_NAME" \
+OUTPUT="$APPIMAGE_NAME" \
 LINUXDEPLOY_OUTPUT_VERSION="$VERSION" \
 VERSION="$VERSION" \
 NO_STRIP=1 \
@@ -158,10 +165,15 @@ NO_STRIP=1 \
         --output appimage \
     || die "linuxdeploy failed"
 
-APPIMAGE_PATH="$OUT_DIR/AltirraSDL-${VERSION}-${LD_ARCH}.AppImage"
+APPIMAGE_PATH="$OUT_DIR/$APPIMAGE_NAME"
 if [ ! -f "$APPIMAGE_PATH" ]; then
     # linuxdeploy sometimes ignores OUTPUT and names the file itself.
-    APPIMAGE_PATH="$(find "$OUT_DIR" -maxdepth 1 -name '*.AppImage' -newer "$APPDIR/AppRun" | head -1)"
+    # If it produced a file without the -linux- infix (older behaviour),
+    # rename it to the canonical name.
+    LEGACY_APPIMAGE="$(find "$OUT_DIR" -maxdepth 1 -name '*.AppImage' -newer "$APPDIR/AppRun" | head -1)"
+    if [ -n "$LEGACY_APPIMAGE" ] && [ -f "$LEGACY_APPIMAGE" ]; then
+        mv "$LEGACY_APPIMAGE" "$APPIMAGE_PATH"
+    fi
 fi
 [ -f "$APPIMAGE_PATH" ] || die "AppImage was not produced"
 

@@ -122,9 +122,14 @@ jobs:
           # so a pure-console SDL3 build is acceptable and keeps
           # FetchContent from erroring out if any single X11 dev
           # sub-package's version check trips SDL3's feature probes.
+          # ALTIRRA_STATIC_SDL3=OFF: 04_paint's packaging step below
+          # copies libSDL3.so* next to the example binary. That only
+          # works when SDL3 is built as a shared library, so opt out
+          # of the desktop static default here.
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DALTIRRA_BRIDGE_SERVER=ON \
+            -DALTIRRA_STATIC_SDL3=OFF \
             -DSDL_UNIX_CONSOLE_BUILD=ON
 
       - name: Build AltirraBridgeServer
@@ -307,9 +312,15 @@ jobs:
       - name: Configure
         shell: bash
         run: |
+          # ALTIRRA_STATIC_SDL3=OFF: 04_paint is bundled with a sidecar
+          # libSDL3.0.dylib (brew-provided, rpath-rewritten) — opt out
+          # of the desktop static default so find_package finds the
+          # brew dylib and the packaging step below has something to
+          # copy next to the example binary.
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DALTIRRA_BRIDGE_SERVER=ON \
+            -DALTIRRA_STATIC_SDL3=OFF \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
 
       - name: Build AltirraBridgeServer
@@ -497,8 +508,13 @@ jobs:
           # <wchar.h> SIMD-intrinsic issue that the preset path
           # somehow avoids; rather than chase the diff, reuse the
           # known-working preset verbatim.
+          # ALTIRRA_STATIC_SDL3=OFF: 04_paint needs a shared SDL3.dll
+          # for the example-bundling step below (find_package(SDL3) +
+          # SDL3.dll copied next to the binary). Opt out of the
+          # desktop static default that the main windows.yml uses.
           cmake --preset windows-sdl-release `
-            -DALTIRRA_BRIDGE_SERVER=ON
+            -DALTIRRA_BRIDGE_SERVER=ON `
+            -DALTIRRA_STATIC_SDL3=OFF
 
       - name: Build AltirraBridgeServer
         shell: pwsh

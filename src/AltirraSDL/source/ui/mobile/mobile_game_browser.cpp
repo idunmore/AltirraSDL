@@ -329,12 +329,29 @@ static const char *MediaTypeIcon(GameMediaType type) {
 }
 
 static ImU32 MediaTypeColor(GameMediaType type) {
+	// Semantic per-type badge colours.  Two calibrated palettes: the
+	// Dark set is tuned to pop off the near-black thumbnail canvas, the
+	// Light set is deeper/more saturated so it reads against off-white
+	// cards instead of washing out.  Keep the hue assignments identical
+	// (blue=disk, green=exe, amber=cart, purple=cas) so muscle memory
+	// from Dark mode carries over.
+	const bool dark = ATMobileGetPalette().dark;
 	switch (type) {
-		case GameMediaType::Disk:       return IM_COL32(74, 144, 217, 255);
-		case GameMediaType::Executable: return IM_COL32(123, 198, 126, 255);
-		case GameMediaType::Cartridge:  return IM_COL32(232, 168, 56, 255);
-		case GameMediaType::Cassette:   return IM_COL32(192, 132, 216, 255);
-		default:                        return IM_COL32(128, 128, 128, 255);
+		case GameMediaType::Disk:
+			return dark ? IM_COL32( 74, 144, 217, 255)
+			            : IM_COL32( 32,  92, 176, 255);
+		case GameMediaType::Executable:
+			return dark ? IM_COL32(123, 198, 126, 255)
+			            : IM_COL32( 52, 140,  72, 255);
+		case GameMediaType::Cartridge:
+			return dark ? IM_COL32(232, 168,  56, 255)
+			            : IM_COL32(176, 110,  14, 255);
+		case GameMediaType::Cassette:
+			return dark ? IM_COL32(192, 132, 216, 255)
+			            : IM_COL32(128,  64, 160, 255);
+		default:
+			return dark ? IM_COL32(128, 128, 128, 255)
+			            : IM_COL32( 90,  96, 108, 255);
 	}
 }
 
@@ -458,7 +475,7 @@ static void RenderVariantPicker(ATSimulator &sim, ATMobileUIState &mobileState) 
 				color);
 			ImGui::SetCursorPosX(ImGui::GetCursorPosX() + dp(12.0f));
 
-			if (ImGui::Button(btnLabel, ImVec2(-1, btnH))) {
+			if (ATTouchButton(btnLabel, ImVec2(-1, btnH))) {
 				LaunchGame(sim, mobileState, s_variantPickerEntry, i);
 				s_variantPickerOpen = false;
 			}
@@ -467,8 +484,11 @@ static void RenderVariantPicker(ATSimulator &sim, ATMobileUIState &mobileState) 
 		}
 
 		ImGui::Spacing();
-		if (ImGui::Button("Cancel", ImVec2(-1, dp(40.0f))))
+		if (ATTouchButton("Cancel", ImVec2(-1, dp(40.0f)),
+			ATTouchButtonStyle::Subtle))
+		{
 			s_variantPickerOpen = false;
+		}
 	}
 	ImGui::End();
 }
@@ -565,6 +585,7 @@ static void RenderGameTile(ATSimulator &sim, ATMobileUIState &mobileState,
 
 	bool hovered = ImGui::IsItemHovered() || ImGui::IsItemFocused();
 
+	const ATMobilePalette &pal = ATMobileGetPalette();
 	ImVec2 imgTL = cursor;
 	ImVec2 imgBR(cursor.x + tileW, cursor.y + imageH);
 
@@ -628,7 +649,7 @@ static void RenderGameTile(ATSimulator &sim, ATMobileUIState &mobileState,
 	// Hover/focus border
 	if (hovered) {
 		dl->AddRect(imgTL, imgBR,
-			IM_COL32(100, 180, 255, 200), dp(4.0f), 0, dp(2.0f));
+			pal.rowFocus, dp(4.0f), 0, dp(2.0f));
 	}
 
 	// Game name below tile (centered, clipped)
@@ -638,8 +659,7 @@ static void RenderGameTile(ATSimulator &sim, ATMobileUIState &mobileState,
 	ImVec2 nameSize = ImGui::CalcTextSize(nameU8.c_str());
 	float nameX = cursor.x + (tileW - nameSize.x) * 0.5f;
 	if (nameX < cursor.x) nameX = cursor.x;
-	dl->AddText(ImVec2(nameX, nameY),
-		IM_COL32(220, 220, 220, 255), nameU8.c_str());
+	dl->AddText(ImVec2(nameX, nameY), pal.text, nameU8.c_str());
 	ImGui::PopClipRect();
 }
 
@@ -685,6 +705,7 @@ static void RenderGameRow(ATSimulator &sim, ATMobileUIState &mobileState,
 
 	// Draw the row content on top of the selectable
 	ImDrawList *dl = ImGui::GetWindowDrawList();
+	const ATMobilePalette &pal = ATMobileGetPalette();
 
 	float thumbSize = rowH - dp(8.0f);
 	float thumbX = cursor.x + dp(4.0f);
@@ -728,8 +749,7 @@ static void RenderGameRow(ATSimulator &sim, ATMobileUIState &mobileState,
 
 		float badgeX = cursor.x + indicatorW + pad;
 		float textYBadge = cursor.y + (rowH - ImGui::GetTextLineHeight()) * 0.5f;
-		dl->AddText(ImVec2(badgeX, textYBadge),
-			IM_COL32(180, 180, 180, 255), badge);
+		dl->AddText(ImVec2(badgeX, textYBadge), pal.textMuted, badge);
 
 		nameStartX = badgeX + dp(40.0f);
 	}
@@ -742,8 +762,7 @@ static void RenderGameRow(ATSimulator &sim, ATMobileUIState &mobileState,
 
 	ImGui::PushClipRect(ImVec2(nameX, cursor.y),
 		ImVec2(nameMaxX, cursor.y + rowH), true);
-	dl->AddText(ImVec2(nameX, textY),
-		IM_COL32(255, 255, 255, 255), nameU8.c_str());
+	dl->AddText(ImVec2(nameX, textY), pal.text, nameU8.c_str());
 	ImGui::PopClipRect();
 
 	// Right side: variant count and/or time
@@ -755,7 +774,7 @@ static void RenderGameRow(ATSimulator &sim, ATMobileUIState &mobileState,
 			(int)entry.mVariants.size());
 		ImVec2 countSize = ImGui::CalcTextSize(countStr);
 		dl->AddText(ImVec2(rightX - countSize.x, textY),
-			IM_COL32(140, 140, 140, 255), countStr);
+			pal.textMuted, countStr);
 		rightX -= countSize.x + dp(8.0f);
 	}
 
@@ -763,7 +782,7 @@ static void RenderGameRow(ATSimulator &sim, ATMobileUIState &mobileState,
 		const char *timeStr = RelativeTimeStr(entry.mLastPlayed);
 		ImVec2 timeSize = ImGui::CalcTextSize(timeStr);
 		dl->AddText(ImVec2(rightX - timeSize.x, textY),
-			IM_COL32(120, 120, 120, 255), timeStr);
+			pal.textMuted, timeStr);
 	}
 }
 
@@ -804,6 +823,14 @@ void RenderGameBrowser(ATSimulator &sim, ATUIState &uiState,
 	float insetL = (float)mobileState.layout.insets.left;
 	float insetR = (float)mobileState.layout.insets.right;
 
+	// Full-screen palette-aware background — matches the rest of
+	// Gaming Mode (About, Disk, Settings, File Browser).
+	{
+		const ATMobilePalette &bgPal = ATMobileGetPalette();
+		ImGui::GetBackgroundDrawList()->AddRectFilled(
+			ImVec2(0, 0), io.DisplaySize, bgPal.windowBg);
+	}
+
 	ImGui::SetNextWindowPos(ImVec2(insetL, insetT));
 	ImGui::SetNextWindowSize(ImVec2(
 		io.DisplaySize.x - insetL - insetR,
@@ -811,7 +838,8 @@ void RenderGameBrowser(ATSimulator &sim, ATUIState &uiState,
 
 	ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar
 		| ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove
-		| ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings;
+		| ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings
+		| ImGuiWindowFlags_NoBackground;
 
 	if (ImGui::Begin("##GameBrowser", nullptr, flags)) {
 
@@ -849,10 +877,11 @@ void RenderGameBrowser(ATSimulator &sim, ATUIState &uiState,
 		}
 
 		// ── Row 1: Hardware info ─────────────────────────────────
+		const ATMobilePalette &palBrowser = ATMobileGetPalette();
 		{
 			VDStringA hwInfo = BuildHardwareInfoStr(sim);
 			int gameCount = (int)s_allGamesIndices.size();
-			ImGui::TextColored(ImVec4(0.55f, 0.60f, 0.70f, 1.0f),
+			ImGui::TextColored(ATMobileCol(palBrowser.textMuted),
 				"ALTIRRA  %s  (%d game%s)",
 				hwInfo.c_str(), gameCount, gameCount == 1 ? "" : "s");
 
@@ -860,10 +889,10 @@ void RenderGameBrowser(ATSimulator &sim, ATUIState &uiState,
 				int found = s_gameLibrary->GetScanProgress();
 				VDStringA status = s_gameLibrary->GetScanStatus();
 				if (status.empty())
-					ImGui::TextColored(ImVec4(0.45f, 0.65f, 0.90f, 1.0f),
+					ImGui::TextColored(ATMobileCol(palBrowser.textSection),
 						"Scanning... %d found", found);
 				else
-					ImGui::TextColored(ImVec4(0.45f, 0.65f, 0.90f, 1.0f),
+					ImGui::TextColored(ATMobileCol(palBrowser.textSection),
 						"Scanning %s... %d found",
 						status.c_str(), found);
 			}
@@ -871,44 +900,58 @@ void RenderGameBrowser(ATSimulator &sim, ATUIState &uiState,
 
 		// ── Row 2: Action buttons ────────────────────────────────
 		const auto &libSettings = s_gameLibrary->GetSettings();
-		float btnH = dp(44.0f);
+		float btnH = dp(48.0f);
 		{
-			ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.20f, 0.45f, 0.78f, 1.0f));
-			ImGui::PushStyleColor(ImGuiCol_ButtonHovered,  ImVec4(0.25f, 0.52f, 0.85f, 1.0f));
-			ImGui::PushStyleColor(ImGuiCol_ButtonActive,   ImVec4(0.16f, 0.40f, 0.72f, 1.0f));
-
-			if (ImGui::Button("Boot Game", ImVec2(0, btnH))) {
+			// Boot Game is the hero action — accent gradient.  Every
+			// other button uses the neutral card-gradient style so the
+			// bar reads as a cohesive surface with one stand-out.
+			if (ATTouchButton("Boot Game", ImVec2(0, btnH),
+				ATTouchButtonStyle::Accent))
+			{
 				s_romFolderMode = false;
 				mobileState.currentScreen = ATMobileUIScreen::FileBrowser;
 				s_fileBrowserNeedsRefresh = true;
 			}
 
 			ImGui::SameLine();
-			if (ImGui::Button("Boot Empty", ImVec2(0, btnH))) {
+			if (ATTouchButton("Boot Empty", ImVec2(0, btnH))) {
 				mobileState.gameLoaded = true;
 				mobileState.currentScreen = ATMobileUIScreen::None;
 				sim.ColdReset();
 				sim.Resume();
 			}
 
-			ImGui::PopStyleColor(3);
-
 			ImGui::SameLine();
 			{
+				// Two-button segmented toggle so both view modes stay
+				// visible — the previous "flip the label" button hid
+				// the choice the user was about to make.  The Accent
+				// variant indicates the currently active mode.
 				bool isGrid = libSettings.mViewMode == 1;
-				float viewW = dp(60.0f);
-				if (ImGui::Button(isGrid ? "Grid##view" : "List##view",
-					ImVec2(viewW, btnH)))
-				{
+				float viewW = dp(56.0f);
+				auto setMode = [&](int mode) {
 					GameLibrarySettings settings = libSettings;
-					settings.mViewMode = isGrid ? 0 : 1;
+					settings.mViewMode = mode;
 					s_gameLibrary->SetSettings(settings);
 					s_gameLibrary->SaveSettingsToRegistry();
+				};
+				if (ATTouchButton("Grid##view", ImVec2(viewW, btnH),
+					isGrid ? ATTouchButtonStyle::Accent
+					       : ATTouchButtonStyle::Neutral))
+				{
+					if (!isGrid) setMode(1);
+				}
+				ImGui::SameLine(0, dp(2.0f));
+				if (ATTouchButton("List##view", ImVec2(viewW, btnH),
+					!isGrid ? ATTouchButtonStyle::Accent
+					        : ATTouchButtonStyle::Neutral))
+				{
+					if (isGrid) setMode(0);
 				}
 			}
 
 			ImGui::SameLine();
-			if (ImGui::Button("Settings", ImVec2(0, btnH))) {
+			if (ATTouchButton("Settings", ImVec2(0, btnH))) {
 				s_settingsPage = ATMobileSettingsPage::Home;
 				s_settingsReturnScreen = ATMobileUIScreen::GameBrowser;
 				mobileState.currentScreen = ATMobileUIScreen::Settings;
@@ -916,7 +959,7 @@ void RenderGameBrowser(ATSimulator &sim, ATUIState &uiState,
 
 #ifndef __ANDROID__
 			ImGui::SameLine();
-			if (ImGui::Button("Exit Gaming Mode", ImVec2(0, btnH))) {
+			if (ATTouchButton("Exit Gaming Mode", ImVec2(0, btnH))) {
 				ATUISetMode(ATUIMode::Desktop);
 				ATUISaveMode();
 				float cs = SDL_GetDisplayContentScale(SDL_GetDisplayForWindow(window));
@@ -988,6 +1031,21 @@ void RenderGameBrowser(ATSimulator &sim, ATUIState &uiState,
 				ImGui::SameLine(0, dp(6.0f));
 			}
 #else
+			// Base chip colours so inactive letters AND the search
+			// button adopt the same segmented-bar surface as the rest
+			// of Gaming Mode on both themes (ImGui's default Button is
+			// tinted blue regardless of theme and looked out of place
+			// against the palette-aware cards).  Popped at the end of
+			// the search-button block below.
+			ImGui::PushStyleColor(ImGuiCol_Button,
+				ATMobileCol(palBrowser.segBgInactive));
+			ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+				ATMobileCol(palBrowser.segBgHover));
+			ImGui::PushStyleColor(ImGuiCol_ButtonActive,
+				ATMobileCol(palBrowser.accentPressed));
+			ImGui::PushStyleColor(ImGuiCol_Text,
+				ATMobileCol(palBrowser.text));
+
 			// On desktop, use letter buttons that wrap to the next row
 			// when they don't fit the available width.
 			{
@@ -1025,9 +1083,11 @@ void RenderGameBrowser(ATSimulator &sim, ATUIState &uiState,
 						ImGui::BeginDisabled();
 					if (active) {
 						ImGui::PushStyleColor(ImGuiCol_Button,
-							ImVec4(0.25f, 0.55f, 0.90f, 1.0f));
+							ATMobileCol(palBrowser.accent));
 						ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
-							ImVec4(0.30f, 0.60f, 0.95f, 1.0f));
+							ATMobileCol(palBrowser.accentHover));
+						ImGui::PushStyleColor(ImGuiCol_Text,
+							ATMobileCol(palBrowser.textOnAccent));
 					}
 
 					char btnId[8];
@@ -1050,11 +1110,13 @@ void RenderGameBrowser(ATSimulator &sim, ATUIState &uiState,
 						letterBarHasFocus = true;
 
 					if (active)
-						ImGui::PopStyleColor(2);
+						ImGui::PopStyleColor(3);
 					if (!avail)
 						ImGui::EndDisabled();
 				}
 
+				// Base chip colours stay pushed through the search
+				// button below so it matches the letter bar visually.
 				ImGui::PopStyleVar(2);
 
 				// Search button on the same wrapping row
@@ -1064,6 +1126,8 @@ void RenderGameBrowser(ATSimulator &sim, ATUIState &uiState,
 						ImGui::SameLine(0, dp(6.0f));
 				}
 			}
+			// Note: base chip colours are popped at the end of the
+			// Search block below.
 #endif
 
 			// Search button / bar
@@ -1140,6 +1204,11 @@ void RenderGameBrowser(ATSimulator &sim, ATUIState &uiState,
 					}
 				}
 			}
+
+#ifndef __ANDROID__
+			// Pop the 4 base chip colours pushed before the letter bar.
+			ImGui::PopStyleColor(4);
+#endif
 		}
 
 		ImGui::Separator();
@@ -1174,7 +1243,9 @@ void RenderGameBrowser(ATSimulator &sim, ATUIState &uiState,
 			ImVec2 btnSize(dp(240.0f), dp(48.0f));
 			ImGui::SetCursorPos(ImVec2(centerX - btnSize.x * 0.5f,
 				centerY + dp(96.0f)));
-			if (ImGui::Button("Open Settings", btnSize)) {
+			if (ATTouchButton("Open Settings", btnSize,
+				ATTouchButtonStyle::Accent))
+			{
 				s_settingsPage = ATMobileSettingsPage::GameLibrary;
 				s_settingsReturnScreen = ATMobileUIScreen::GameBrowser;
 				mobileState.currentScreen = ATMobileUIScreen::Settings;
@@ -1182,7 +1253,7 @@ void RenderGameBrowser(ATSimulator &sim, ATUIState &uiState,
 
 			ImGui::SetCursorPos(ImVec2(centerX - btnSize.x * 0.5f,
 				centerY + dp(160.0f)));
-			if (ImGui::Button("Boot Atari without game", btnSize)) {
+			if (ATTouchButton("Boot Atari without game", btnSize)) {
 				mobileState.gameLoaded = true;
 				mobileState.currentScreen = ATMobileUIScreen::None;
 				g_sim.ColdReset();
@@ -1259,7 +1330,7 @@ void RenderGameBrowser(ATSimulator &sim, ATUIState &uiState,
 			if (!s_lastPlayedIndices.empty()) {
 				ImGui::PushID("lp");
 				ImGui::PushStyleColor(ImGuiCol_Text,
-					ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+					ATMobileCol(palBrowser.textMuted));
 				ImGui::TextUnformatted("LAST PLAYED");
 				ImGui::PopStyleColor();
 				ImGui::Spacing();
@@ -1282,7 +1353,7 @@ void RenderGameBrowser(ATSimulator &sim, ATUIState &uiState,
 				snprintf(label, sizeof(label), "ALL GAMES (%d)",
 					(int)s_allGamesIndices.size());
 				ImGui::PushStyleColor(ImGuiCol_Text,
-					ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+					ATMobileCol(palBrowser.textMuted));
 				ImGui::TextUnformatted(label);
 				ImGui::PopStyleColor();
 				ImGui::Spacing();
@@ -1322,7 +1393,7 @@ void RenderGameBrowser(ATSimulator &sim, ATUIState &uiState,
 			if (!s_lastPlayedIndices.empty()) {
 				ImGui::PushID("lp");
 				ImGui::PushStyleColor(ImGuiCol_Text,
-					ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+					ATMobileCol(palBrowser.textMuted));
 				ImGui::TextUnformatted("LAST PLAYED");
 				ImGui::PopStyleColor();
 				ImGui::Spacing();
@@ -1342,7 +1413,7 @@ void RenderGameBrowser(ATSimulator &sim, ATUIState &uiState,
 				snprintf(sectionLabel, sizeof(sectionLabel),
 					"ALL GAMES (%d)", (int)s_allGamesIndices.size());
 				ImGui::PushStyleColor(ImGuiCol_Text,
-					ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+					ATMobileCol(palBrowser.textMuted));
 				ImGui::TextUnformatted(sectionLabel);
 				ImGui::PopStyleColor();
 				ImGui::Spacing();

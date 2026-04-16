@@ -47,15 +47,25 @@ The `build.sh` script automates the CMake workflow on all platforms.
 
 | File | Contents |
 |------|----------|
-| `build/<preset>/src/AltirraSDL/AltirraSDL` | Executable |
+| `build/<preset>/src/AltirraSDL/AltirraSDL` | Executable (SDL3 statically linked in) |
 | `build/<preset>/AltirraSDL-<ver>-<platform>.zip` | Binary distribution (with `--package`) |
 | `build/<preset>/AltirraSDL-<ver>-macos.dmg` | macOS disk image (with `--package`, macOS only) |
+| `build/linux/AltirraSDL-<ver>-linux-<arch>.AppImage` | Linux AppImage (with `--appimage`) |
 | `build/<preset>/AltirraSDL-<ver>-src.tar.gz` | Source archive (with `--source`) |
 
-The binary archive follows Altirra's distribution convention:
+The CI workflows rename the macOS `.zip` / `.dmg` to include the CPU
+architecture (e.g. `AltirraSDL-<ver>-macos-arm64.dmg`) before
+uploading release artifacts.  Local `./build.sh --package` output
+keeps the unsuffixed names shown above.
+
+By default SDL3 and SDL3_image are linked statically (see
+`-DALTIRRA_STATIC_SDL3=ON`, on by default for desktop), so the binary
+archive contains just the self-contained executable plus optional
+librashader:
 ```
 AltirraSDL-4.40-linux.zip
-    AltirraSDL          (executable)
+    AltirraSDL          (executable — SDL3 + SDL3_image linked in)
+    librashader.so      (optional, with --librashader)
     Copying             (GPL v2+ license)
     extras/
         customeffects/  (shader/effect presets)
@@ -63,6 +73,10 @@ AltirraSDL-4.40-linux.zip
         deviceserver/   (Python scripts)
         readme.txt
 ```
+
+To fall back to shared-library SDL3 (drops libSDL3.so / SDL3.dll /
+libSDL3.0.dylib next to the binary for easy upgrade), pass
+`-DALTIRRA_STATIC_SDL3=OFF` via `--cmake`.
 
 ### All Options
 
@@ -469,18 +483,20 @@ warning block reminding you of this when a system SDL3 is detected.
 ./build.sh --release --librashader --package
 ```
 
-On macOS `--package` automatically sets `-DALTIRRA_FETCH_SDL3=ON` so
-SDL3 is built from source alongside AltirraSDL (see the "Packaging
-implies a self-contained build" block in `build.sh`). Source-built
-SDL3 has `@rpath/libSDL3.0.dylib` install names, which resolve
-correctly against the bundled dylib at runtime.
+By default (`-DALTIRRA_STATIC_SDL3=ON`), SDL3 and SDL3_image are built
+from source as static libraries and linked directly into the Mach-O
+binary, so there is no `libSDL3.0.dylib` / `libSDL3_image.0.dylib`
+sidecar in the bundle. The `--package` flag additionally forces
+FetchContent (redundant with the static default, but retained for
+users who build shared via `-DALTIRRA_STATIC_SDL3=OFF`) so the archive
+is never linked against a Homebrew path.
 
 Outputs in `build/macos-release/`:
 
 | File | Contents |
 |------|----------|
-| `AltirraSDL-<ver>-macos.zip` | Portable archive — unzip anywhere |
-| `AltirraSDL-<ver>-macos.dmg` | Drag-to-Applications disk image |
+| `AltirraSDL-<ver>-macos-<arch>.zip` | Portable archive — unzip anywhere |
+| `AltirraSDL-<ver>-macos-<arch>.dmg` | Drag-to-Applications disk image |
 
 Both archives contain the exact same `AltirraSDL-<ver>/` folder:
 
@@ -490,9 +506,8 @@ AltirraSDL-<ver>/
         Contents/
             Info.plist              (NSGameControllerUsageDescription, etc.)
             MacOS/
-                AltirraSDL          (Mach-O executable, ad-hoc codesigned)
-                libSDL3.0.dylib     (bundled, @rpath install name)
-                libSDL3_image.0.dylib
+                AltirraSDL          (Mach-O executable, ad-hoc codesigned,
+                                     SDL3 + SDL3_image linked statically)
                 librashader.dylib   (if built with --librashader)
                 fonts/
             Resources/
@@ -517,11 +532,12 @@ tagged releases are ad-hoc signed only.
 --package` on `macos-14` (Apple Silicon), then verifies both archives
 with sanity checks: the zip is inspected with `cmake -E tar tf` and
 the DMG is mounted with `hdiutil attach` to confirm the
-`AltirraSDL.app/Contents/MacOS/AltirraSDL` binary and
-`libSDL3.0.dylib` are present inside the bundle. If either check
-fails the build fails. Both archives are uploaded as a single artifact
-and attached to the rolling `nightly` prerelease (on push to `main`)
-or the tagged release (on `v*` tag push).
+`AltirraSDL.app/Contents/MacOS/AltirraSDL` binary, the bundled
+`librashader.dylib`, and the `altirra.icns` icon are present. With the
+static default no `libSDL3*.dylib` is expected in the bundle (the CI
+prints a warning if one slips through). Both archives are uploaded as
+a single artifact and attached to the rolling `nightly` prerelease
+(on push to `main`) or the tagged release (on `v*` tag push).
 
 ---
 

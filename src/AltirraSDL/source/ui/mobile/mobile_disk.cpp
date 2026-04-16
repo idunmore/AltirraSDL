@@ -58,24 +58,28 @@ void RenderMobileDiskRow(ATSimulator &sim, int driveIdx,
 
 	ImGui::PushID(driveIdx);
 
-	// Row background for visual separation
+	// Row background: gradient card, same recipe as the Settings home
+	// category rows.  Matches the rest of the Gaming-Mode UI.
 	float rowH = dp(96.0f);
 	ImVec2 cursor = ImGui::GetCursorScreenPos();
 	float availW = ImGui::GetContentRegionAvail().x;
 	ImDrawList *dl = ImGui::GetWindowDrawList();
-	dl->AddRectFilled(
-		cursor, ImVec2(cursor.x + availW, cursor.y + rowH),
-		IM_COL32(30, 35, 50, 200), dp(10.0f));
+	const ATMobilePalette &pal = ATMobileGetPalette();
+	{
+		ImVec2 cardBR(cursor.x + availW, cursor.y + rowH);
+		ATMobileDrawGradientRect(cursor, cardBR,
+			pal.cardBgTop, pal.cardBg, dp(10.0f));
+		dl->AddRect(cursor, cardBR, pal.cardBorder, dp(10.0f), 0, 1.0f);
+	}
 
 	// --- Left column: drive label + filename ---
 	float leftPad  = dp(16.0f);
 	float rightPad = dp(16.0f);
 	ImGui::SetCursorScreenPos(ImVec2(cursor.x + leftPad, cursor.y + dp(12.0f)));
 	ImGui::SetWindowFontScale(1.25f);
-	ImU32 labelCol = dirty
-		? IM_COL32(255, 200, 80, 255)
-		: IM_COL32(255, 255, 255, 255);
-	ImGui::PushStyleColor(ImGuiCol_Text, labelCol);
+	// Semantic warning colour for "modified", palette text otherwise.
+	ImU32 labelCol = dirty ? pal.warning : pal.text;
+	ImGui::PushStyleColor(ImGuiCol_Text, ATMobileCol(labelCol));
 	ImGui::Text("D%d:", driveIdx + 1);
 	ImGui::PopStyleColor();
 	ImGui::SetWindowFontScale(1.0f);
@@ -86,28 +90,24 @@ void RenderMobileDiskRow(ATSimulator &sim, int driveIdx,
 		const wchar_t *path = di.GetPath();
 		if (path && *path) {
 			VDStringA u8 = VDTextWToU8(VDStringW(path));
-			ImGui::PushStyleColor(ImGuiCol_Text,
-				ImVec4(0.80f, 0.85f, 0.92f, 1.0f));
+			ImGui::PushStyleColor(ImGuiCol_Text, ATMobileCol(pal.text));
 			ImGui::Text("%s", BasenameU8(u8.c_str()));
 			ImGui::PopStyleColor();
 		} else {
-			ImGui::PushStyleColor(ImGuiCol_Text,
-				ImVec4(0.60f, 0.65f, 0.75f, 1.0f));
+			ImGui::PushStyleColor(ImGuiCol_Text, ATMobileCol(pal.textMuted));
 			ImGui::TextUnformatted("(loaded)");
 			ImGui::PopStyleColor();
 		}
 
-		// Show "(modified)" tag if dirty
+		// Show "(modified)" tag if dirty.
 		if (dirty) {
 			ImGui::SetCursorScreenPos(ImVec2(cursor.x + leftPad, cursor.y + dp(68.0f)));
-			ImGui::PushStyleColor(ImGuiCol_Text,
-				ImVec4(1.0f, 0.78f, 0.30f, 1.0f));
+			ImGui::PushStyleColor(ImGuiCol_Text, ATMobileCol(pal.warning));
 			ImGui::TextUnformatted("modified");
 			ImGui::PopStyleColor();
 		}
 	} else {
-		ImGui::PushStyleColor(ImGuiCol_Text,
-			ImVec4(0.55f, 0.60f, 0.70f, 1.0f));
+		ImGui::PushStyleColor(ImGuiCol_Text, ATMobileCol(pal.textMuted));
 		ImGui::TextUnformatted("(empty)");
 		ImGui::PopStyleColor();
 	}
@@ -121,7 +121,9 @@ void RenderMobileDiskRow(ATSimulator &sim, int driveIdx,
 	float mountX = ejectX - btnGap - btnW;
 
 	ImGui::SetCursorScreenPos(ImVec2(mountX, btnY));
-	if (ImGui::Button("Mount", ImVec2(btnW, btnH))) {
+	if (ATTouchButton("Mount", ImVec2(btnW, btnH),
+		ATTouchButtonStyle::Accent))
+	{
 		s_diskMountTargetDrive = driveIdx;
 		s_romFolderMode = false;
 		mobileState.currentScreen = ATMobileUIScreen::FileBrowser;
@@ -130,7 +132,7 @@ void RenderMobileDiskRow(ATSimulator &sim, int driveIdx,
 
 	ImGui::SetCursorScreenPos(ImVec2(ejectX, btnY));
 	ImGui::BeginDisabled(!loaded);
-	if (ImGui::Button("Eject", ImVec2(btnW, btnH))) {
+	if (ATTouchButton("Eject", ImVec2(btnW, btnH))) {
 		try {
 			di.UnloadDisk();
 			sim.GetDiskDrive(driveIdx).SetEnabled(false);
@@ -150,9 +152,13 @@ void RenderMobileDiskManager(ATSimulator &sim, ATUIState &uiState,
 {
 	ImGuiIO &io = ImGui::GetIO();
 
-	// Full-screen dark background
-	ImGui::GetBackgroundDrawList()->AddRectFilled(
-		ImVec2(0, 0), io.DisplaySize, IM_COL32(18, 20, 28, 255));
+	// Full-screen background — palette-aware so light theme doesn't
+	// punch a black hole behind the translucent card rows.
+	{
+		const ATMobilePalette &bgPal = ATMobileGetPalette();
+		ImGui::GetBackgroundDrawList()->AddRectFilled(
+			ImVec2(0, 0), io.DisplaySize, bgPal.windowBg);
+	}
 
 	float insetT = (float)mobileState.layout.insets.top;
 	float insetB = (float)mobileState.layout.insets.bottom;
@@ -184,13 +190,19 @@ void RenderMobileDiskManager(ATSimulator &sim, ATUIState &uiState,
 
 		// Header
 		float headerH = dp(48.0f);
-		if (ImGui::Button("<", ImVec2(dp(48.0f), headerH)))
+		if (ATTouchButton("<", ImVec2(dp(48.0f), headerH),
+			ATTouchButtonStyle::Subtle))
+		{
 			mobileState.currentScreen = ATMobileUIScreen::HamburgerMenu;
+		}
 		ImGui::SameLine();
 		ImGui::SetCursorPosY(
 			ImGui::GetCursorPosY() + (headerH - ImGui::GetTextLineHeight()) * 0.5f);
 		ImGui::SetWindowFontScale(1.15f);
-		ImGui::TextColored(ImVec4(1, 1, 1, 1), "Disk Drives");
+		{
+			const ATMobilePalette &hdrPal = ATMobileGetPalette();
+			ImGui::TextColored(ATMobileCol(hdrPal.text), "Disk Drives");
+		}
 		ImGui::SetWindowFontScale(1.0f);
 
 		ImGui::Separator();
@@ -212,7 +224,7 @@ void RenderMobileDiskManager(ATSimulator &sim, ATUIState &uiState,
 
 		// Show/hide additional drives
 		ImGui::Spacing();
-		if (ImGui::Button(
+		if (ATTouchButton(
 			s_mobileShowAllDrives ? "Hide drives D5:-D15:" : "Show drives D5:-D15:",
 			ImVec2(-1, dp(48.0f))))
 		{

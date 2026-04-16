@@ -41,6 +41,7 @@
 #include "mobile_internal.h"
 #include "../gamelibrary/game_library.h"
 #include "settings.h"
+#include "options.h"
 
 #ifndef ALTIRRA_NO_SDL3_IMAGE
 #include <SDL3_image/SDL_image.h>
@@ -75,6 +76,17 @@ void RenderSettings(ATSimulator &sim, ATUIState &uiState,
 {
 	ImGuiIO &io = ImGui::GetIO();
 
+	// Full-screen palette-aware background — matches mobile_about /
+	// mobile_disk so Gaming Mode screens share one window tint.  Using
+	// NoBackground here and painting pal.windowBg manually lets the
+	// palette stay the single source of truth for the window colour
+	// across themes.
+	{
+		const ATMobilePalette &bgPal = ATMobileGetPalette();
+		ImGui::GetBackgroundDrawList()->AddRectFilled(
+			ImVec2(0, 0), io.DisplaySize, bgPal.windowBg);
+	}
+
 	float insetT = (float)mobileState.layout.insets.top;
 	float insetB = (float)mobileState.layout.insets.bottom;
 	float insetL = (float)mobileState.layout.insets.left;
@@ -86,7 +98,8 @@ void RenderSettings(ATSimulator &sim, ATUIState &uiState,
 
 	ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar
 		| ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove
-		| ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings;
+		| ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings
+		| ImGuiWindowFlags_NoBackground;
 
 	if (ImGui::Begin("##MobileSettings", nullptr, flags)) {
 		// ESC / B-button / Backspace navigates back, same as "<" arrow.
@@ -113,7 +126,9 @@ void RenderSettings(ATSimulator &sim, ATUIState &uiState,
 
 		// Header — back arrow, title reflects current sub-page.
 		float headerH = dp(48.0f);
-		if (ImGui::Button("<", ImVec2(dp(48.0f), headerH))) {
+		if (ATTouchButton("<", ImVec2(dp(48.0f), headerH),
+			ATTouchButtonStyle::Subtle))
+		{
 			if (s_settingsPage == ATMobileSettingsPage::Firmware
 				&& s_fwPicker != kATFirmwareType_Unknown)
 			{
@@ -231,6 +246,7 @@ void RenderSettings(ATSimulator &sim, ATUIState &uiState,
 
 			float rowH = dp(76.0f);
 			float rowGap = dp(10.0f);
+			const ATMobilePalette &pal = ATMobileGetPalette();
 			for (int i = 0; i < n; ++i) {
 				ImGui::PushID(i);
 				ImVec2 cursor = ImGui::GetCursorScreenPos();
@@ -250,37 +266,42 @@ void RenderSettings(ATSimulator &sim, ATUIState &uiState,
 
 				bool itemHovered = ImGui::IsItemHovered();
 				bool itemFocused = ImGui::IsItemFocused();
-				ImU32 bgColor = (itemHovered || itemFocused)
-					? IM_COL32(50, 65, 100, 220)
-					: IM_COL32(30, 35, 50, 200);
-				dl->AddRectFilled(cursor,
-					ImVec2(cursor.x + availW, cursor.y + rowH),
-					bgColor, dp(10.0f));
+				uint32 bgTop    = (itemHovered || itemFocused)
+					? pal.cardBgHoverTop : pal.cardBgTop;
+				uint32 bgBottom = (itemHovered || itemFocused)
+					? pal.cardBgHover   : pal.cardBg;
+
+				ImVec2 cardTL = cursor;
+				ImVec2 cardBR(cursor.x + availW, cursor.y + rowH);
+				// Gradient card — uses the shared helper so the
+				// rounded corners stay solid bottomCol (no corner
+				// bleed).  Hairline border on top for definition.
+				ATMobileDrawGradientRect(cardTL, cardBR,
+					bgTop, bgBottom, dp(10.0f));
+				dl->AddRect(cardTL, cardBR, pal.cardBorder,
+					dp(10.0f), 0, 1.0f);
 				if (itemFocused) {
-					dl->AddRect(cursor,
-						ImVec2(cursor.x + availW, cursor.y + rowH),
-						IM_COL32(100, 180, 255, 200), dp(10.0f),
-						0, dp(2.0f));
+					dl->AddRect(cardTL, cardBR, pal.rowFocus,
+						dp(10.0f), 0, dp(2.0f));
 				}
 
 				ImVec2 tcur(cursor.x + dp(16.0f), cursor.y + dp(12.0f));
-				dl->AddText(tcur, IM_COL32(240, 242, 248, 255),
-					cats[i].title);
+				dl->AddText(tcur, pal.text, cats[i].title);
 				ImVec2 scur(cursor.x + dp(16.0f), cursor.y + dp(44.0f));
-				dl->AddText(scur, IM_COL32(160, 175, 200, 255),
+				dl->AddText(scur, pal.textMuted,
 					cats[i].subtitle.c_str());
 
 				// Right-side chevron
 				ImVec2 chev(cursor.x + availW - dp(28.0f),
 					cursor.y + rowH * 0.5f - dp(8.0f));
-				dl->AddText(chev, IM_COL32(160, 175, 200, 255), ">");
+				dl->AddText(chev, pal.textMuted, ">");
 
 				ImGui::Dummy(ImVec2(0, rowGap));
 				ImGui::PopID();
 			}
 
 			ImGui::Dummy(ImVec2(0, dp(16.0f)));
-			if (ImGui::Button("About", ImVec2(-1, dp(56.0f)))) {
+			if (ATTouchButton("About", ImVec2(-1, dp(56.0f)))) {
 				mobileState.currentScreen = ATMobileUIScreen::About;
 			}
 
@@ -395,11 +416,9 @@ void RenderSettings(ATSimulator &sim, ATUIState &uiState,
 				ATPersistMobileEdit(kATSettingsCategory_Boot);
 			}
 		}
-		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.65f, 0.70f, 0.78f, 1));
-		ImGui::TextWrapped(
+		ATTouchMutedText(
 			"Delays program boot by a random number of cycles so "
 			"POKEY's RNG seed varies between runs.  Default: on.");
-		ImGui::PopStyleColor();
 
 		{
 			bool randomFill = sim.IsRandomFillEXEEnabled();
@@ -408,12 +427,10 @@ void RenderSettings(ATSimulator &sim, ATUIState &uiState,
 				ATPersistMobileEdit(kATSettingsCategory_Boot);
 			}
 		}
-		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.65f, 0.70f, 0.78f, 1));
-		ImGui::TextWrapped(
+		ATTouchMutedText(
 			"Fills uninitialised RAM with random bytes before a .xex "
 			"program loads.  Helps flush out games that relied on "
 			"specific power-on RAM patterns.  Default: off.");
-		ImGui::PopStyleColor();
 		} // end Machine page
 
 		// --- Sub-page: Controls ---
@@ -484,30 +501,28 @@ void RenderSettings(ATSimulator &sim, ATUIState &uiState,
 		{
 			SaveMobileConfig(mobileState);
 		}
-		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.65f, 0.70f, 0.78f, 1));
-		ImGui::TextWrapped(
+		ATTouchMutedText(
 			"Snapshots the emulator whenever the app goes to "
 			"background or is closed, so a swipe-away or an "
 			"incoming call never loses progress.");
-		ImGui::PopStyleColor();
 
 		if (ATTouchToggle("Restore on startup",
 			&mobileState.autoRestoreOnStart))
 		{
 			SaveMobileConfig(mobileState);
 		}
-		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.65f, 0.70f, 0.78f, 1));
-		ImGui::TextWrapped(
+		ATTouchMutedText(
 			"On launch, resume exactly where you left off "
 			"(requires Auto-save above).");
-		ImGui::PopStyleColor();
 
 		ImGui::Spacing();
 
 		// Manual save / load buttons — always available so the user
 		// can checkpoint a run independently of the auto-save setting.
 		float halfW = (ImGui::GetContentRegionAvail().x - dp(8.0f)) * 0.5f;
-		if (ImGui::Button("Save State Now", ImVec2(halfW, dp(56.0f)))) {
+		if (ATTouchButton("Save State Now", ImVec2(halfW, dp(56.0f)),
+			ATTouchButtonStyle::Accent))
+		{
 			try {
 				VDStringW path = QuickSaveStatePath();
 				sim.SaveState(path.c_str());
@@ -517,7 +532,7 @@ void RenderSettings(ATSimulator &sim, ATUIState &uiState,
 			}
 		}
 		ImGui::SameLine();
-		if (ImGui::Button("Load State Now", ImVec2(halfW, dp(56.0f)))) {
+		if (ATTouchButton("Load State Now", ImVec2(halfW, dp(56.0f)))) {
 			VDStringW path = QuickSaveStatePath();
 			if (!VDDoesPathExist(path.c_str())) {
 				ShowInfoModal("No State", "No saved state available to load.");
@@ -548,15 +563,12 @@ void RenderSettings(ATSimulator &sim, ATUIState &uiState,
 			IDisplayBackend *backend = ATUIGetDisplayBackend();
 			bool hwSupport = backend && backend->SupportsScreenFX();
 			if (!hwSupport) {
-				ImGui::PushStyleColor(ImGuiCol_Text,
-					ImVec4(0.70f, 0.72f, 0.78f, 1));
-				ImGui::TextWrapped(
+				ATTouchMutedText(
 					"Bloom and CRT distortion need the OpenGL display "
 					"backend.  The SDL_Renderer fallback (currently "
 					"active on this device) will accept the toggles "
 					"but silently ignore those two — scanlines still "
 					"work either way.");
-				ImGui::PopStyleColor();
 				ImGui::Spacing();
 			}
 		}
@@ -610,6 +622,33 @@ void RenderSettings(ATSimulator &sim, ATUIState &uiState,
 			}
 		}
 
+		// Theme selector.  Mirrors the Appearance page in the Desktop
+		// Settings dialog (see ui_system_pages_b.cpp / Theme combo).
+		// The switch takes effect immediately via ATUIApplyTheme(); we
+		// then flush Settings to the in-memory registry AND to disk
+		// synchronously so the choice survives an OS-side process kill,
+		// swipe-away, or crash — no dependency on clean-exit code.
+		{
+			int th = (int)g_ATOptions.mThemeMode;
+			static const char *themes[] = { "System", "Light", "Dark" };
+			if (ATTouchSegmented("Theme", &th, themes, 3)) {
+				ATOptions prev(g_ATOptions);
+				g_ATOptions.mThemeMode = (ATUIThemeMode)th;
+				if (g_ATOptions != prev) {
+					g_ATOptions.mbDirty = true;
+					ATOptionsRunUpdateCallbacks(&prev);
+					ATOptionsSave();                 // write in-memory registry
+					try { ATRegistryFlushToDisk(); } // flush to settings.ini
+					catch (...) {}
+					ATUIApplyTheme();                // live restyle
+				}
+			}
+			ATTouchMutedText(
+				"System follows your desktop's dark/light preference.  "
+				"Light and Dark override it.  Changes are saved "
+				"immediately.");
+		}
+
 		ATTouchSection("Display");
 
 		// Filter mode
@@ -644,12 +683,10 @@ void RenderSettings(ATSimulator &sim, ATUIState &uiState,
 		if (s_settingsPage == ATMobileSettingsPage::Performance) {
 		ATTouchSection("Performance Preset");
 
-		ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.65f, 0.70f, 0.78f, 1));
-		ImGui::TextWrapped(
+		ATTouchMutedText(
 			"Choose a preset that bundles visual effects and the "
 			"display filter for a consistent trade-off.  Pick "
 			"Efficient on older devices, Quality on flagships.");
-		ImGui::PopStyleColor();
 		ImGui::Spacing();
 
 		{
@@ -665,8 +702,9 @@ void RenderSettings(ATSimulator &sim, ATUIState &uiState,
 				ATMobileUI_ApplyPerformancePreset(mobileState);
 			}
 			if (mobileState.performancePreset == 3) {
+				const ATMobilePalette &warnPal = ATMobileGetPalette();
 				ImGui::PushStyleColor(ImGuiCol_Text,
-					ImVec4(1.0f, 0.78f, 0.30f, 1));
+					ATMobileCol(warnPal.warning));
 				ImGui::TextUnformatted(
 					"Preset: Custom (you've manually changed a visual "
 					"setting — pick a preset above to revert).");
@@ -715,7 +753,9 @@ void RenderSettings(ATSimulator &sim, ATUIState &uiState,
 					float btnY = cursor.y + (rowH - dp(32.0f)) * 0.5f
 						- ImGui::GetCursorScreenPos().y + ImGui::GetCursorPosY();
 					ImGui::SetCursorPosY(btnY);
-					if (ImGui::Button("X##rm", ImVec2(dp(32.0f), dp(32.0f)))) {
+					if (ATTouchButton("X##rm", ImVec2(dp(32.0f), dp(32.0f)),
+						ATTouchButtonStyle::Subtle))
+					{
 						sources.erase(sources.begin() + i);
 						lib->SetSources(sources);
 						lib->PurgeRemovedSourceEntries();
@@ -735,7 +775,9 @@ void RenderSettings(ATSimulator &sim, ATUIState &uiState,
 				}
 			}
 
-			if (ImGui::Button("+ Add Folder", ImVec2(-1, dp(44.0f)))) {
+			if (ATTouchButton("+ Add Folder", ImVec2(-1, dp(44.0f)),
+				ATTouchButtonStyle::Accent))
+			{
 				s_folderPickerMode = true;
 				s_folderPickerReturnScreen = ATMobileUIScreen::Settings;
 				s_folderPickerCallback = [](const VDStringW &path) {
@@ -785,7 +827,9 @@ void RenderSettings(ATSimulator &sim, ATUIState &uiState,
 					float btnY = cursor.y + (rowH - dp(32.0f)) * 0.5f
 						- ImGui::GetCursorScreenPos().y + ImGui::GetCursorPosY();
 					ImGui::SetCursorPosY(btnY);
-					if (ImGui::Button("X##rm", ImVec2(dp(32.0f), dp(32.0f)))) {
+					if (ATTouchButton("X##rm", ImVec2(dp(32.0f), dp(32.0f)),
+						ATTouchButtonStyle::Subtle))
+					{
 						sources.erase(sources.begin() + i);
 						lib->SetSources(sources);
 						lib->PurgeRemovedSourceEntries();
@@ -805,7 +849,9 @@ void RenderSettings(ATSimulator &sim, ATUIState &uiState,
 				}
 			}
 
-			if (ImGui::Button("+ Add Archive (ZIP)", ImVec2(-1, dp(44.0f)))) {
+			if (ATTouchButton("+ Add Archive (ZIP)",
+				ImVec2(-1, dp(44.0f)), ATTouchButtonStyle::Accent))
+			{
 				s_folderPickerMode = true;
 				s_folderPickerReturnScreen = ATMobileUIScreen::Settings;
 				s_folderPickerCallback = [](const VDStringW &path) {
@@ -897,7 +943,9 @@ void RenderSettings(ATSimulator &sim, ATUIState &uiState,
 					float btnY = cursor.y + (rowH - dp(32.0f)) * 0.5f
 						- ImGui::GetCursorScreenPos().y + ImGui::GetCursorPosY();
 					ImGui::SetCursorPosY(btnY);
-					if (ImGui::Button("X##rm", ImVec2(dp(32.0f), dp(32.0f)))) {
+					if (ATTouchButton("X##rm", ImVec2(dp(32.0f), dp(32.0f)),
+						ATTouchButtonStyle::Subtle))
+					{
 						sources.erase(sources.begin() + i);
 						lib->SetSources(sources);
 						lib->PurgeRemovedSourceEntries();
@@ -984,12 +1032,13 @@ void RenderSettings(ATSimulator &sim, ATUIState &uiState,
 
 				if (lib->IsScanning()) {
 					ImGui::BeginDisabled();
-					ImGui::Button("Scanning...",
+					ATTouchButton("Scanning...",
 						ImVec2(-1, dp(44.0f)));
 					ImGui::EndDisabled();
 				} else {
-					if (ImGui::Button("Rescan Now",
-						ImVec2(-1, dp(44.0f))))
+					if (ATTouchButton("Rescan Now",
+						ImVec2(-1, dp(44.0f)),
+						ATTouchButtonStyle::Accent))
 					{
 						lib->StartScan();
 					}
@@ -1001,7 +1050,7 @@ void RenderSettings(ATSimulator &sim, ATUIState &uiState,
 						&& GameBrowser_HasCurrentGame();
 					if (!canSet)
 						ImGui::BeginDisabled();
-					if (ImGui::Button("Save Screenshot as Game Art",
+					if (ATTouchButton("Save Screenshot as Game Art",
 						ImVec2(-1, dp(44.0f))))
 					{
 						VDStringA err = GameBrowser_SetCurrentFrameAsArt();
@@ -1018,7 +1067,7 @@ void RenderSettings(ATSimulator &sim, ATUIState &uiState,
 				}
 
 				ImGui::Spacing();
-				if (ImGui::Button("Clear Play History",
+				if (ATTouchButton("Clear Play History",
 					ImVec2(-1, dp(44.0f))))
 				{
 					lib->ClearHistory();
@@ -1026,8 +1075,12 @@ void RenderSettings(ATSimulator &sim, ATUIState &uiState,
 				}
 
 				ImGui::Spacing();
-				if (ImGui::Button("Clear Entire Library",
-					ImVec2(-1, dp(44.0f))))
+				// Destructive action — danger variant so it clearly
+				// reads as different from the other neutral buttons
+				// on the page.
+				if (ATTouchButton("Clear Entire Library",
+					ImVec2(-1, dp(44.0f)),
+					ATTouchButtonStyle::Danger))
 				{
 					ShowConfirmDialog(
 						"Clear Library",

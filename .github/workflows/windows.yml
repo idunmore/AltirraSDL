@@ -1,9 +1,10 @@
 name: Windows build
 
 # Builds AltirraSDL for Windows x64 using the windows-sdl-release CMake
-# preset and the existing build.sh / package.sh pipeline. SDL3 is fetched
-# and bundled by the package_altirra CMake target, so the resulting zip is
-# self-contained (AltirraSDL.exe + SDL3.dll + extras/).
+# preset and the existing build.sh / package.sh pipeline. SDL3 is linked
+# statically into AltirraSDL.exe by default (ALTIRRA_STATIC_SDL3=ON), so
+# the resulting zip is self-contained (AltirraSDL.exe + extras/, plus
+# librashader.dll when the vendored prebuilt is present).
 #
 # librashader.dll strategy: VENDORED, NOT BUILT IN CI.
 #   Upstream librashader stopped publishing prebuilt binaries after
@@ -129,8 +130,14 @@ jobs:
           echo "$LISTING"
           echo "$LISTING" | grep -q 'AltirraSDL.exe' \
             || { echo "ERROR: AltirraSDL.exe missing from zip"; exit 1; }
-          echo "$LISTING" | grep -q 'SDL3.dll' \
-            || { echo "ERROR: SDL3.dll missing from zip"; exit 1; }
+          # SDL3 is linked statically by default — SDL3.dll must NOT be
+          # present in the zip.  If it is, something regressed and the
+          # resulting build is bigger than it needs to be.
+          if echo "$LISTING" | grep -q 'SDL3.dll'; then
+            echo "::warning title=SDL3::SDL3.dll present in zip — expected static build (ALTIRRA_STATIC_SDL3=ON)"
+          else
+            echo "OK: no SDL3.dll in zip (SDL3 linked statically into AltirraSDL.exe)"
+          fi
           # librashader is best-effort on Windows; just report whether
           # it ended up in the zip, don't fail the workflow if it didn't.
           if echo "$LISTING" | grep -q 'librashader.dll'; then
