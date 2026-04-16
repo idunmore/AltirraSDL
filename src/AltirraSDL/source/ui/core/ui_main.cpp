@@ -594,11 +594,32 @@ void ATUIApplyTheme() {
 		style.Colors[ImGuiCol_WindowBg] = ImVec4(0.94f, 0.94f, 0.94f, alpha >= 1.0f ? 1.0f : 0.94f);
 		style.Colors[ImGuiCol_MenuBarBg] = ImVec4(0.86f, 0.86f, 0.86f, 1.0f);
 	}
+
+	// Gamepad / keyboard focus ring.  ImGui's default NavHighlight is
+	// barely visible against the Gaming-Mode palette on either theme, so
+	// paint it with the palette's accent — this keeps the ring readable
+	// and re-tunes automatically whenever the theme changes.  The ring
+	// only appears after the first gamepad/keyboard nav event, so touch
+	// users never see it.
+	{
+		uint32 nav = dark
+			? IM_COL32(102, 180, 255, 255)   // cyan-blue on dark
+			: IM_COL32( 28,  98, 196, 255);  // deep blue on light
+		style.Colors[ImGuiCol_NavHighlight] = ImVec4(
+			((nav >> IM_COL32_R_SHIFT) & 0xFF) / 255.0f,
+			((nav >> IM_COL32_G_SHIFT) & 0xFF) / 255.0f,
+			((nav >> IM_COL32_B_SHIFT) & 0xFF) / 255.0f,
+			1.0f);
+	}
 }
 
 void ATUIUpdateSystemTheme() {
 	SDL_SystemTheme sysTheme = SDL_GetSystemTheme();
 	s_systemThemeIsDark = (sysTheme == SDL_SYSTEM_THEME_DARK);
+}
+
+bool ATUIIsDarkTheme() {
+	return ResolveIsDark(g_ATOptions.mThemeMode);
 }
 
 // =========================================================================

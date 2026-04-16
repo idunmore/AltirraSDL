@@ -120,6 +120,14 @@ void RenderFileBrowser(ATSimulator &sim, ATUIState &uiState,
 
 	ImGuiIO &io = ImGui::GetIO();
 
+	// Full-screen palette-aware background so the browser stays the same
+	// tint as About / Disk Manager / Settings.
+	{
+		const ATMobilePalette &bgPal = ATMobileGetPalette();
+		ImGui::GetBackgroundDrawList()->AddRectFilled(
+			ImVec2(0, 0), io.DisplaySize, bgPal.windowBg);
+	}
+
 	// Inset inside the safe area so the header and list don't clash
 	// with the Android status bar or gesture nav.
 	float insetT = (float)mobileState.layout.insets.top;
@@ -133,7 +141,8 @@ void RenderFileBrowser(ATSimulator &sim, ATUIState &uiState,
 
 	ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar
 		| ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove
-		| ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings;
+		| ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings
+		| ImGuiWindowFlags_NoBackground;
 
 	if (ImGui::Begin("##FileBrowser", nullptr, flags)) {
 		// ESC / B-button / Backspace navigates back (same as "<" arrow).
@@ -167,7 +176,7 @@ void RenderFileBrowser(ATSimulator &sim, ATUIState &uiState,
 		float headerH = dp(48.0f);
 		ImVec2 backBtnSize(dp(48.0f), headerH);
 
-		if (ImGui::Button("<", backBtnSize)) {
+		if (ATTouchButton("<", backBtnSize, ATTouchButtonStyle::Subtle)) {
 			s_zipArchivePath.clear();
 			s_zipInternalDir.clear();
 			if (s_diskMountTargetDrive >= 0) {
@@ -231,10 +240,13 @@ void RenderFileBrowser(ATSimulator &sim, ATUIState &uiState,
 				display = shortPath;
 			}
 
-			ImGui::PushStyleColor(ImGuiCol_Text,
-				ImVec4(0.65f, 0.72f, 0.82f, 1.0f));
-			ImGui::TextUnformatted(display);
-			ImGui::PopStyleColor();
+			{
+				const ATMobilePalette &palFB = ATMobileGetPalette();
+				ImGui::PushStyleColor(ImGuiCol_Text,
+					ATMobileCol(palFB.textMuted));
+				ImGui::TextUnformatted(display);
+				ImGui::PopStyleColor();
+			}
 			if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
 				ImGui::SetTooltip("%s", dirU8.c_str());
 		}
@@ -247,23 +259,36 @@ void RenderFileBrowser(ATSimulator &sim, ATUIState &uiState,
 		// arbitrary .xex/.atr files outside the app-private directory
 		// on Android 11+ (scoped storage) without going through SAF.
 		if (!ATAndroid_HasStoragePermission()) {
-			ImGui::PushStyleColor(ImGuiCol_ChildBg,
-				ImVec4(0.30f, 0.12f, 0.12f, 0.85f));
+			// Palette-aware danger banner.  Build a ~25%-alpha overlay
+			// from the palette's semantic red so the banner reads as
+			// "warning" on both Dark (tinted near-black) and Light
+			// (rose on off-white) themes.
+			const ATMobilePalette &bPal = ATMobileGetPalette();
+			ImVec4 bannerBg = ATMobileCol(bPal.danger);
+			bannerBg.w = bPal.dark ? 0.30f : 0.16f;
+			ImGui::PushStyleColor(ImGuiCol_ChildBg, bannerBg);
+			ImGui::PushStyleColor(ImGuiCol_Border,
+				ATMobileCol(bPal.danger));
 			ImGui::BeginChild("PermBanner",
 				ImVec2(0, 0),
 				ImGuiChildFlags_Border | ImGuiChildFlags_AutoResizeY
 					| ImGuiChildFlags_NavFlattened);
 			ImGui::Spacing();
-			ImGui::TextColored(ImVec4(1, 1, 1, 1),
+			// Title uses the danger colour directly so the red reads
+			// against *either* the dark or the light banner fill.
+			ImGui::TextColored(ATMobileCol(bPal.danger),
 				"Storage access required");
+			ImGui::PushStyleColor(ImGuiCol_Text, ATMobileCol(bPal.text));
 			ImGui::TextWrapped(
 				"To see ROM and disk image files in /sdcard/Download "
 				"and other user folders, Altirra needs the system "
 				"\"All files access\" permission.  This is a special "
 				"permission you grant from Android Settings.");
+			ImGui::PopStyleColor();
 			ImGui::Spacing();
-			if (ImGui::Button("Open Settings to Grant Access",
-				ImVec2(-1, dp(48.0f))))
+			if (ATTouchButton("Open Settings to Grant Access",
+				ImVec2(-1, dp(48.0f)),
+				ATTouchButtonStyle::Danger))
 			{
 				ATAndroid_OpenManageStorageSettings();
 				ShowInfoModal("Grant Access",
@@ -272,7 +297,7 @@ void RenderFileBrowser(ATSimulator &sim, ATUIState &uiState,
 					"to the app and the file list will refresh.");
 			}
 			ImGui::EndChild();
-			ImGui::PopStyleColor();
+			ImGui::PopStyleColor(2);
 			ImGui::Spacing();
 		}
 #endif
@@ -348,17 +373,12 @@ void RenderFileBrowser(ATSimulator &sim, ATUIState &uiState,
 			if (!activePath)
 				checkActive("/");
 
-			// Highlight style for the active shortcut.
-			auto pushActiveStyle = [](bool active) {
-				if (active) {
-					ImGui::PushStyleColor(ImGuiCol_Button,
-						ImVec4(0.22f, 0.42f, 0.70f, 1.0f));
-					ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
-						ImVec4(0.26f, 0.50f, 0.80f, 1.0f));
-				}
-			};
-			auto popActiveStyle = [](bool active) {
-				if (active) ImGui::PopStyleColor(2);
+			// Helper: ATTouchButton variant for a shortcut chip.  Active
+			// = Accent (palette-coloured fill), inactive = Neutral card
+			// gradient — both are theme-aware without manual push/pop.
+			auto chipStyle = [](bool active) {
+				return active ? ATTouchButtonStyle::Accent
+				              : ATTouchButtonStyle::Neutral;
 			};
 
 			// --- ".." (Up) — first in the row for easy reach ---
@@ -372,7 +392,7 @@ void RenderFileBrowser(ATSimulator &sim, ATUIState &uiState,
 					ImGui::BeginDisabled();
 				}
 				float upW = dp(64.0f);
-				if (ImGui::Button("..##up", ImVec2(upW, shortcutH)))
+				if (ATTouchButton("..##up", ImVec2(upW, shortcutH)))
 					NavigateUp();
 				if (atRoot) {
 					ImGui::EndDisabled();
@@ -385,17 +405,17 @@ void RenderFileBrowser(ATSimulator &sim, ATUIState &uiState,
 					&& activeLen == strlen(dlPath)
 					&& strncmp(activePath, dlPath, activeLen) == 0;
 				float btnW = ImGui::CalcTextSize("Downloads").x
-					+ style.FramePadding.x * 2.0f;
+					+ dp(16.0f) * 2.0f;
 				sameLineIfFits(btnW);
-				pushActiveStyle(active);
-				if (ImGui::Button("Downloads", ImVec2(0, shortcutH))) {
+				if (ATTouchButton("Downloads", ImVec2(0, shortcutH),
+					chipStyle(active)))
+				{
 #ifdef __ANDROID__
 					JumpToDirectory(dlPath);
 #else
 					if (dlPath && *dlPath) JumpToDirectory(dlPath);
 #endif
 				}
-				popActiveStyle(active);
 			}
 
 #ifdef __ANDROID__
@@ -416,14 +436,15 @@ void RenderFileBrowser(ATSimulator &sim, ATUIState &uiState,
 						activeLen) == 0;
 
 				float btnW = ImGui::CalcTextSize(btnLabel).x
-					+ style.FramePadding.x * 2.0f;
+					+ dp(16.0f) * 2.0f;
 				sameLineIfFits(btnW);
 
 				ImGui::PushID((int)(0x1000 + vi));
-				pushActiveStyle(active);
-				if (ImGui::Button(btnLabel, ImVec2(0, shortcutH)))
+				if (ATTouchButton(btnLabel, ImVec2(0, shortcutH),
+					chipStyle(active)))
+				{
 					JumpToDirectory(vol.path.c_str());
-				popActiveStyle(active);
+				}
 				ImGui::PopID();
 			}
 #else
@@ -432,14 +453,14 @@ void RenderFileBrowser(ATSimulator &sim, ATUIState &uiState,
 					&& activeLen == strlen(homePath)
 					&& strncmp(activePath, homePath, activeLen) == 0;
 				float btnW = ImGui::CalcTextSize("Home").x
-					+ style.FramePadding.x * 2.0f;
+					+ dp(16.0f) * 2.0f;
 				sameLineIfFits(btnW);
-				pushActiveStyle(active);
-				if (ImGui::Button("Home", ImVec2(0, shortcutH))) {
+				if (ATTouchButton("Home", ImVec2(0, shortcutH),
+					chipStyle(active)))
+				{
 					if (homePath && *homePath) JumpToDirectory(homePath);
 					else JumpToDirectory("/");
 				}
-				popActiveStyle(active);
 			}
 #endif
 
@@ -448,31 +469,34 @@ void RenderFileBrowser(ATSimulator &sim, ATUIState &uiState,
 				bool active = activePath
 					&& activeLen == 1 && activePath[0] == '/';
 				sameLineIfFits(dp(40.0f));
-				pushActiveStyle(active);
-				if (ImGui::Button("/", ImVec2(dp(40.0f), shortcutH)))
+				if (ATTouchButton("/", ImVec2(dp(40.0f), shortcutH),
+					chipStyle(active)))
+				{
 					JumpToDirectory("/");
-				popActiveStyle(active);
+				}
 			}
 
 			// --- "All" toggle (show all files vs. supported only) ---
 			if (!s_romFolderMode && !s_folderPickerMode) {
 				float allW = ImGui::CalcTextSize("All (*)").x
-					+ style.FramePadding.x * 2.0f;
+					+ dp(16.0f) * 2.0f;
 				sameLineIfFits(allW);
-				pushActiveStyle(s_showAllFiles);
-				if (ImGui::Button("All (*)", ImVec2(0, shortcutH))) {
+				if (ATTouchButton("All (*)", ImVec2(0, shortcutH),
+					chipStyle(s_showAllFiles)))
+				{
 					s_showAllFiles = !s_showAllFiles;
 					s_fileBrowserNeedsRefresh = true;
 				}
-				popActiveStyle(s_showAllFiles);
 			}
 		}
 
 		// In ROM-folder mode, the user picks a directory instead of a
 		// file — show a full-width "Use This Folder" action button.
 		if (s_romFolderMode) {
-			float rowBtnH = dp(44.0f);
-			if (ImGui::Button("Use This Folder", ImVec2(-1, rowBtnH))) {
+			float rowBtnH = dp(48.0f);
+			if (ATTouchButton("Use This Folder", ImVec2(-1, rowBtnH),
+				ATTouchButtonStyle::Accent))
+			{
 				// Trigger firmware scan on current directory
 				s_romDir = s_fileBrowserDir;
 				ATFirmwareManager *fwm = g_sim.GetFirmwareManager();
@@ -515,8 +539,10 @@ void RenderFileBrowser(ATSimulator &sim, ATUIState &uiState,
 
 		// Folder-picker mode: let user select the current directory
 		if (s_folderPickerMode) {
-			float rowBtnH = dp(44.0f);
-			if (ImGui::Button("Select This Folder", ImVec2(-1, rowBtnH))) {
+			float rowBtnH = dp(48.0f);
+			if (ATTouchButton("Select This Folder", ImVec2(-1, rowBtnH),
+				ATTouchButtonStyle::Accent))
+			{
 				VDStringW selectedDir = s_fileBrowserDir;
 				s_folderPickerMode = false;
 				mobileState.currentScreen = s_folderPickerReturnScreen;
@@ -565,12 +591,15 @@ void RenderFileBrowser(ATSimulator &sim, ATUIState &uiState,
 				snprintf(label, sizeof(label), "      %s", nameU8.c_str());
 
 			ImGui::PushID((int)i);
-			bool activated = ImGui::Selectable(label,
+			bool activated = ATTouchListItem(
+				label,
+				nullptr,
 				(int)i == mobileState.selectedFileIdx,
-				ImGuiSelectableFlags_AllowOverlap, ImVec2(0, itemH));
-
-			if (activated && ATTouchIsDraggingBeyondSlop())
-				activated = false;
+				entry.isDirectory
+					|| (!insideZip && IsZipFile(entry.name.c_str())));
+			// ATTouchListItem already suppresses activation during
+			// a drag-scroll beyond the tap-slop, so no extra check
+			// is required here.
 
 			if (activated) {
 				if (entry.isDirectory) {

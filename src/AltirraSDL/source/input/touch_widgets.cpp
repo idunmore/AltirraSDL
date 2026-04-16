@@ -5,6 +5,7 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 #include "touch_widgets.h"
+#include "options.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -36,26 +37,185 @@ void UpdateContentScale() {
 	if (s_contentScale > 5.0f) s_contentScale = 5.0f;
 }
 
-// Colour palette, matching the rest of the mobile UI (dark theme
-// with a blue accent).
-constexpr ImU32 kColAccent        = IM_COL32(64, 140, 230, 255);
-constexpr ImU32 kColAccentDim     = IM_COL32(64, 140, 230, 140);
-constexpr ImU32 kColRowHover      = IM_COL32(255, 255, 255, 50);
-constexpr ImU32 kColRowFocus      = IM_COL32(100, 180, 255, 200);
-constexpr ImU32 kColTrackOff      = IM_COL32(60, 64, 80, 255);
-constexpr ImU32 kColTrackOn       = IM_COL32(64, 140, 230, 255);
-constexpr ImU32 kColThumb         = IM_COL32(240, 240, 245, 255);
-constexpr ImU32 kColSegBgInactive = IM_COL32(45, 50, 65, 255);
-constexpr ImU32 kColSegBgHover    = IM_COL32(60, 70, 95, 255);
-constexpr ImU32 kColSegBgActive   = IM_COL32(64, 140, 230, 255);
-constexpr ImU32 kColSegBorder     = IM_COL32(90, 100, 120, 255);
-constexpr ImU32 kColSegFocus      = IM_COL32(100, 180, 255, 200);
-constexpr ImU32 kColText          = IM_COL32(230, 232, 240, 255);
-constexpr ImU32 kColTextMuted     = IM_COL32(170, 180, 200, 255);
-constexpr ImU32 kColTextOnAccent  = IM_COL32(255, 255, 255, 255);
-constexpr ImU32 kColSection       = IM_COL32(110, 170, 235, 255);
+// Find the visible end of a label string — ImGui's convention is
+// that text after "##" is the widget's ID suffix and should not be
+// rendered (CalcTextSize(..., hide_text_after_double_hash=true)
+// knows this, but ImDrawList::AddText does not — it just draws the
+// raw buffer).  Match ImGui::FindRenderedTextEnd semantics.
+const char *RenderedLabelEnd(const char *label) {
+	if (!label) return nullptr;
+	const char *p = label;
+	while (*p) {
+		if (p[0] == '#' && p[1] == '#') break;
+		++p;
+	}
+	return p;
+}
 
 } // namespace
+
+// -------------------------------------------------------------------------
+// Theme palette
+// -------------------------------------------------------------------------
+
+// Single source of truth for the resolved theme — lives in ui_main.cpp
+// so it can reach s_systemThemeIsDark (refreshed on SDL_EVENT_THEME_CHANGED).
+extern bool ATUIIsDarkTheme();
+
+const ATMobilePalette &ATMobileGetPalette() {
+	// Two static palettes; re-resolve which one to return every call so a
+	// theme switch takes effect immediately.
+	static ATMobilePalette dark = []{
+		ATMobilePalette p{};
+		p.dark = true;
+
+		// Rich near-black with a very subtle cool tint so the window
+		// doesn't look like pure void; the gradient adds depth.
+		p.windowBg         = IM_COL32( 22,  25,  35, 255);
+		p.windowBgTop      = IM_COL32( 30,  34,  46, 255);
+
+		p.cardBg           = IM_COL32( 34,  40,  56, 235);
+		p.cardBgTop        = IM_COL32( 46,  54,  74, 235);
+		p.cardBgHover      = IM_COL32( 50,  65, 100, 235);
+		p.cardBgHoverTop   = IM_COL32( 66,  86, 130, 235);
+		p.cardBorder       = IM_COL32(255, 255, 255,  16);
+		p.backdropDim      = IM_COL32(  0,   0,   0, 160);
+
+		p.accent           = IM_COL32( 64, 140, 230, 255);
+		p.accentHover      = IM_COL32( 82, 158, 244, 255);
+		p.accentPressed    = IM_COL32( 44, 114, 200, 255);
+		p.accentSoft       = IM_COL32( 64, 140, 230, 140);
+		p.accentTop        = IM_COL32( 86, 160, 248, 255);
+
+		p.text             = IM_COL32(232, 236, 244, 255);
+		p.textMuted        = IM_COL32(170, 182, 206, 255);
+		p.textOnAccent     = IM_COL32(255, 255, 255, 255);
+		p.textSection      = IM_COL32(120, 180, 240, 255);
+		p.textTitle        = IM_COL32(110, 180, 255, 255);
+
+		p.trackOff         = IM_COL32( 60,  66,  84, 255);
+		p.trackOn          = p.accent;
+		p.thumb            = IM_COL32(240, 242, 248, 255);
+
+		p.segBgInactive    = IM_COL32( 45,  52,  70, 255);
+		p.segBgInactiveTop = IM_COL32( 58,  66,  88, 255);
+		p.segBgHover       = IM_COL32( 66,  78, 108, 255);
+		p.segBgHoverTop    = IM_COL32( 80,  94, 130, 255);
+		p.segBgActive      = p.accent;
+		p.segBgActiveTop   = p.accentTop;
+		p.segBorder        = IM_COL32(255, 255, 255,  22);
+		p.segFocus         = IM_COL32(110, 180, 255, 200);
+
+		p.rowHover         = IM_COL32(255, 255, 255,  22);
+		p.rowFocus         = IM_COL32(110, 180, 255, 200);
+
+		p.modalBg          = IM_COL32( 26,  32,  46, 250);
+		p.modalBgTop       = IM_COL32( 40,  48,  68, 250);
+		p.modalBorder      = IM_COL32( 70, 130, 210, 255);
+
+		p.buttonHover      = IM_COL32(255, 255, 255,  24);
+		p.buttonActive     = IM_COL32(255, 255, 255,  44);
+
+		p.warning          = IM_COL32(255, 186,  64, 255);
+		p.danger           = IM_COL32(240,  92,  92, 255);
+		p.success          = IM_COL32(110, 208, 130, 255);
+		return p;
+	}();
+
+	static ATMobilePalette light = []{
+		ATMobilePalette p{};
+		p.dark = false;
+
+		// Soft off-white with a faint cool tint — warmer than pure
+		// ImGui StyleColorsLight, closer to modern iOS/Material light.
+		p.windowBg         = IM_COL32(238, 242, 248, 255);
+		p.windowBgTop      = IM_COL32(248, 250, 254, 255);
+
+		p.cardBg           = IM_COL32(255, 255, 255, 255);
+		p.cardBgTop        = IM_COL32(252, 253, 255, 255);
+		p.cardBgHover      = IM_COL32(220, 232, 248, 255);
+		p.cardBgHoverTop   = IM_COL32(236, 244, 255, 255);
+		p.cardBorder       = IM_COL32( 20,  30,  60,  32);
+		p.backdropDim      = IM_COL32( 18,  24,  36, 110);
+
+		p.accent           = IM_COL32( 28,  98, 196, 255);
+		p.accentHover      = IM_COL32( 44, 118, 216, 255);
+		p.accentPressed    = IM_COL32( 18,  78, 168, 255);
+		p.accentSoft       = IM_COL32( 28,  98, 196, 140);
+		p.accentTop        = IM_COL32( 52, 128, 226, 255);
+
+		p.text             = IM_COL32( 24,  32,  48, 255);
+		p.textMuted        = IM_COL32( 88, 100, 124, 255);
+		p.textOnAccent     = IM_COL32(255, 255, 255, 255);
+		p.textSection      = IM_COL32( 22,  82, 172, 255);
+		p.textTitle        = IM_COL32( 22,  82, 172, 255);
+
+		p.trackOff         = IM_COL32(194, 202, 218, 255);
+		p.trackOn          = p.accent;
+		p.thumb            = IM_COL32(255, 255, 255, 255);
+
+		p.segBgInactive    = IM_COL32(226, 232, 242, 255);
+		p.segBgInactiveTop = IM_COL32(240, 244, 252, 255);
+		p.segBgHover       = IM_COL32(208, 222, 244, 255);
+		p.segBgHoverTop    = IM_COL32(224, 236, 250, 255);
+		p.segBgActive      = p.accent;
+		p.segBgActiveTop   = p.accentTop;
+		p.segBorder        = IM_COL32( 20,  30,  60,  38);
+		p.segFocus         = IM_COL32( 28,  98, 196, 200);
+
+		p.rowHover         = IM_COL32( 20,  60, 140,  20);
+		p.rowFocus         = IM_COL32( 28,  98, 196, 200);
+
+		p.modalBg          = IM_COL32(252, 253, 255, 252);
+		p.modalBgTop       = IM_COL32(255, 255, 255, 252);
+		p.modalBorder      = IM_COL32( 28,  98, 196, 255);
+
+		p.buttonHover      = IM_COL32( 20,  60, 140,  28);
+		p.buttonActive     = IM_COL32( 20,  60, 140,  52);
+
+		// Warnings in Light mode need a darker amber — a pale amber on
+		// off-white (the light cardBg) has almost no contrast.
+		p.warning          = IM_COL32(184, 108,  10, 255);
+		p.danger           = IM_COL32(186,  42,  42, 255);
+		p.success          = IM_COL32( 40, 132,  68, 255);
+		return p;
+	}();
+
+	return ATUIIsDarkTheme() ? dark : light;
+}
+
+void ATMobileDrawGradientRect(const ImVec2 &p1, const ImVec2 &p2,
+	uint32 topCol, uint32 bottomCol, float rounding)
+{
+	ImDrawList *dl = ImGui::GetWindowDrawList();
+	if (!dl) return;
+
+	// ImGui's AddRectFilledMultiColor does not honour rounding — it
+	// paints a flat axis-aligned rectangle.  Naively stamping the
+	// gradient over a rounded AddRectFilled base makes the gradient
+	// overflow into the outside-corner region (visible as sharp
+	// rectangular corners on what was supposed to be a rounded
+	// pill/card), because AddRectFilled leaves those corner pixels
+	// un-painted — the gradient is the first thing drawn there.
+	//
+	// Fix: paint the rounded base in the bottom colour, then inset
+	// the gradient horizontally by `rounding` so its rectangular
+	// bounding box fits entirely inside the horizontal extent of the
+	// rounded rect's top and bottom edges.  The rounded corner arcs
+	// stay solid bottom-colour; the interior picks up the gradient.
+	if (rounding > 0.0f) {
+		dl->AddRectFilled(p1, p2, bottomCol, rounding);
+		ImVec2 gMin(p1.x + rounding, p1.y);
+		ImVec2 gMax(p2.x - rounding, p2.y);
+		if (gMax.x > gMin.x && gMax.y > gMin.y) {
+			dl->AddRectFilledMultiColor(gMin, gMax,
+				topCol, topCol, bottomCol, bottomCol);
+		}
+	} else {
+		dl->AddRectFilledMultiColor(p1, p2, topCol, topCol,
+			bottomCol, bottomCol);
+	}
+}
 
 // -------------------------------------------------------------------------
 // Toggle switch
@@ -66,7 +226,7 @@ bool ATTouchToggle(const char *label, bool *value) {
 	ImGuiWindow *window = ImGui::GetCurrentWindow();
 	if (window->SkipItems) return false;
 
-	ImGuiIO &io = ImGui::GetIO();
+	const ATMobilePalette &pal = ATMobileGetPalette();
 
 	const float rowH    = dp(56.0f);
 	const float trackW  = dp(52.0f);
@@ -79,7 +239,6 @@ bool ATTouchToggle(const char *label, bool *value) {
 	ImVec2 rowMin(cursor.x, cursor.y);
 	ImVec2 rowMax(cursor.x + availW, cursor.y + rowH);
 
-	// Unique ID + invisible full-row hit rect
 	ImGuiID id = window->GetID(label);
 	ImRect bb(rowMin, rowMax);
 	ImGui::ItemSize(bb, 0.0f);
@@ -93,36 +252,51 @@ bool ATTouchToggle(const char *label, bool *value) {
 	bool focused = ImGui::IsItemFocused();
 
 	ImDrawList *dl = window->DrawList;
+	auto A = [](uint32 col) { return (uint32)ImGui::GetColorU32(col); };
 
-	// Row hover/focus tint
 	if (hovered || held || focused)
-		dl->AddRectFilled(rowMin, rowMax, kColRowHover, dp(6.0f));
+		dl->AddRectFilled(rowMin, rowMax, A(pal.rowHover), dp(6.0f));
 	if (focused)
-		dl->AddRect(rowMin, rowMax, kColRowFocus, dp(6.0f), 0, dp(2.0f));
+		dl->AddRect(rowMin, rowMax, A(pal.rowFocus), dp(6.0f), 0, dp(2.0f));
 
-	// Label on the left, vertically centered
 	ImVec2 ts = ImGui::CalcTextSize(label);
 	dl->AddText(
 		ImVec2(rowMin.x + padLR, rowMin.y + (rowH - ts.y) * 0.5f),
-		kColText, label);
+		A(pal.text), label);
 
-	// Track on the right
 	float trackX1 = rowMax.x - padLR;
 	float trackX0 = trackX1 - trackW;
 	float trackY0 = rowMin.y + (rowH - trackH) * 0.5f;
 	float trackY1 = trackY0 + trackH;
+	float pillR = trackH * 0.5f;
 
-	ImU32 trackCol = *value ? kColTrackOn : kColTrackOff;
+	// Solid pill — rounded silhouette, no corner bleed.  The on state
+	// additionally gets a subtle top-half gloss: a second rounded rect
+	// that reuses the pill's top corners (ImDrawFlags_RoundCornersTop)
+	// with a sharp straight bottom edge, filled in accentTop at low
+	// alpha.  This reads as "lit from above" without the rectangular
+	// corner bleed that AddRectFilledMultiColor would produce on a
+	// tight pill shape.
+	ImU32 trackCol = A(*value ? pal.trackOn : pal.trackOff);
 	dl->AddRectFilled(
 		ImVec2(trackX0, trackY0), ImVec2(trackX1, trackY1),
-		trackCol, trackH * 0.5f);
+		trackCol, pillR);
+	if (*value) {
+		uint32 glossTop = (pal.accentTop & 0x00FFFFFFu) | (90u << IM_COL32_A_SHIFT);
+		dl->AddRectFilled(
+			ImVec2(trackX0, trackY0),
+			ImVec2(trackX1, trackY0 + trackH * 0.55f),
+			A(glossTop), pillR, ImDrawFlags_RoundCornersTop);
+	}
 
-	// Thumb — fully slid when on, fully left when off.
 	float thumbCy = (trackY0 + trackY1) * 0.5f;
 	float thumbCx = *value
 		? trackX1 - trackH * 0.5f
 		: trackX0 + trackH * 0.5f;
-	dl->AddCircleFilled(ImVec2(thumbCx, thumbCy), thumbR, kColThumb, 20);
+	// Shadow under the thumb for a tactile lift, then the thumb itself.
+	dl->AddCircleFilled(ImVec2(thumbCx, thumbCy + dp(1.0f)),
+		thumbR, A(IM_COL32(0, 0, 0, 40)), 20);
+	dl->AddCircleFilled(ImVec2(thumbCx, thumbCy), thumbR, A(pal.thumb), 20);
 
 	return pressed;
 }
@@ -137,6 +311,8 @@ bool ATTouchSegmented(const char *label, int *current,
 	UpdateContentScale();
 	ImGuiWindow *window = ImGui::GetCurrentWindow();
 	if (window->SkipItems || count <= 0) return false;
+
+	const ATMobilePalette &pal = ATMobileGetPalette();
 
 	const float labelH = dp(22.0f);
 	const float barH   = dp(48.0f);
@@ -162,9 +338,11 @@ bool ATTouchSegmented(const char *label, int *current,
 	// would swallow the hover for all segments and break tapping.
 
 	ImDrawList *dl = window->DrawList;
+	auto A = [](uint32 col) { return (uint32)ImGui::GetColorU32(col); };
 
 	// Label on top
-	dl->AddText(ImVec2(rowMin.x + padLR, rowMin.y), kColTextMuted, label);
+	dl->AddText(ImVec2(rowMin.x + padLR, rowMin.y),
+		A(pal.textMuted), label);
 
 	// Bar below
 	float barY0 = rowMin.y + labelH + gapY;
@@ -184,9 +362,6 @@ bool ATTouchSegmented(const char *label, int *current,
 		ImRect segBB(ImVec2(x0, barY0), ImVec2(x1, barY1));
 		ImGui::PushID(i);
 		ImGuiID segId = window->GetID("##seg");
-		// Register the segment as a hoverable item so ButtonBehavior
-		// actually routes taps to it.  ItemAdd after the bar's
-		// ItemSize does not advance the cursor.
 		ImGui::ItemAdd(segBB, segId);
 		bool segHovered, segHeld;
 		bool segPressed = ImGui::ButtonBehavior(segBB, segId,
@@ -202,14 +377,45 @@ bool ATTouchSegmented(const char *label, int *current,
 			| (isLast ? (ImDrawFlags_RoundCornersTopRight | ImDrawFlags_RoundCornersBottomRight) : 0);
 		if (!isFirst && !isLast) cornerFlags |= ImDrawFlags_RoundCornersNone;
 
-		ImU32 segBg = active ? kColSegBgActive
-			: (segHovered || segFocused) ? kColSegBgHover
-			: kColSegBgInactive;
+		ImU32 segBg = A(active ? pal.segBgActive
+			: (segHovered || segFocused) ? pal.segBgHover
+			: pal.segBgInactive);
 		dl->AddRectFilled(segBB.Min, segBB.Max, segBg,
 			rounding, cornerFlags);
 
+		// Top highlight — a gradient overlay covering the upper
+		// ~40% of the segment, fading from a semi-transparent light
+		// tint at the top to fully transparent at the mid.  Inset
+		// horizontally by `rounding` on the first/last segment so the
+		// overlay does not bleed into the rounded corner arcs.  Every
+		// state (active / hover / inactive) gets the same treatment so
+		// the control reads as a single glossy bar rather than one
+		// lit segment next to flat neighbours.
+		{
+			float glossH = (segBB.Max.y - segBB.Min.y) * 0.45f;
+			float gX0 = segBB.Min.x + (isFirst ? rounding : 0.0f);
+			float gX1 = segBB.Max.x - (isLast  ? rounding : 0.0f);
+			ImVec2 gMin(gX0, segBB.Min.y);
+			ImVec2 gMax(gX1, segBB.Min.y + glossH);
+			int alpha = active ? 120 : (segHovered ? 70 : 50);
+			if (!pal.dark) alpha = (int)(alpha * 0.6f);
+			uint32 glossTop    = A(IM_COL32(255, 255, 255, alpha));
+			uint32 glossBottom = A(IM_COL32(255, 255, 255,  0));
+			dl->AddRectFilledMultiColor(gMin, gMax,
+				glossTop, glossTop, glossBottom, glossBottom);
+		}
+
+		// Top accent-coloured highlight line on active segment.
+		if (active) {
+			float hiY = segBB.Min.y;
+			dl->AddLine(
+				ImVec2(segBB.Min.x + (isFirst ? rounding : 0), hiY + 0.5f),
+				ImVec2(segBB.Max.x - (isLast  ? rounding : 0), hiY + 0.5f),
+				A(pal.accentTop), dp(1.5f));
+		}
+
 		if (segFocused)
-			dl->AddRect(segBB.Min, segBB.Max, kColSegFocus,
+			dl->AddRect(segBB.Min, segBB.Max, A(pal.segFocus),
 				rounding, cornerFlags, dp(2.0f));
 
 		// Label
@@ -217,7 +423,7 @@ bool ATTouchSegmented(const char *label, int *current,
 		float tx = (x0 + x1) * 0.5f - ts.x * 0.5f;
 		float ty = (barY0 + barY1) * 0.5f - ts.y * 0.5f;
 		dl->AddText(ImVec2(tx, ty),
-			active ? kColTextOnAccent : kColText,
+			A(active ? pal.textOnAccent : pal.text),
 			items[i]);
 
 		// Inter-segment dividers
@@ -225,7 +431,7 @@ bool ATTouchSegmented(const char *label, int *current,
 			dl->AddLine(
 				ImVec2(x1, barY0 + dp(6.0f)),
 				ImVec2(x1, barY1 - dp(6.0f)),
-				kColSegBorder, 1.0f);
+				A(pal.segBorder), 1.0f);
 		}
 
 		if (segPressed && *current != i) {
@@ -236,7 +442,7 @@ bool ATTouchSegmented(const char *label, int *current,
 
 	// Outer border
 	dl->AddRect(ImVec2(barX0, barY0), ImVec2(barX1, barY1),
-		kColSegBorder, rounding, 0, 1.0f);
+		A(pal.segBorder), rounding, 0, 1.0f);
 
 	ImGui::PopID();  // matches the PushID(label) at entry
 	return changed;
@@ -252,6 +458,8 @@ bool ATTouchSlider(const char *label, int *value, int minv, int maxv,
 	UpdateContentScale();
 	ImGuiWindow *window = ImGui::GetCurrentWindow();
 	if (window->SkipItems || maxv <= minv) return false;
+
+	const ATMobilePalette &pal = ATMobileGetPalette();
 
 	const float labelH = dp(22.0f);
 	const float barH   = dp(48.0f);
@@ -274,9 +482,11 @@ bool ATTouchSlider(const char *label, int *value, int minv, int maxv,
 		return false;
 
 	ImDrawList *dl = window->DrawList;
+	auto A = [](uint32 col) { return (uint32)ImGui::GetColorU32(col); };
 
 	// Label on top
-	dl->AddText(ImVec2(rowMin.x + padLR, rowMin.y), kColTextMuted, label);
+	dl->AddText(ImVec2(rowMin.x + padLR, rowMin.y),
+		A(pal.textMuted), label);
 
 	// Track
 	float trackX0 = rowMin.x + padLR + thumbR;
@@ -293,9 +503,10 @@ bool ATTouchSlider(const char *label, int *value, int minv, int maxv,
 	bool focused = ImGui::IsItemFocused();
 
 	if (hovered || focused)
-		dl->AddRectFilled(rowMin, rowMax, kColRowHover, dp(6.0f));
+		dl->AddRectFilled(rowMin, rowMax, A(pal.rowHover), dp(6.0f));
 	if (focused)
-		dl->AddRect(rowMin, rowMax, kColRowFocus, dp(6.0f), 0, dp(2.0f));
+		dl->AddRect(rowMin, rowMax, A(pal.rowFocus),
+			dp(6.0f), 0, dp(2.0f));
 
 	float t = (float)(*value - minv) / (float)(maxv - minv);
 	if (t < 0.0f) t = 0.0f;
@@ -322,19 +533,22 @@ bool ATTouchSlider(const char *label, int *value, int minv, int maxv,
 	dl->AddRectFilled(
 		ImVec2(trackX0, trackY - trackH * 0.5f),
 		ImVec2(trackX1, trackY + trackH * 0.5f),
-		kColTrackOff, trackH * 0.5f);
+		A(pal.trackOff), trackH * 0.5f);
 
 	// Active track (left of thumb)
 	dl->AddRectFilled(
 		ImVec2(trackX0, trackY - trackH * 0.5f),
 		ImVec2(thumbX,  trackY + trackH * 0.5f),
-		kColTrackOn, trackH * 0.5f);
+		A(pal.trackOn), trackH * 0.5f);
 
-	// Thumb
-	dl->AddCircleFilled(ImVec2(thumbX, trackY), thumbR, kColThumb, 24);
+	// Thumb shadow + thumb
+	dl->AddCircleFilled(ImVec2(thumbX, trackY + dp(1.0f)),
+		thumbR, A(IM_COL32(0, 0, 0, 48)), 24);
+	dl->AddCircleFilled(ImVec2(thumbX, trackY), thumbR,
+		A(pal.thumb), 24);
 	if (held)
 		dl->AddCircle(ImVec2(thumbX, trackY), thumbR + dp(4.0f),
-			kColAccentDim, 24, 2.0f);
+			A(pal.accentSoft), 24, 2.0f);
 
 	// Value label on the right
 	char valueStr[32];
@@ -342,7 +556,7 @@ bool ATTouchSlider(const char *label, int *value, int minv, int maxv,
 	ImVec2 vts = ImGui::CalcTextSize(valueStr);
 	dl->AddText(
 		ImVec2(rowMax.x - padLR - vts.x, trackY - vts.y * 0.5f),
-		kColText, valueStr);
+		A(pal.text), valueStr);
 
 	return changed;
 }
@@ -523,13 +737,312 @@ bool ATTouchIsDraggingBeyondSlop() {
 // Section header
 // -------------------------------------------------------------------------
 
+// -------------------------------------------------------------------------
+// ATTouchButton
+//
+// Draws a palette-aware, gradient-filled button at the current cursor.
+// Matches the category-card aesthetic from the settings home screen
+// so all primary interactive surfaces across Gaming Mode share one
+// visual language.
+//
+// Corner-bleed workaround: AddRectFilledMultiColor has no rounding
+// support.  We paint the rounded bottom-colour base first, then stamp
+// the gradient over the same bounding box and re-paint the rounded
+// silhouette in the bottom colour on top so the hard-cornered gradient
+// edges are masked behind the final rounded frame.  The net effect is
+// a smooth top-to-bottom fade everywhere except the inner ~1-2px of
+// each corner arc, which reads as the base colour — looks intentional.
+// -------------------------------------------------------------------------
+
+bool ATTouchButton(const char *label, const ImVec2 &sizeArg,
+	ATTouchButtonStyle style)
+{
+	UpdateContentScale();
+	ImGuiWindow *window = ImGui::GetCurrentWindow();
+	if (window->SkipItems) return false;
+
+	const ATMobilePalette &pal = ATMobileGetPalette();
+
+	// Pick top/bottom gradient colours + text colour per variant.
+	struct Colors { uint32 top, mid, bot, textCol, border; };
+	Colors c{};
+	switch (style) {
+	case ATTouchButtonStyle::Accent:
+		c.top     = pal.accentTop;
+		c.mid     = pal.accent;
+		c.bot     = pal.accentPressed;
+		c.textCol = pal.textOnAccent;
+		c.border  = pal.accentSoft;
+		break;
+	case ATTouchButtonStyle::Danger:
+		// Semantic red derived on-the-fly from palette-neutral ramps
+		// so both themes produce a recognisable warning colour.
+		c.top     = pal.dark
+			? IM_COL32(232,  92,  92, 255)
+			: IM_COL32(214,  64,  64, 255);
+		c.mid     = pal.dark
+			? IM_COL32(198,  70,  70, 255)
+			: IM_COL32(186,  42,  42, 255);
+		c.bot     = pal.dark
+			? IM_COL32(160,  50,  50, 255)
+			: IM_COL32(150,  30,  30, 255);
+		c.textCol = IM_COL32(255, 248, 248, 255);
+		c.border  = pal.dark
+			? IM_COL32(255, 120, 120, 120)
+			: IM_COL32(214,  64,  64, 140);
+		break;
+	case ATTouchButtonStyle::Subtle:
+		c.top     = 0;
+		c.mid     = 0;
+		c.bot     = 0;
+		c.textCol = pal.text;
+		c.border  = 0;
+		break;
+	case ATTouchButtonStyle::Neutral:
+	default:
+		c.top     = pal.cardBgTop;
+		c.mid     = pal.cardBg;
+		c.bot     = pal.cardBg;
+		c.textCol = pal.text;
+		c.border  = pal.cardBorder;
+		break;
+	}
+
+	// Resolve the requested size.  -FLT_MIN / -1 = fill axis; 0 = auto.
+	ImVec2 labelSize = ImGui::CalcTextSize(label, nullptr, true);
+	const float padLR = dp(16.0f);
+	const float minH  = dp(56.0f);
+	float w = sizeArg.x;
+	float h = sizeArg.y;
+	if (w <= 0.0f) {
+		float avail = ImGui::GetContentRegionAvail().x;
+		w = (w < 0.0f) ? avail : (labelSize.x + padLR * 2);
+		if (w > avail) w = avail;
+	}
+	if (h <= 0.0f) {
+		h = (h < 0.0f)
+			? ImGui::GetContentRegionAvail().y
+			: std::max(minH, labelSize.y + dp(20.0f));
+	}
+
+	ImVec2 cursor = window->DC.CursorPos;
+	ImVec2 rowMin(cursor.x, cursor.y);
+	ImVec2 rowMax(cursor.x + w, cursor.y + h);
+
+	ImGuiID id = window->GetID(label);
+	ImRect bb(rowMin, rowMax);
+	ImGui::ItemSize(bb, 0.0f);
+	if (!ImGui::ItemAdd(bb, id))
+		return false;
+
+	bool hovered, held;
+	bool pressed = ImGui::ButtonBehavior(bb, id, &hovered, &held);
+	// Touch UX: a tap that turns into a scroll drag should not fire
+	// the button.  ATTouchDragScroll sets a sticky "beyond slop" flag
+	// for the current frame; honour it by swallowing the press.
+	if (pressed && ATTouchIsDraggingBeyondSlop())
+		pressed = false;
+	bool focused = ImGui::IsItemFocused();
+
+	ImDrawList *dl = window->DrawList;
+	float rounding = dp(10.0f);
+
+	// Apply the currently-active ImGui style.Alpha (halved under
+	// BeginDisabled) to every palette colour up-front so the draw
+	// sites below don't need to know about disabled state.  Without
+	// this, a disabled ATTouchButton would render at full opacity and
+	// the user couldn't tell it was disabled.
+	auto A = [](uint32 col) { return (uint32)ImGui::GetColorU32(col); };
+	c.top     = A(c.top);
+	c.mid     = A(c.mid);
+	c.bot     = A(c.bot);
+	c.textCol = A(c.textCol);
+	c.border  = A(c.border);
+
+	// State-dependent tint.  Subtle variant skips the card entirely
+	// and only reveals a semi-transparent overlay on hover/press.
+	if (style == ATTouchButtonStyle::Subtle) {
+		uint32 tint = held     ? A(pal.buttonActive)
+		              : hovered ? A(pal.buttonHover)
+		              : 0;
+		if (tint)
+			dl->AddRectFilled(rowMin, rowMax, tint, rounding);
+		if (focused)
+			dl->AddRect(rowMin, rowMax, A(pal.rowFocus),
+				rounding, 0, dp(2.0f));
+	} else {
+		// State-dependent top/bottom colours.  Hover shifts toward the
+		// lighter top colour, press shifts toward the darker bottom.
+		uint32 topCol = c.top;
+		uint32 botCol = c.mid;
+		if (held) {
+			topCol = c.mid;
+			botCol = c.bot;
+		} else if (hovered || focused) {
+			topCol = c.top;
+			botCol = c.mid;
+		}
+
+		// Gradient card.  ATMobileDrawGradientRect insets the gradient
+		// horizontally by `rounding` so the rounded corners stay solid
+		// bottom-colour instead of bleeding the rectangular gradient
+		// silhouette into the outside-corner region.
+		ATMobileDrawGradientRect(rowMin, rowMax, topCol, botCol, rounding);
+		if (c.border) {
+			dl->AddRect(rowMin, rowMax, c.border, rounding, 0, 1.0f);
+		}
+		if (focused) {
+			dl->AddRect(rowMin, rowMax, A(pal.rowFocus),
+				rounding, 0, dp(2.0f));
+		}
+	}
+
+	// Centred label.  AddText draws the raw buffer including any
+	// "##id" suffix — find the visible end explicitly so "Grid##view"
+	// renders as "Grid" to match ImGui::Button's own behaviour.
+	if (label && *label) {
+		const char *labelEnd = RenderedLabelEnd(label);
+		float tx = rowMin.x + (w - labelSize.x) * 0.5f;
+		float ty = rowMin.y + (h - labelSize.y) * 0.5f;
+		dl->PushClipRect(rowMin, rowMax, true);
+		dl->AddText(nullptr, 0.0f, ImVec2(tx, ty),
+			c.textCol, label, labelEnd);
+		dl->PopClipRect();
+	}
+
+	return pressed;
+}
+
+// -------------------------------------------------------------------------
+// ATTouchListItem
+//
+// Two-line card row (title + subtitle) with an optional right-side
+// chevron.  Mirrors the Settings category cards so list-heavy screens
+// (file browser, disk manager, save-state slots) look consistent.
+// -------------------------------------------------------------------------
+
+bool ATTouchListItem(const char *title, const char *subtitle,
+	bool selected, bool chevron)
+{
+	UpdateContentScale();
+	ImGuiWindow *window = ImGui::GetCurrentWindow();
+	if (window->SkipItems) return false;
+
+	const ATMobilePalette &pal = ATMobileGetPalette();
+
+	const float rowH = subtitle && *subtitle ? dp(76.0f) : dp(56.0f);
+	const float padLR = dp(16.0f);
+
+	ImVec2 cursor = window->DC.CursorPos;
+	float availW = ImGui::GetContentRegionAvail().x;
+	ImVec2 rowMin(cursor.x, cursor.y);
+	ImVec2 rowMax(cursor.x + availW, cursor.y + rowH);
+
+	ImGuiID id = window->GetID(title ? title : "##item");
+	ImRect bb(rowMin, rowMax);
+	ImGui::ItemSize(bb, 0.0f);
+	if (!ImGui::ItemAdd(bb, id))
+		return false;
+
+	bool hovered, held;
+	bool pressed = ImGui::ButtonBehavior(bb, id, &hovered, &held);
+	if (pressed && ATTouchIsDraggingBeyondSlop())
+		pressed = false;
+	bool focused = ImGui::IsItemFocused();
+
+	ImDrawList *dl = window->DrawList;
+	float rounding = dp(10.0f);
+
+	// Apply style.Alpha (halved under BeginDisabled) to every colour.
+	auto A = [](uint32 col) { return (uint32)ImGui::GetColorU32(col); };
+
+	uint32 bgTop, bgBot, textCol, subCol;
+	if (selected) {
+		bgTop   = pal.accentTop;
+		bgBot   = pal.accent;
+		textCol = pal.textOnAccent;
+		subCol  = pal.textOnAccent;
+	} else if (hovered || held || focused) {
+		bgTop   = pal.cardBgHoverTop;
+		bgBot   = pal.cardBgHover;
+		textCol = pal.text;
+		subCol  = pal.textMuted;
+	} else {
+		bgTop   = pal.cardBgTop;
+		bgBot   = pal.cardBg;
+		textCol = pal.text;
+		subCol  = pal.textMuted;
+	}
+	bgTop = A(bgTop); bgBot = A(bgBot);
+	textCol = A(textCol); subCol = A(subCol);
+
+	// Gradient card — uses ATMobileDrawGradientRect which insets the
+	// gradient horizontally by `rounding` so the rounded corners stay
+	// solid bottom-colour instead of leaking the axis-aligned gradient
+	// rectangle into the outside-corner region.
+	ATMobileDrawGradientRect(rowMin, rowMax, bgTop, bgBot, rounding);
+	dl->AddRect(rowMin, rowMax, A(pal.cardBorder), rounding, 0, 1.0f);
+	if (focused) {
+		dl->AddRect(rowMin, rowMax, A(pal.rowFocus),
+			rounding, 0, dp(2.0f));
+	}
+
+	// Title — strip "##id" suffix so "[DIR] foo##42" renders as
+	// "[DIR] foo".  Matches ImGui::Text behaviour.
+	if (title && *title) {
+		const char *titleEnd = RenderedLabelEnd(title);
+		float tx = rowMin.x + padLR;
+		float ty = (subtitle && *subtitle)
+			? rowMin.y + dp(12.0f)
+			: rowMin.y + (rowH - ImGui::GetTextLineHeight()) * 0.5f;
+		float rightEdge = rowMax.x - padLR - (chevron ? dp(20.0f) : 0.0f);
+		dl->PushClipRect(ImVec2(tx, rowMin.y),
+			ImVec2(rightEdge, rowMax.y), true);
+		dl->AddText(nullptr, 0.0f, ImVec2(tx, ty),
+			textCol, title, titleEnd);
+		dl->PopClipRect();
+	}
+	// Subtitle
+	if (subtitle && *subtitle) {
+		float tx = rowMin.x + padLR;
+		float ty = rowMin.y + dp(44.0f);
+		float rightEdge = rowMax.x - padLR - (chevron ? dp(20.0f) : 0.0f);
+		const char *subEnd = RenderedLabelEnd(subtitle);
+		dl->PushClipRect(ImVec2(tx, rowMin.y),
+			ImVec2(rightEdge, rowMax.y), true);
+		dl->AddText(nullptr, 0.0f, ImVec2(tx, ty),
+			subCol, subtitle, subEnd);
+		dl->PopClipRect();
+	}
+	// Chevron
+	if (chevron) {
+		ImVec2 chev(rowMax.x - dp(24.0f),
+			rowMin.y + rowH * 0.5f - dp(8.0f));
+		dl->AddText(chev, subCol, ">");
+	}
+
+	return pressed;
+}
+
+void ATTouchMutedText(const char *text) {
+	const ATMobilePalette &pal = ATMobileGetPalette();
+	ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(
+		((pal.textMuted >> IM_COL32_R_SHIFT) & 0xFF) / 255.0f,
+		((pal.textMuted >> IM_COL32_G_SHIFT) & 0xFF) / 255.0f,
+		((pal.textMuted >> IM_COL32_B_SHIFT) & 0xFF) / 255.0f,
+		((pal.textMuted >> IM_COL32_A_SHIFT) & 0xFF) / 255.0f));
+	ImGui::TextWrapped("%s", text);
+	ImGui::PopStyleColor();
+}
+
 void ATTouchSection(const char *label) {
 	UpdateContentScale();
+	const ATMobilePalette &pal = ATMobileGetPalette();
 	ImGui::Dummy(ImVec2(0, dp(16.0f)));
 	ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(
-		((kColSection >> IM_COL32_R_SHIFT) & 0xFF) / 255.0f,
-		((kColSection >> IM_COL32_G_SHIFT) & 0xFF) / 255.0f,
-		((kColSection >> IM_COL32_B_SHIFT) & 0xFF) / 255.0f,
+		((pal.textSection >> IM_COL32_R_SHIFT) & 0xFF) / 255.0f,
+		((pal.textSection >> IM_COL32_G_SHIFT) & 0xFF) / 255.0f,
+		((pal.textSection >> IM_COL32_B_SHIFT) & 0xFF) / 255.0f,
 		1.0f));
 	ImGui::TextUnformatted(label);
 	ImGui::PopStyleColor();

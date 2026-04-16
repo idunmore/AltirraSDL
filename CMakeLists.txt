@@ -53,6 +53,37 @@ option(ALTIRRA_SDL3 "Build SDL3+ImGui frontend" ON)
 # SDL3 when available, fall back to FetchContent when it isn't.
 option(ALTIRRA_FETCH_SDL3 "Always fetch SDL3 from source (skip find_package)" OFF)
 
+# ALTIRRA_STATIC_SDL3 — link SDL3 + SDL3_image statically into the
+# AltirraSDL binary.  Default ON for desktop (Linux/macOS/Windows): the
+# resulting executable is self-contained (no sidecar libSDL3.so / .dll /
+# .dylib next to it).  Forced OFF on Android because Java SDLActivity
+# calls System.loadLibrary("SDL3") at startup and requires the .so to
+# exist as a separate file in the APK's lib/<abi>/ directory.
+#
+# Static-linking implies fetching SDL3/SDL3_image from source — a system
+# SDL3 package typically ships only the shared library, so we set
+# ALTIRRA_FETCH_SDL3 automatically whenever ALTIRRA_STATIC_SDL3 is ON.
+if(ANDROID)
+    option(ALTIRRA_STATIC_SDL3 "Link SDL3 and SDL3_image statically into AltirraSDL" OFF)
+    if(ALTIRRA_STATIC_SDL3)
+        message(WARNING
+            "ALTIRRA_STATIC_SDL3 is not supported on Android (Java "
+            "SDLActivity requires libSDL3.so to exist separately in "
+            "the APK).  Forcing OFF.")
+        set(ALTIRRA_STATIC_SDL3 OFF CACHE BOOL "" FORCE)
+    endif()
+else()
+    option(ALTIRRA_STATIC_SDL3 "Link SDL3 and SDL3_image statically into AltirraSDL" ON)
+endif()
+
+# Static-linking implies FetchContent — system SDL3 typically ships only
+# the shared library, so we can't honour a request for static with
+# find_package.
+if(ALTIRRA_STATIC_SDL3 AND NOT ALTIRRA_FETCH_SDL3)
+    message(STATUS "ALTIRRA_STATIC_SDL3=ON implies ALTIRRA_FETCH_SDL3=ON")
+    set(ALTIRRA_FETCH_SDL3 ON CACHE BOOL "" FORCE)
+endif()
+
 # ALTIRRA_SKIP_SDL3_IMAGE — build without SDL3_image entirely.  Use this
 # as an escape hatch when SDL3_image is unavailable, broken, or you just
 # want a smaller build.  Image load/save (screenshots, loading art tapes,
@@ -233,13 +264,22 @@ if(ALTIRRA_SDL3 OR NOT WIN32)
                 GIT_PROGRESS   TRUE
             )
 
-            # Build as shared library (matches system-package behavior).
-            # SDL3 is zlib-licensed so static is legally fine, but on Linux
-            # SDL3 dlopens X11/Wayland/PulseAudio/ALSA/libdecor at runtime
-            # regardless, so a "static" SDL3 isn't truly self-contained.
-            # Shared + $ORIGIN rpath + bundled .so is the standard approach.
-            set(SDL_SHARED ON  CACHE BOOL "Build SDL3 shared library" FORCE)
-            set(SDL_STATIC OFF CACHE BOOL "Build SDL3 static library" FORCE)
+            # SDL3 is zlib-licensed so either shared or static is legally fine.
+            # Static (default): linked directly into AltirraSDL, no sidecar
+            #     libSDL3.so/.dll/.dylib next to the binary.  On Linux SDL3
+            #     still dlopens X11/Wayland/PulseAudio/ALSA/libdecor at
+            #     runtime (unavoidable — those are the display/audio
+            #     backends), but those libraries are always present on a
+            #     Linux desktop, so the binary itself is self-contained.
+            # Shared: kept available behind -DALTIRRA_STATIC_SDL3=OFF for
+            #     users who want to drop in a newer SDL3 without rebuilding.
+            if(ALTIRRA_STATIC_SDL3)
+                set(SDL_SHARED OFF CACHE BOOL "Build SDL3 shared library" FORCE)
+                set(SDL_STATIC ON  CACHE BOOL "Build SDL3 static library" FORCE)
+            else()
+                set(SDL_SHARED ON  CACHE BOOL "Build SDL3 shared library" FORCE)
+                set(SDL_STATIC OFF CACHE BOOL "Build SDL3 static library" FORCE)
+            endif()
 
             # Disable SDL3 extras we don't need — speeds up the build.
             set(SDL_TEST_LIBRARY OFF CACHE BOOL "Build SDL3 test library" FORCE)
@@ -548,7 +588,22 @@ static inline void *_librashader_dlopen_macos(void) {
             # in the SDL3_image source tree, no external deps needed.
             GIT_SUBMODULES ""
         )
+
+        # SDL3_image has no dedicated shared/static option — it respects
+        # the standard CMake BUILD_SHARED_LIBS.  Save/restore around
+        # FetchContent_MakeAvailable so the override is scoped to
+        # SDL3_image only (all other AltirraSDL libraries declare
+        # STATIC / OBJECT explicitly, so the global value is harmless,
+        # but scoping keeps intent clear).
+        set(_ALTIRRA_SAVED_BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS}")
+        if(ALTIRRA_STATIC_SDL3)
+            set(BUILD_SHARED_LIBS OFF)
+        else()
+            set(BUILD_SHARED_LIBS ON)
+        endif()
         FetchContent_MakeAvailable(sdl3_image)
+        set(BUILD_SHARED_LIBS "${_ALTIRRA_SAVED_BUILD_SHARED_LIBS}")
+        unset(_ALTIRRA_SAVED_BUILD_SHARED_LIBS)
 
         if(NOT TARGET SDL3_image::SDL3_image)
             message(FATAL_ERROR

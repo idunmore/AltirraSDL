@@ -75,6 +75,11 @@ bool ATUIProcessEvent(const SDL_Event *event);
 // Theme management
 void ATUIApplyTheme();
 void ATUIUpdateSystemTheme();
+
+// Returns true if the currently resolved theme is the dark variant.
+// Accounts for ATUIThemeMode::System by consulting the last known
+// system theme (refreshed by ATUIUpdateSystemTheme).
+bool ATUIIsDarkTheme();
 bool ATUIWantCaptureKeyboard();
 bool ATUIWantCaptureMouse();
 

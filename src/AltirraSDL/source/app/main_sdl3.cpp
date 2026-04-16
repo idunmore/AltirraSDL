@@ -55,6 +55,8 @@
 #include "ui_virtual_keyboard.h"
 
 #include "simulator.h"
+#include "cassette.h"
+#include "diskinterface.h"
 #include "uikeyboard.h"
 #include <at/ataudio/audiooutput.h>
 #include "uiaccessors.h"
@@ -254,13 +256,12 @@ static void UpdateMousePosition(ATInputManager *im, float mx, float my) {
 	}
 }
 
-#ifdef __ANDROID__
 // Persist every piece of mutable state that lives only in memory:
 //   * ATSaveSettings — converts simulator + UI state (HardwareMode,
 //     VideoStandard, MemoryMode, BASIC enabled, SIO patch, display
-//     filter mode, etc.) into registry values.  Without this step the
-//     suspend-time ATRegistryFlushToDisk only persists what was already
-//     in the registry, dropping every Machine/Display page change.
+//     filter mode, mounted media, etc.) into registry values.  Without
+//     this step the final ATRegistryFlushToDisk only persists what was
+//     already in the registry, dropping every runtime-only change.
 //   * Game library cache — scan results and play history that are
 //     normally written by RecordPlay/scan completion but not on a
 //     mid-session background.
@@ -271,7 +272,10 @@ static void UpdateMousePosition(ATInputManager *im, float mx, float my) {
 //
 // Each step has its own try/catch so a failure in any one does not skip
 // the others — the final flush always attempts to run.  Mirrors the
-// clean-exit save sequence in main_sdl3.cpp:2094-2104.
+// clean-exit save sequence at the bottom of main().  Called from both
+// Android suspend (WILL_ENTER_BACKGROUND / TERMINATING) and desktop
+// TERMINATING so a forced OS shutdown doesn't lose the user's mounted
+// cart/disk or other runtime state.
 static void ATPersistAllForSuspend() {
 	try {
 		ATSaveSettings((ATSettingsCategory)(
@@ -302,7 +306,6 @@ static void ATPersistAllForSuspend() {
 			"Altirra: registry flush failed during suspend");
 	}
 }
-#endif
 
 static void HandleEvents() {
 	// Detect when ImGui starts capturing keyboard (e.g. menu opened)
@@ -795,21 +798,17 @@ static void HandleEvents() {
 		case SDL_EVENT_TERMINATING:
 			// Last chance before the OS kills the process.  Snapshot
 			// the emulator state (mobile only) and persist every piece
-			// of mutable settings + cache state to disk.
+			// of mutable settings + cache state to disk.  Without the
+			// full ATSaveSettings pass, runtime-only state (mounted
+			// cart/disk, machine settings changed this session) would
+			// be dropped because the registry snapshot was never
+			// refreshed from the live simulator.
 			SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
 				"Altirra: TERMINATING — flushing settings");
 #ifdef __ANDROID__
 			ATMobileUI_SaveSuspendState(g_sim, g_mobileState);
-			ATPersistAllForSuspend();
-#else
-			try {
-				extern void ATRegistryFlushToDisk();
-				ATRegistryFlushToDisk();
-			} catch (...) {
-				SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
-					"Altirra: settings flush failed on terminate");
-			}
 #endif
+			ATPersistAllForSuspend();
 			g_running = false;
 			break;
 
@@ -1866,13 +1865,43 @@ int main(int argc, char *argv[]) {
 	// and debug suspend mode.  Returns true if any boot image was loaded.
 	bool cmdLineHadBootImage = ATProcessCommandLineSDL3(argc, argv);
 	if (!cmdLineHadBootImage) {
-		// In gaming mode, Game Library is the home screen.
-		// The emulator stays paused until the user picks a game.
-		if (ATUIIsGamingMode()) {
+		// Detect whether ATSettingsLoadLastProfile restored any mounted
+		// media (cart, disk, cassette).  If so the user's last session
+		// had something running — honour that by jumping straight to the
+		// emulator view instead of parking the user at the game browser
+		// with an invisible-but-loaded cart.  Matches the user's mental
+		// model of "what I closed is what I open."
+		bool restoredMedia = false;
+		if (g_sim.GetCartridge(0) || g_sim.GetCartridge(1))
+			restoredMedia = true;
+		if (!restoredMedia && g_sim.GetCassette().IsLoaded())
+			restoredMedia = true;
+		if (!restoredMedia) {
+			for (int i = 0; i < 15; ++i) {
+				if (g_sim.GetDiskInterface(i).IsDiskLoaded()) {
+					restoredMedia = true;
+					break;
+				}
+			}
+		}
+
+		// In gaming mode with nothing restored, Game Library is the home
+		// screen.  The emulator stays paused until the user picks a game.
+		if (ATUIIsGamingMode() && !restoredMedia) {
 			GameBrowser_Init();
 			g_mobileState.currentScreen = ATMobileUIScreen::GameBrowser;
 			g_sim.ColdReset();
 		} else {
+			// Either desktop mode, or gaming mode with restored media —
+			// in both cases show the emulator view and start running.
+			if (ATUIIsGamingMode()) {
+				GameBrowser_Init();
+				g_mobileState.currentScreen = ATMobileUIScreen::None;
+				// ui_mobile.cpp redirects None → GameBrowser unless
+				// gameLoaded is true; flag it since LoadMountedImages
+				// already restored the cart/disk/tape.
+				g_mobileState.gameLoaded = true;
+			}
 			g_sim.ColdReset();
 			g_sim.Resume();
 		}

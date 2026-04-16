@@ -24,13 +24,9 @@ void ATMobileGamepad_Init() {
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
-	// The default ImGui nav highlight is barely visible against the
-	// dark mobile theme.  Bump it to a clear cyan-blue ring so users
-	// driving the UI from a controller can always see what's
-	// focused.  ImGui only draws the ring after the first gamepad
-	// input event is received, so touch users never see it.
-	ImGuiStyle &s = ImGui::GetStyle();
-	s.Colors[ImGuiCol_NavHighlight] = ImVec4(0.40f, 0.75f, 1.00f, 1.00f);
+	// NavHighlight colour is now rebound from ATUIApplyTheme() so a
+	// runtime theme switch updates the focus ring colour.  Only the
+	// config-flag wiring happens here.
 }
 
 void ATMobileGamepad_SetUIOwning(bool owning) {
