@@ -85,9 +85,9 @@ toggled on desktop.
 - **Full gamepad navigation** of every menu and dialog (ImGui
   `NavEnableGamepad`), so the emulator is usable on a phone with a
   clip-on controller and no touchscreen interaction at all.
-- **Virtual Atari XL/XE keyboard** overlay (photo of the real
-  keyboard, clickable keys) for entering BASIC or DOS commands on
-  touch devices. Navigable by touch, mouse, or gamepad d-pad.
+- **Virtual Atari XL/XE keyboard** overlay (virtual keyboard,
+- clickable keys) for entering BASIC or DOS commands on  touch devices.
+- Navigable by touch, mouse, or gamepad d-pad.
 - **First-run firmware setup wizard** that walks new users through
   picking an OS/BASIC/game ROM once, instead of diving straight into
   the full Configure System dialog.
