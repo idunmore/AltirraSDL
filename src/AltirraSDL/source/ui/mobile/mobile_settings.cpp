@@ -146,6 +146,7 @@ void RenderSettings(ATSimulator &sim, ATUIState &uiState,
 		case ATMobileSettingsPage::Home:        pageTitle = "Settings"; break;
 		case ATMobileSettingsPage::Machine:     pageTitle = "Machine"; break;
 		case ATMobileSettingsPage::Display:     pageTitle = "Display"; break;
+		case ATMobileSettingsPage::Audio:       pageTitle = "Audio"; break;
 		case ATMobileSettingsPage::Performance: pageTitle = "Performance"; break;
 		case ATMobileSettingsPage::Controls:    pageTitle = "Controls"; break;
 		case ATMobileSettingsPage::SaveState:   pageTitle = "Save State"; break;
@@ -188,7 +189,7 @@ void RenderSettings(ATSimulator &sim, ATUIState &uiState,
 				VDStringA subtitle;
 				ATMobileSettingsPage target;
 			};
-			CatRow cats[8];
+			CatRow cats[9];
 			int n = 0;
 
 			cats[n++] = { "Machine",
@@ -203,6 +204,16 @@ void RenderSettings(ATSimulator &sim, ATUIState &uiState,
 				cats[n++] = { "Display",
 					VDStringA().sprintf("Size: %s  \xC2\xB7  Filter, effects", scaleLabel),
 					ATMobileSettingsPage::Display };
+			}
+
+			{
+				const bool dualPokey = sim.IsDualPokeysEnabled();
+				const bool driveSounds = ATUIGetDriveSoundsEnabled();
+				cats[n++] = { "Audio",
+					VDStringA().sprintf("Stereo: %s  \xC2\xB7  Drive sounds: %s",
+						dualPokey ? "on" : "off",
+						driveSounds ? "on" : "off"),
+					ATMobileSettingsPage::Audio };
 			}
 
 			cats[n++] = { "Performance",
@@ -694,6 +705,69 @@ void RenderSettings(ATSimulator &sim, ATUIState &uiState,
 			}
 		}
 		} // end Display page
+
+		// --- Sub-page: Audio ---
+		// Simplified mirror of Desktop's Audio category page
+		// (ui_system_pages_outputs.cpp RenderAudioCategory).  Only the
+		// three most-used toggles are exposed here; advanced POKEY
+		// channel enables, non-linear mixing, audio monitor/scope and
+		// latency live in the desktop Configure System dialog.
+		if (s_settingsPage == ATMobileSettingsPage::Audio) {
+			ATTouchSection("Audio");
+
+			// Stereo — enables a second POKEY so software that
+			// programs both chips (a few demos, a handful of games)
+			// outputs independent left/right channels.  Mono software
+			// sounds identical either way; keeping this OFF by default
+			// matches Desktop / Windows Altirra and saves a little
+			// CPU on the POKEY + filter path.
+			//
+			// Note: "Audio: Dual POKEYs enabled" is actually persisted
+			// by ATSettingsExchangeHardware (settings.cpp:819/879), not
+			// ATSettingsExchangeSound — Windows groups it with the rest
+			// of the hardware-config keys.  Use Hardware here so the
+			// toggle survives restart.
+			{
+				bool dualPokey = sim.IsDualPokeysEnabled();
+				if (ATTouchToggle("Stereo (Dual POKEY)", &dualPokey)) {
+					sim.SetDualPokeysEnabled(dualPokey);
+					ATPersistMobileEdit(kATSettingsCategory_Hardware);
+				}
+			}
+			ATTouchMutedText(
+				"Enable a second POKEY for software that outputs "
+				"independent left/right audio.  Mono software sounds "
+				"the same either way.  Default: off.");
+
+			ATPokeyEmulator &pokey = sim.GetPokey();
+
+			// Downmix stereo to mono — keeps dual POKEY emulation
+			// active but mixes both channels into a single mono
+			// output.  Useful on devices with only one speaker or
+			// when the user prefers a centred mix.
+			{
+				bool stereoMono = pokey.IsStereoAsMonoEnabled();
+				if (ATTouchToggle("Downmix stereo to mono", &stereoMono)) {
+					pokey.SetStereoAsMonoEnabled(stereoMono);
+					ATPersistMobileEdit(kATSettingsCategory_Sound);
+				}
+			}
+
+			// Drive sounds — reproduces the mechanical clicks and
+			// head-stepping noise of a real 810/1050 drive.  Purely
+			// cosmetic; some users find it adds to the experience,
+			// others consider it noise pollution.
+			{
+				bool driveSounds = ATUIGetDriveSoundsEnabled();
+				if (ATTouchToggle("Drive Sounds", &driveSounds)) {
+					ATUISetDriveSoundsEnabled(driveSounds);
+					ATPersistMobileEdit(kATSettingsCategory_Sound);
+				}
+			}
+			ATTouchMutedText(
+				"Simulate the mechanical clicks and head-stepping of a "
+				"real disk drive.  Default: off.");
+		} // end Audio page
 
 		// --- Sub-page: Performance (bundled preset) ---
 		if (s_settingsPage == ATMobileSettingsPage::Performance) {
