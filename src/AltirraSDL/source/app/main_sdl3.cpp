@@ -1607,10 +1607,12 @@ int main(int argc, char *argv[]) {
 	// a reliable floor.  The SDL3 build has neither and instead uses
 	// active clock recovery (see FramePacer::ComputeClockRecovery in
 	// main_pacer.cpp) to pin the audio queue tight to whatever target
-	// the user picks.  That feedback loop makes much smaller targets
-	// reliable, so for SDL3 we override the absent-key default to 30 ms
-	// (≈ 1.5 × a PipeWire quantum, ≈ 50 ms tighter A/V offset than
-	// Windows out of the box).
+	// the user picks.  That feedback loop makes smaller targets reliable,
+	// so for SDL3 we override the absent-key default to 60 ms — ~20 ms
+	// tighter than Windows out of the box, while leaving enough headroom
+	// to absorb late frames (100 ms errorAccum bound) and backend-side
+	// staging on PulseAudio / ALSA without underruns.  Users who want to
+	// push lower can set it explicitly via Host audio options...
 	//
 	// We ONLY apply this when the user has no explicit setting in their
 	// INI.  If the key is present — even if the user wrote "80" on
@@ -1628,7 +1630,7 @@ int main(int argc, char *argv[]) {
 		    == VDRegistryKey::kTypeUnknown)
 		{
 			if (IATAudioOutput *ao = g_sim.GetAudioOutput())
-				ao->SetLatency(30);
+				ao->SetLatency(60);
 		}
 	}
 
