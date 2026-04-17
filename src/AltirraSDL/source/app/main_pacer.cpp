@@ -9,6 +9,8 @@
 #include "uiaccessors.h"
 #include "app_internal.h"
 #include "logging.h"
+#include "ui_mode.h"
+#include "uitypes.h"
 
 extern ATSimulator g_sim;
 extern SDL_Window *g_pWindow;
@@ -350,7 +352,30 @@ static double GetDisplayRefreshPeriod() {
 // Ported from Windows ATUIUpdateSpeedTiming() (main.cpp lines 491-553).
 void UpdatePacerRate() {
 	const int tableIndex = GetVideoStandardIndex();
-	const ATFrameRateMode frameRateMode = ATUIGetFrameRateMode();
+
+	// Deliberate divergence from Windows Altirra: in Gaming Mode the
+	// frame-rate-mode option is not exposed in the UI (there is no
+	// Configure System dialog on the mobile/touch interface), so the
+	// saved preference cannot be changed by the user while in that
+	// mode.  Windows Altirra defaults to "Match Hardware" (NTSC
+	// ~59.9227 Hz / PAL ~49.8607 Hz) because it is the cycle-accurate
+	// reproduction of a real Atari's slightly-slow signal.  On a
+	// modern 60 Hz LCD that rate produces a ~1-frame judder every
+	// ~12 seconds even with vsync-adaptive pacing, which is
+	// objectionable in a gamepad/touch gaming session where the user
+	// stares at the scrolling playfield continuously.
+	//
+	// We therefore force "Integral" (exact 60/50 Hz) while Gaming
+	// Mode is active.  Each emulated frame then maps 1:1 onto a
+	// 60 Hz display frame with no beat pattern.  The cost is that
+	// NTSC runs 0.13 % fast and PAL 0.28 % fast -- imperceptible in
+	// gameplay and an inaudible pitch shift on POKEY output.  The
+	// user's saved setting is not modified, so returning to Desktop
+	// Mode restores whatever they had previously selected (default:
+	// Match Hardware, matching Windows Altirra).
+	const ATFrameRateMode frameRateMode = ATUIIsGamingMode()
+		? kATFrameRateMode_Integral
+		: ATUIGetFrameRateMode();
 	const double rawSecsPerFrame = kFramePeriods[frameRateMode][tableIndex];
 
 	// Compute adjusted cycles per second for audio resampling.

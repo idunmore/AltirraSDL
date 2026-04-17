@@ -392,16 +392,18 @@ private:
 	double mTickRate = 1;
 	float mMixingRate = 0;              // POKEY mixing rate = cps / 28
 	uint32 mSamplingRate = 48000;       // Device output rate (set in InitNativeAudio)
-	// SDL3 default latency: 30 ms (Windows default is 80 ms).  This is a
-	// deliberate divergence enabled by the active clock-recovery loop in
-	// main_pacer.cpp — with the queue pinned tightly to the target by
-	// the frame-pacer feedback loop, a target around a PipeWire quantum
-	// is reliable.  See FramePacer::ComputeClockRecovery for the full
-	// rationale.  This member initialiser is a fallback for the rare
-	// path where ATLoadSettings never runs; the normal load sequence
+	// SDL3 default latency: 60 ms (Windows default is 80 ms).  This is a
+	// deliberate but conservative divergence enabled by the active clock-
+	// recovery loop in main_pacer.cpp — with the queue pinned tightly to
+	// the target by the frame-pacer feedback loop, a target modestly
+	// below the Windows floor stays reliable across PipeWire, PulseAudio
+	// and ALSA backends while leaving headroom for late frames (100 ms
+	// errorAccum bound).  See FramePacer::ComputeClockRecovery for the
+	// full rationale.  This member initialiser is a fallback for the
+	// rare path where ATLoadSettings never runs; the normal load sequence
 	// either takes the user's explicit INI value or (if absent) applies
-	// the 30 ms default from main_sdl3.cpp's post-load override.
-	int mLatency = 30;
+	// the 60 ms default from main_sdl3.cpp's post-load override.
+	int mLatency = 60;
 	int mExtraBuffer = 100;             // Matches Windows settings.cpp default
 	bool mbMute = false;
 	bool mbFilterStereo = false;

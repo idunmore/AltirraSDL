@@ -103,6 +103,7 @@ enum class ATMobileSettingsPage {
 	Home,
 	Machine,
 	Display,
+	Audio,
 	Performance,
 	Controls,
 	SaveState,
