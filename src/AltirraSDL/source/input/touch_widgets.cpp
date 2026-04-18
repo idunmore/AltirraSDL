@@ -588,12 +588,14 @@ namespace {
 // noted — the dp() helper rescales for HiDPI.  Only the decay rate is
 // dimensionless.
 //
-// kInertiaDecayPerSec controls the flick "glide distance".  With 6.0,
-// velocity decays to ~2% of the release value in ~0.65s — close to the
-// feel of Material scroll lists without being floaty.
-constexpr float kInertiaDecayPerSec       = 6.0f;
-constexpr float kMinFlingVelocityDpPerSec = 120.0f; // release below this = no inertia
-constexpr float kStopVelocityDpPerSec     = 40.0f;  // inertia halts when |v| drops below
+// kInertiaDecayPerSec controls the flick "glide distance".  With 1.3,
+// velocity decays to ~2% of the release value in ~3s — matches the
+// Chrome-on-Android feel where a strong swipe keeps gliding for
+// several seconds.  Pair it with a low kStopVelocity so the tail
+// doesn't cut off prematurely.
+constexpr float kInertiaDecayPerSec       = 1.3f;
+constexpr float kMinFlingVelocityDpPerSec = 80.0f;  // release below this = no inertia
+constexpr float kStopVelocityDpPerSec     = 8.0f;   // inertia halts when |v| drops below
 constexpr float kVelocitySampleWinSec     = 0.060f; // fit window
 constexpr int   kVelocitySampleCount      = 8;
 constexpr float kExternalScrollTolerance  = 2.0f;   // px: external change cancels inertia

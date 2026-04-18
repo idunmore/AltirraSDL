@@ -115,6 +115,7 @@ void ATTouchLayout_Update(ATTouchLayout &layout, int screenW, int screenH,
 		layout.btnStart  = MakeButton(consoleStartX, topCenterY, consoleBtnW, consoleBtnH);
 		layout.btnSelect = MakeButton(consoleStartX + consoleSpacing, topCenterY, consoleBtnW, consoleBtnH);
 		layout.btnOption = MakeButton(consoleStartX + consoleSpacing * 2, topCenterY, consoleBtnW, consoleBtnH);
+		layout.btnWarp   = MakeButton(consoleStartX + consoleSpacing * 3, topCenterY, consoleBtnW, consoleBtnH);
 
 		// Hamburger icon (top-right)
 		layout.btnMenu = MakeButton(
@@ -157,6 +158,7 @@ void ATTouchLayout_Update(ATTouchLayout &layout, int screenW, int screenH,
 		layout.btnStart  = MakeButton(consoleStartX, topCenterY, consoleBtnW, consoleBtnH);
 		layout.btnSelect = MakeButton(consoleStartX + consoleSpacing, topCenterY, consoleBtnW, consoleBtnH);
 		layout.btnOption = MakeButton(consoleStartX + consoleSpacing * 2, topCenterY, consoleBtnW, consoleBtnH);
+		layout.btnWarp   = MakeButton(consoleStartX + consoleSpacing * 3, topCenterY, consoleBtnW, consoleBtnH);
 
 		// Hamburger icon (top-right)
 		layout.btnMenu = MakeButton(

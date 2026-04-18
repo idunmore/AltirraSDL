@@ -60,7 +60,7 @@ void RenderMobileDiskRow(ATSimulator &sim, int driveIdx,
 
 	// Row background: gradient card, same recipe as the Settings home
 	// category rows.  Matches the rest of the Gaming-Mode UI.
-	float rowH = dp(96.0f);
+	float rowH = dp(80.0f);
 	ImVec2 cursor = ImGui::GetCursorScreenPos();
 	float availW = ImGui::GetContentRegionAvail().x;
 	ImDrawList *dl = ImGui::GetWindowDrawList();
@@ -75,7 +75,7 @@ void RenderMobileDiskRow(ATSimulator &sim, int driveIdx,
 	// --- Left column: drive label + filename ---
 	float leftPad  = dp(16.0f);
 	float rightPad = dp(16.0f);
-	ImGui::SetCursorScreenPos(ImVec2(cursor.x + leftPad, cursor.y + dp(12.0f)));
+	ImGui::SetCursorScreenPos(ImVec2(cursor.x + leftPad, cursor.y + dp(10.0f)));
 	ImGui::SetWindowFontScale(1.25f);
 	// Semantic warning colour for "modified", palette text otherwise.
 	ImU32 labelCol = dirty ? pal.warning : pal.text;
@@ -85,7 +85,7 @@ void RenderMobileDiskRow(ATSimulator &sim, int driveIdx,
 	ImGui::SetWindowFontScale(1.0f);
 
 	// Filename / status, one line below the drive label.
-	ImGui::SetCursorScreenPos(ImVec2(cursor.x + leftPad, cursor.y + dp(46.0f)));
+	ImGui::SetCursorScreenPos(ImVec2(cursor.x + leftPad, cursor.y + dp(36.0f)));
 	if (loaded) {
 		const wchar_t *path = di.GetPath();
 		if (path && *path) {
@@ -101,7 +101,7 @@ void RenderMobileDiskRow(ATSimulator &sim, int driveIdx,
 
 		// Show "(modified)" tag if dirty.
 		if (dirty) {
-			ImGui::SetCursorScreenPos(ImVec2(cursor.x + leftPad, cursor.y + dp(68.0f)));
+			ImGui::SetCursorScreenPos(ImVec2(cursor.x + leftPad, cursor.y + dp(58.0f)));
 			ImGui::PushStyleColor(ImGuiCol_Text, ATMobileCol(pal.warning));
 			ImGui::TextUnformatted("modified");
 			ImGui::PopStyleColor();
@@ -112,13 +112,27 @@ void RenderMobileDiskRow(ATSimulator &sim, int driveIdx,
 		ImGui::PopStyleColor();
 	}
 
-	// --- Right column: Mount + Eject buttons ---
-	float btnW = dp(100.0f);
-	float btnH = dp(56.0f);
+	// --- Right column: Mount [+ Select] + Eject buttons ---
+	// Select is only shown when the mounted disk belongs to a
+	// multi-variant Game Library entry — see GameBrowser_FindEntryForPath.
+	int gameEntry = -1;
+	if (loaded) {
+		const wchar_t *path = di.GetPath();
+		if (path && *path)
+			gameEntry = GameBrowser_FindEntryForPath(path);
+	}
+	const bool hasAlts = gameEntry >= 0
+		&& GameBrowser_GetVariantCount(gameEntry) > 1;
+
+	float btnW = dp(88.0f);
+	float btnH = dp(48.0f);
 	float btnGap = dp(8.0f);
 	float btnY = cursor.y + (rowH - btnH) * 0.5f;
 	float ejectX = cursor.x + availW - rightPad - btnW;
-	float mountX = ejectX - btnGap - btnW;
+	float selectX = hasAlts ? (ejectX - btnGap - btnW) : ejectX;
+	float mountX = hasAlts
+		? (selectX - btnGap - btnW)
+		: (ejectX - btnGap - btnW);
 
 	ImGui::SetCursorScreenPos(ImVec2(mountX, btnY));
 	if (ATTouchButton("Mount", ImVec2(btnW, btnH),
@@ -128,6 +142,24 @@ void RenderMobileDiskRow(ATSimulator &sim, int driveIdx,
 		s_romFolderMode = false;
 		mobileState.currentScreen = ATMobileUIScreen::FileBrowser;
 		s_fileBrowserNeedsRefresh = true;
+	}
+
+	if (hasAlts) {
+		ImGui::SetCursorScreenPos(ImVec2(selectX, btnY));
+		if (ATTouchButton("Side", ImVec2(btnW, btnH))) {
+			int drive = driveIdx;
+			GameBrowser_ShowVariantPickerForSwap(gameEntry,
+				[drive](const VDStringW &variantPath) {
+					ATDiskInterface &tgt =
+						g_sim.GetDiskInterface(drive);
+					try {
+						tgt.LoadDisk(variantPath.c_str());
+						g_sim.GetDiskDrive(drive).SetEnabled(true);
+					} catch (const MyError &e) {
+						ShowInfoModal("Mount Failed", e.c_str());
+					}
+				});
+		}
 	}
 
 	ImGui::SetCursorScreenPos(ImVec2(ejectX, btnY));
@@ -188,6 +220,10 @@ void RenderMobileDiskManager(ATSimulator &sim, ATUIState &uiState,
 				mobileState.currentScreen = ATMobileUIScreen::HamburgerMenu;
 		}
 
+		// 8 dp top padding so the header never sits flush with the
+		// status bar on devices with a small top inset.
+		ImGui::Dummy(ImVec2(0, dp(8.0f)));
+
 		// Header
 		float headerH = dp(48.0f);
 		if (ATTouchButton("<", ImVec2(dp(48.0f), headerH),
@@ -208,13 +244,11 @@ void RenderMobileDiskManager(ATSimulator &sim, ATUIState &uiState,
 		ImGui::Separator();
 		ImGui::Spacing();
 
-		// Scrollable list of drives
-		float reserveFooter = dp(140.0f);
-		// NavFlattened lets gamepad nav cross into the list without an
-		// explicit "enter child" press — see mobile_hamburger.cpp.
-		ImGui::BeginChild("DriveList",
-			ImVec2(0, ImGui::GetContentRegionAvail().y - reserveFooter),
-			ImGuiChildFlags_NavFlattened);
+		// Single-scroll layout: the whole window scrolls — drive list
+		// AND emulation-level footer share one scroll region.  This
+		// avoids the previous "reserve 140 dp for footer, clip
+		// everything else" split, which clipped content on short
+		// viewports.
 		ATTouchDragScroll();
 
 		// Default: D1:-D4: (the 99% case)
@@ -230,9 +264,6 @@ void RenderMobileDiskManager(ATSimulator &sim, ATUIState &uiState,
 		{
 			s_mobileShowAllDrives = !s_mobileShowAllDrives;
 		}
-
-		ATTouchEndDragScroll();
-		ImGui::EndChild();
 
 		// Footer: global emulation-level segmented control
 		ImGui::Spacing();
@@ -264,6 +295,12 @@ void RenderMobileDiskManager(ATSimulator &sim, ATUIState &uiState,
 			for (int i = 0; i < 15; ++i)
 				sim.GetDiskDrive(i).SetEmulationMode(kMobileEmuValues[emuIdx]);
 		}
+
+		// 8 dp bottom padding so the segmented control never sits
+		// flush with the gesture-bar inset on tight viewports.
+		ImGui::Dummy(ImVec2(0, dp(8.0f)));
+
+		ATTouchEndDragScroll();
 	}
 	ImGui::End();
 }
