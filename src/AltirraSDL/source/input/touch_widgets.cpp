@@ -598,6 +598,20 @@ constexpr float kVelocitySampleWinSec     = 0.060f; // fit window
 constexpr int   kVelocitySampleCount      = 8;
 constexpr float kExternalScrollTolerance  = 2.0f;   // px: external change cancels inertia
 
+// Any FINGER event (down/motion/up) seen in the last kRecentTouchWindow
+// seconds counts as "touch input is active on this device".  The window
+// covers the gap between the SDL finger event and the subsequent
+// synthetic-mouse press/motion events in the ImGui event queue, plus a
+// generous safety margin so a finger that hovers for a moment before
+// pressing is still classified correctly.
+constexpr float kRecentTouchWindowSec     = 1.0f;
+
+// Seconds-of-ImGui-time at which the most recent FINGER_* event was
+// received.  Stamped by ATTouchNotifyFingerEvent(); read by
+// ATTouchDragScroll() to decide whether the current drag originated
+// from a touch surface.  Negative sentinel = "never seen a finger".
+static float s_recentTouchStamp = -1000.0f;
+
 struct VelSample {
 	float t;       // seconds (ImGui::GetTime)
 	float scrollY; // absolute scroll position at sample time
@@ -684,6 +698,14 @@ void ResetVelocityState(DragState *ds) {
 
 } // namespace
 
+void ATTouchNotifyFingerEvent() {
+	// Use ImGui::GetTime() so the stamp shares the same clock as the
+	// drag-scroll logic.  Called from the SDL event pump on every
+	// FINGER_DOWN/MOTION/UP, including events that end up consumed by
+	// the on-screen touch controls.
+	s_recentTouchStamp = (float)ImGui::GetTime();
+}
+
 void ATTouchEndDragScroll() {
 	ImGuiWindow *window = ImGui::GetCurrentWindow();
 	if (!window) return;
@@ -752,8 +774,24 @@ void ATTouchDragScroll() {
 			// Only arm inertia if this press originated on a touch
 			// surface.  Desktop mouse drag keeps its existing 1:1
 			// behaviour with no fling on release.
-			ds->touchInput =
+			//
+			// Detection uses two signals OR'd together:
+			//  1. ImGui's MouseSource flag, set by the SDL3 backend
+			//     when a synthetic mouse event carries
+			//     SDL_TOUCH_MOUSEID.  Reliable on desktop; on Android
+			//     the tag arrives but can lag behind the first frame
+			//     of the press in some SDL versions.
+			//  2. A recent FINGER_* event stamp.  main_sdl3.cpp calls
+			//     ATTouchNotifyFingerEvent() at the top of its SDL
+			//     event pump for every FINGER event (down/motion/up)
+			//     regardless of who ultimately consumes it, so this
+			//     flips true as soon as the physical touch arrives,
+			//     independent of how SDL synthesises the mouse side.
+			bool touchByImGui =
 				(io.MouseSource == ImGuiMouseSource_TouchScreen);
+			bool touchByFinger = (nowT - s_recentTouchStamp)
+				< kRecentTouchWindowSec;
+			ds->touchInput = touchByImGui || touchByFinger;
 			justActivated = true;
 
 			// If this press caught an in-flight glide, treat it as a
