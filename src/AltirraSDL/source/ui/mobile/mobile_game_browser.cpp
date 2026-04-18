@@ -594,6 +594,10 @@ static void RenderLetterPickerModal(ImGuiIO &io,
 // Variant picker popup
 static bool s_variantPickerOpen = false;
 static size_t s_variantPickerEntry = 0;
+// When set, the picker is in "swap" mode: tapping a variant hands the
+// path to the callback instead of booting it.  Used by the Disk
+// Drives "Select" button to LoadDisk() without resetting the session.
+static std::function<void(const VDStringW &)> s_variantPickerSwapCb;
 
 static void LaunchGame(ATSimulator &sim, ATMobileUIState &mobileState,
 	size_t entryIndex, int variantIndex)
@@ -625,15 +629,71 @@ static void LaunchGame(ATSimulator &sim, ATMobileUIState &mobileState,
 static void ShowVariantPicker(size_t entryIndex) {
 	s_variantPickerEntry = entryIndex;
 	s_variantPickerOpen = true;
+	s_variantPickerSwapCb = nullptr;  // boot mode
+}
+
+int GameBrowser_FindEntryForPath(const wchar_t *path) {
+	if (!s_gameLibrary || !path || !*path)
+		return -1;
+	const auto &entries = s_gameLibrary->GetEntries();
+	for (size_t i = 0; i < entries.size(); ++i) {
+		for (const auto &v : entries[i].mVariants) {
+			if (v.mPath == path)
+				return (int)i;
+		}
+	}
+	return -1;
+}
+
+int GameBrowser_GetVariantCount(int entryIdx) {
+	if (!s_gameLibrary || entryIdx < 0)
+		return 0;
+	const auto &entries = s_gameLibrary->GetEntries();
+	if ((size_t)entryIdx >= entries.size())
+		return 0;
+	return (int)entries[entryIdx].mVariants.size();
+}
+
+void GameBrowser_ShowVariantPickerForSwap(int entryIdx,
+	std::function<void(const VDStringW &)> onPick)
+{
+	if (!s_gameLibrary || entryIdx < 0)
+		return;
+	const auto &entries = s_gameLibrary->GetEntries();
+	if ((size_t)entryIdx >= entries.size())
+		return;
+	s_variantPickerEntry = (size_t)entryIdx;
+	s_variantPickerSwapCb = std::move(onPick);
+	s_variantPickerOpen = true;
+}
+
+// Forward decl — the picker renderer lives below.
+static void RenderVariantPicker(ATSimulator &sim,
+	ATMobileUIState &mobileState);
+
+void GameBrowser_RenderOverlays(ATSimulator &sim,
+	ATMobileUIState &mobileState)
+{
+	// Variant picker can be opened from the Game Browser (boot mode)
+	// or the Disk Drives "Select" button (swap mode).  Render from
+	// the top-level dispatcher so both flows work regardless of the
+	// currently-active screen.
+	RenderVariantPicker(sim, mobileState);
 }
 
 static void RenderVariantPicker(ATSimulator &sim, ATMobileUIState &mobileState) {
-	if (!s_variantPickerOpen || !s_gameLibrary)
+	if (!s_variantPickerOpen || !s_gameLibrary) {
+		// Clean up any stale swap callback if the picker was closed
+		// by external state (library shutdown, etc.).
+		if (!s_variantPickerOpen)
+			s_variantPickerSwapCb = nullptr;
 		return;
+	}
 
 	auto &entries = s_gameLibrary->GetEntries();
 	if (s_variantPickerEntry >= entries.size()) {
 		s_variantPickerOpen = false;
+		s_variantPickerSwapCb = nullptr;
 		return;
 	}
 
@@ -678,8 +738,20 @@ static void RenderVariantPicker(ATSimulator &sim, ATMobileUIState &mobileState) 
 			ImGui::SetCursorPosX(ImGui::GetCursorPosX() + dp(12.0f));
 
 			if (ATTouchButton(btnLabel, ImVec2(-1, btnH))) {
-				LaunchGame(sim, mobileState, s_variantPickerEntry, i);
-				s_variantPickerOpen = false;
+				if (s_variantPickerSwapCb) {
+					// Swap mode — hand the variant path to the caller
+					// (Disk Drives "Select" button) and close.  We copy
+					// the callback locally because LoadDisk may trigger
+					// UI state changes that invalidate the static.
+					auto cb = std::move(s_variantPickerSwapCb);
+					s_variantPickerSwapCb = nullptr;
+					s_variantPickerOpen = false;
+					VDStringW path = var.mPath;
+					cb(path);
+				} else {
+					LaunchGame(sim, mobileState, s_variantPickerEntry, i);
+					s_variantPickerOpen = false;
+				}
 			}
 			if (i == 0)
 				ImGui::SetItemDefaultFocus();
@@ -690,8 +762,13 @@ static void RenderVariantPicker(ATSimulator &sim, ATMobileUIState &mobileState) 
 			ATTouchButtonStyle::Subtle))
 		{
 			s_variantPickerOpen = false;
+			s_variantPickerSwapCb = nullptr;
 		}
 	}
+	// Drop swap callback if the user closed the window via the "X"
+	// control (s_variantPickerOpen flips via &open arg to Begin).
+	if (!s_variantPickerOpen)
+		s_variantPickerSwapCb = nullptr;
 	ImGui::End();
 }
 
@@ -1624,7 +1701,9 @@ void RenderGameBrowser(ATSimulator &sim, ATUIState &uiState,
 	}
 	ImGui::End();
 
-	// Overlays
-	RenderVariantPicker(sim, mobileState);
+	// Overlays — variant picker is rendered globally by
+	// GameBrowser_RenderOverlays (called from ui_mobile.cpp so the
+	// swap-mode picker works from other screens too).  Letter picker
+	// is game-browser-specific and stays here.
 	RenderLetterPickerModal(io, mobileState);
 }

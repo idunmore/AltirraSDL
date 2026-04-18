@@ -698,6 +698,11 @@ void ATMobileUI_Render(ATSimulator &sim, ATUIState &uiState,
 		break;
 	}
 
+	// Global overlays: variant picker can be opened from both the
+	// Game Browser (boot mode) and the Disk Drives "Select" button
+	// (swap mode), so it has to render on every screen.
+	GameBrowser_RenderOverlays(sim, mobileState);
+
 	// Global mobile dialog sheet — implementation in mobile_dialogs.cpp.
 	RenderMobileModalSheet(mobileState);
 }

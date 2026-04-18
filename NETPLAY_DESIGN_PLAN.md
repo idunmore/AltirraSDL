@@ -177,6 +177,8 @@ struct NetHello {            // joiner → host
     uint64_t basicRomHash;    // xxHash64 of joiner's BASIC ROM (or 0)
     char     playerHandle[32];// display name for lobby / status HUD
     uint16_t acceptTos;       // bit 0: joiner has accepted session ToS
+    uint8_t  entryCodeHash[16];// truncated SHA-256 of private-session
+                               // entry code (§9.3); zeroed for public
 };
 
 struct NetWelcome {          // host → joiner (on accept)
@@ -193,7 +195,8 @@ struct NetReject {           // host → joiner (on reject)
     uint32_t magic;           // 'ANPR'
     uint32_t reason;          // enum: os_mismatch, basic_mismatch,
                               //       version_skew, tos_not_accepted,
-                              //       host_full, host_not_ready
+                              //       host_full, host_not_ready,
+                              //       bad_entry_code, host_rejected
 };
 ```
 
@@ -427,57 +430,312 @@ be fixed before netplay can ship — not the whole emulator.
 
 ## 9. UI
 
-One dialog, three states.
+Netplay is accessed through a single top-level **Online Play**
+entry.  The UX is designed around two concrete scenarios the user
+will actually encounter:
 
-**Netplay menu item** under a new top-level *Netplay* menu in
-`ui_menus.cpp` (pattern per the existing `File` / `Tools` menus):
+1. **Play with a friend** — one person hosts, shares a short code
+   privately, the other joins.  Fast, no audience.
+2. **Play with strangers** — host publishes the session publicly;
+   anyone browsing the Online browser can join as Player 2.
+
+Both scenarios share a single entry flow and a single browser.  No
+"Host Session…" / "Join Session…" split in the menu — that split
+forces the user to pick the mechanic *before* they know which game
+they want to play.
+
+### 9.1 Menu entry
 
 ```
-Netplay ▸
-  Host Session…
-  Join Session…
+Online Play ▸
+  Browse & Host…        (opens the Online browser — §9.3)
+  Change Nickname…
   ─────────────
-  Disconnect           (disabled unless connected)
+  Disconnect            (disabled unless connected)
+  Preferences…          (notifications, delay, accept mode)
 ```
 
-**Host dialog** — single modal centred per the CLAUDE.md dialog
-rule (`SetNextWindowPos(..., Appearing, 0.5f, 0.5f)` +
-`NoSavedSettings`):
+### 9.2 Nickname — first-ever-use prompt, never again
+
+The **very first** time the user opens Online Play, a small modal
+asks for a display name:
 
 ```
-  ┌─ Host Netplay Session ──────────────────┐
-  │  Port:          [26101]                  │
-  │  Input delay:   [3] frames (≈50 ms)      │
-  │                                           │
-  │  Your address: 192.168.1.42:26101         │
-  │               [Copy to clipboard]         │
-  │                                           │
-  │  Status: Waiting for joiner…              │
-  │                                           │
-  │                     [Cancel]  [Start]     │
-  └───────────────────────────────────────────┘
+  ┌─ Online Play ───────────────────────────────────┐
+  │  Choose a nickname (shown to other players):     │
+  │  [__________________]    [Play anonymously]      │
+  │                                                   │
+  │                               [Cancel]  [OK]     │
+  └───────────────────────────────────────────────────┘
 ```
 
-**Join dialog:**
+- A stable nickname is stored in `settings.ini`
+  (`Netplay\PlayerHandle`).  Subsequent opens of Online Play
+  skip this prompt entirely and jump straight to the browser —
+  the menu has a separate **Change Nickname…** item for edits.
+- **Play anonymously** does *not* persist anything.  Each
+  session a fresh `anon-NNNNNN` is generated (6 random digits)
+  and stored **only in memory** for the lifetime of that
+  session.  If the user closes and reopens Altirra, they get a
+  new anon number — this is deliberate: anonymity that is
+  stable across sessions is pseudonymity, and defeats the
+  point.  A user who wants a stable identity types a nickname
+  instead.
+- This is a *display name*, not an account.  No password at
+  this layer, no server identity, no verification.
+
+**Handle conflicts in the lobby.**  Two users can pick the same
+nickname.  Disambiguation happens **client-side at display
+time**, not server-side: when the browser merges session lists
+and finds two or more hosts sharing a handle, it renders them
+as `Bob`, `Bob (2)`, `Bob (3)`, in the order the lobby reports
+(creation-time ascending for stability).  The raw handle sent
+on the wire is unchanged — the numeric suffix is only a UI
+hint for the viewer.  This keeps the server stateless about
+identity while giving users a visible distinction.
+
+### 9.3 Online browser — looks like the Game Library
+
+After nickname entry, the Online browser opens.  It reuses the
+Game Library's grid widget and art cache so sessions look like
+boxes on a shelf rather than rows in a table:
 
 ```
-  ┌─ Join Netplay Session ──────────────────┐
-  │  Host address: [________________]        │
-  │  Example: 192.168.1.42:26101              │
-  │                                           │
-  │                     [Cancel]  [Connect]   │
-  └───────────────────────────────────────────┘
+  ┌─ Online Play ────────────────────────────────────────────┐
+  │  Nickname: Alice     [Change]          [Host a Game…]    │
+  │                                                           │
+  │   ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐            │
+  │   │ Joust  │ │M.U.L.E.│ │Ballblz │ │🔒Mario │            │
+  │   │ [ART]  │ │ [ART]  │ │ [ART]  │ │ [ART]  │            │
+  │   │ Bob·EU │ │Carol·NA│ │Dan·EU  │ │Eve·LAN │            │
+  │   │  1/2   │ │  3/4   │ │  1/2   │ │  1/2🔒 │            │
+  │   └────────┘ └────────┘ └────────┘ └────────┘            │
+  │                                                           │
+  │  Querying 3 lobbies…        Source: Official · EU · LAN  │
+  └───────────────────────────────────────────────────────────┘
 ```
 
-**Connected status HUD** (ImGui overlay, top-right, toggle via View
-menu like the existing FPS HUD):
+- Each tile shows box art, game name, host nickname (with
+  client-side `(2)`/`(3)` suffix on collisions per §9.2),
+  region, slot count, and a padlock badge for private
+  (code-gated) sessions.
+- Art is matched by `cartArtHash` against the **local** Game
+  Library's art cache — if we own the title, we already have
+  art for it.  Unknown hashes render a placeholder with the
+  title string.  No network art download.
+- Clicking a tile starts the join flow (§9.5).
+- **Host a Game…** opens the host flow (§9.4).
+
+**Empty state.**  When no sessions are available the grid area
+shows a single friendly call to action:
+
+```
+           No online sessions right now.
+    Be the first — [Host a Game] to start one,
+           or wait a moment and refresh.
+```
+
+**Auto-refresh.**  Browser re-queries every 10 s while open, or
+on demand via a small refresh icon.  No polling while the
+browser is closed.
+
+### 9.4 Host flow — pick game, then visibility
+
+**Host a Game…** first asks the user to pick what to host, using
+the existing Game Library grid the user is already familiar with:
+
+```
+  ┌─ Host a Game — choose a title ───────────────────────────┐
+  │  [Game Library grid, filterable as in the normal library] │
+  │                                                            │
+  │                                   [Cancel]  [Continue]    │
+  └────────────────────────────────────────────────────────────┘
+```
+
+After selecting a title, the visibility dialog appears:
+
+```
+  ┌─ Host Online Session ───────────────────────────────────┐
+  │  Game:       Joust.atr                                   │
+  │                                                           │
+  │  Visibility: (•) Public  — anyone can join               │
+  │              ( ) Private — only friends with the code    │
+  │                                                           │
+  │  (shown only when Private is selected:)                   │
+  │  Entry code: [ blue42 ]              [Regenerate]        │
+  │              (≥1 character; remembered for next time)     │
+  │                                                           │
+  │  Input delay: [3] frames (≈50 ms)                         │
+  │  Port:        [26101]    Your address: 192.168.1.42      │
+  │                                                           │
+  │                                [Cancel]  [Start Hosting]  │
+  └───────────────────────────────────────────────────────────┘
+```
+
+- **Public** registers the session with every reachable lobby in
+  `lobby.ini` (§11) and the tile renders **without** a padlock.
+  Any user who clicks connects directly.
+- **Private** registers with the same lobbies but tagged
+  `requiresCode=true` (§11.2); joiners must supply the matching
+  entry code during the handshake.  A padlock badge appears on
+  the tile.
+- **Entry code row is hidden when Public is selected** — it
+  appears only after the user picks Private.  Keeps the public
+  path (the common case) visually clean.
+- **Entry code** is remembered per user in `settings.ini`
+  (`Netplay\LastEntryCode`), pre-filled next time, editable each
+  session.  On first use Altirra seeds it with a random
+  word+digit pair (e.g. `blue42`) so users who never change it
+  still get a non-trivial code.
+- The code is **never sent to the lobby** — only its hash travels
+  P2P in `NetHello.entryCodeHash` (§5.1).
+- **Accept mode** (auto-accept vs prompt-me) is a **persistent
+  preference** under Preferences → Netplay, not a per-session
+  radio, because users want consistent behaviour across
+  sessions.  The waiting panel (§9.7) shows the current mode as
+  a small read-only label with a "Change…" link that opens the
+  preference pane.
+
+**What "Start Hosting" actually does, in order:**
+
+1. Boot the chosen cart/disk image on the host side (same
+   code path as double-clicking a title in the library).
+2. Open the UDP listener on the selected port.
+3. Register the session with every reachable lobby in
+   `lobby.ini`, passing `visibility`, `requiresCode`, and
+   `cartArtHash` (§11.2).
+4. Collapse the dialog into the waiting panel (§9.7).  The
+   user can now minimise the window; the host is live.
+
+### 9.5 Join flow
+
+Clicking a tile in the Online browser:
+
+- **Public tile** → handshake starts immediately.  On the host
+  side, §9.7 notifications fire; on the joiner side the emulator
+  receives the initial snapshot (§5.2) and drops straight into
+  the running game.
+- **Private tile** (padlock badge) → code prompt first:
+
+```
+  ┌─ Enter Session Code ────────────────────────┐
+  │  Host: Bob                                   │
+  │  Game: Joust                                 │
+  │                                               │
+  │  Entry code: [____________]                   │
+  │                                               │
+  │                    [Cancel]  [Join]           │
+  └───────────────────────────────────────────────┘
+```
+
+The code is hashed locally and sent in
+`NetHello.entryCodeHash`.  On mismatch the host returns
+`NetReject { reason = bad_entry_code }`; the dialog shows
+*"Code rejected — ask the host for the current code"* and stays
+open for another attempt.
+
+**Joiner on-boarding cue.**  For the first five seconds after a
+successful join, the status HUD (§9.8) shows *"You are Player 2
+— your controls map to emulated Port 2"* in place of the usual
+latency line.  This removes the single most likely confusion
+("I pressed fire, nothing happened on my side") without making
+the long-term HUD noisy.
+
+### 9.6 Port / controller mapping
+
+The host always controls emulated **Port 1**.  Each joiner's
+local "Port 1" device (their gamepad or keyboard) is remapped by
+the coordinator to the next free emulated port when inputs are
+injected into `ATInputManager`:
+
+| Role           | Local device (SDL) | Emulated port in game |
+| -------------- | ------------------ | --------------------- |
+| Host           | Gamepad / keyboard | Port 1                |
+| First joiner   | Gamepad / keyboard | Port 2                |
+| (v2) 2nd join  | Gamepad / keyboard | Port 3                |
+| (v2) 3rd join  | Gamepad / keyboard | Port 4                |
+
+Consequence: the joiner does **not** have to reconfigure their
+controls for netplay.  Whatever they use in single-player is
+what they use online; the remap is invisible to them.  This
+matches user expectation: "I pressed Fire on my stick, my
+character fired."
+
+### 9.7 Waiting panel and join notifications (the "minimised host" case)
+
+A user hosting a **public** session is likely to switch to another
+window while waiting — public sessions can sit idle for minutes.
+Missing an incoming joiner because the Altirra window is hidden
+behind a browser would be a real UX failure.
+
+The waiting panel and the join event use three cross-platform
+signals, layered gentle → assertive.  None steal focus without
+the user's consent.
+
+1. **Taskbar / dock flash.**  `SDL_FlashWindow(window,
+   SDL_FLASH_UNTIL_FOCUSED)` on the join event.  This is the
+   well-behaved standard on Windows, GNOME, KDE, and macOS — the
+   taskbar entry highlights or bounces until the user clicks.
+   No focus stealing, works out of the box with SDL3.
+2. **System notification toast** — *"Alice wants to join your
+   Joust session"*, dispatched through a thin platform shim
+   `ATPlatformNotify(title, body, iconPath)`:
+   - **Linux:** `libnotify` via `dlopen` (no hard link
+     dependency) — silently no-ops if not installed.
+   - **Windows:** `Shell_NotifyIconW` balloon / Win10+ toast.
+   - **macOS:** `UNUserNotificationCenter` via an
+     Objective-C++ stub file.
+   If no backend is available the feature degrades to (1) + (3)
+   only; netplay never hard-requires a notification daemon.
+3. **Audible chime.**  ≤200 ms WAV at
+   `src/AltirraSDL/assets/notify.wav`, mixed into the emulator's
+   existing `IATAudioOutput` path — no second audio device open.
+   Mutable from Preferences → Netplay.
+
+**Focus stealing is opt-in.**  A checkbox *"Bring window to
+front on join"* in the Host dialog (default **off**) triggers
+`SDL_RaiseWindow()` in addition to the flash.  Off by default
+because unsolicited raises interrupt whatever the user is doing;
+users who actively want to drop tasks can enable it.
+
+**Accept mode** — set in **Preferences → Netplay**, applies to
+all future sessions until changed:
+
+- **Auto-accept** (default): joiner connects straight into the
+  session.  All three notification signals fire on successful
+  connect.
+- **Prompt me**: host sees an in-app modal on top of the waiting
+  panel when the Altirra window is next focused (the flash +
+  toast bring the user back):
+
+```
+    ┌─ Join Request ──────────────────────────────┐
+    │  anon-472918 (NA, 84 ms) wants to join       │
+    │  your Joust session.                          │
+    │                                                │
+    │              [Reject]  [Accept]               │
+    └────────────────────────────────────────────────┘
+```
+
+Rejecting sends `NetReject { reason = host_rejected }` and the
+session stays open for the next joiner.
+
+All notification signals and the accept mode are individually
+toggleable in **Preferences → Netplay**, so users who find any
+one of them annoying can disable it without giving up the
+others.
+
+### 9.8 Connected status HUD
+
+ImGui overlay, top-right, toggle via View menu like the existing
+FPS HUD:
 
 ```
   NETPLAY · 42 ms · frame 3841 · delay 3 · OK
 ```
 
-`OK` turns amber on >5 % packet loss in last second, red on stall,
-shows desync frame on failure.
+`OK` turns amber on >5 % packet loss in last second, red on
+stall, shows the desync frame on failure.
 
 ---
 
@@ -605,8 +863,16 @@ community servers fork from there.
 ```
 POST   /v1/session                register a session
   { cartName, hostEndpoint, region, protocolVersion, hostHandle,
-    playerCount, maxPlayers }
+    playerCount, maxPlayers, visibility, requiresCode,
+    cartArtHash }
   → { sessionId, ttlSeconds }
+
+  visibility:  "public" | "private"
+  requiresCode: bool — true if joiners must supply an entry code
+                (the code itself never reaches the lobby; only the
+                 peer-to-peer handshake verifies it — §5.1, §9.3)
+  cartArtHash: optional; lets clients render box art from their
+               local Game Library without any art download
 
 GET    /v1/sessions               list active sessions
   → [{ sessionId, cartName, hostHandle, playerCount, maxPlayers,
@@ -698,16 +964,60 @@ report lands on one person and burnout ends the service.
 
 ### 11.6 Rollout across versions
 
+The earlier draft of this plan deferred lobbies to v2.0 on the
+assumption that running a server was a future cost.  **That
+assumption no longer holds**: a reference lobby server
+(`altirra-sdl-lobby`) is already deployed to production at
+`http://92.5.13.40:8080` (Oracle Cloud Frankfurt, always-free
+tier), and an end-to-end protocol PoC (`altirra-netplay-poc`)
+has validated the wire format + lobby flow without any
+emulator code.  The server repo and PoC repo live alongside
+this one.
+
+Consequently the Online browser (§9.3) is the **default and
+only** discovery path in the first shipping release.  Manual
+IP connect is retained as an advanced fallback under
+*Preferences → Netplay → Advanced*, but is not surfaced in the
+normal menus and does not carry the UX polish of the browser.
+
 | Version | Discovery | Infrastructure required |
 | ------- | --------- | ----------------------- |
-| **v1.0** | Manual IP + in-game Host/Join | **None** |
-| **v1.5** | + LAN `[lan]` entry (UDP broadcast) | None |
-| **v2.0** | + `lobby.ini`, Online tab, reference server | **Community-run** (one or more small VPSes) |
+| **v1.0** | Online browser via `lobby.ini` (default lobby pre-configured); LAN `[lan]` entry (UDP broadcast); advanced manual IP fallback | **Already deployed** (`altirra-sdl-lobby` on Oracle Cloud) |
+| **v1.1** | + UPnP / NAT-PMP auto port mapping | None |
+| **v2.0** | + STUN rendezvous via lobby `/join`; + TURN-style relay for symmetric NAT | Same lobby, additional relay operator(s) |
 
-v1.0 and v1.5 ship with zero ongoing operational cost.  v2.0 requires
-*someone* running at least one lobby server for the public list to be
-useful — but "someone" doesn't have to be the Altirra project itself,
-and if it is, one lobby going down doesn't break netplay.
+The default `lobby.ini` shipped with the build contains:
+
+```ini
+[official]
+name    = Altirra Official Lobby
+url     = http://92.5.13.40:8080
+region  = global
+
+[lan]
+name      = LAN
+transport = udp-broadcast
+port      = 26101
+```
+
+Users who don't touch any config files already see online
+sessions from the official lobby and LAN peers on day one.
+
+**Lobby schema extensions required before v1.0 ships.**  The
+current production lobby accepts `cartName / hostHandle /
+hostEndpoint / region / playerCount / maxPlayers /
+protocolVersion`.  To drive the browser UX in §9, the schema
+must additionally accept (and return in listings):
+
+- `visibility` — `"public"` \| `"private"`
+- `requiresCode` — `bool`; lobby carries only this flag, never
+  the code itself
+- `cartArtHash` — optional content hash for local art cache
+  matching
+
+These are purely additive JSON fields; existing clients
+unaware of them continue to work unchanged.  Tracked as the
+first item of the `altirra-sdl-lobby` v1.0 milestone.
 
 ### 11.7 The reference server and joining the federation
 
@@ -881,6 +1191,8 @@ cleanest extension point so v2 does not require restructuring.
 | Rollback | Per-frame snapshot + resim audit | **Not planned** — see §1 |
 | Save/load during session | Host sends new snapshot, joiner re-applies | Deferred — non-trivial pause semantics |
 | "Save received game to library" post-session | ImGui prompt after session end, writes to `~/.config/altirra/netplay_received/` with ToS re-confirmation | Deferred — v2 after lobby |
+| Join notifications (taskbar flash, toast, chime) for minimised hosts | `ATPlatformNotify()` shim + SDL_FlashWindow, per §9.7 | **In v1.0** — required for public-session UX |
+| Host-side "Prompt me" accept mode for incoming joiners | In-app modal in §9.7 | **In v1.0** — paired with notifications |
 
 Items marked "Planned" have a committed extension point and version.
 "Deferred" items are worth building but not scheduled until user
@@ -894,63 +1206,83 @@ for reasons explained in §1 and §14.
 Each phase ends in a demonstrable, shippable increment.  Do not
 skip ahead.  Phase 1 is the real go/no-go gate for the whole effort.
 
-### v1.0 — direct IP, playable
+### Prerequisites (already done, outside this repo)
 
-1. **Loopback determinism test.**  Two `ATSimulator` instances in
-   one process, fed an identical scripted input trace, assert
-   matching state hash every frame for 60 seconds.  If this fails,
-   netplay cannot ship until it passes.
-2. **Transport skeleton.**  `transport.cpp` with `Listen` /
-   `Connect` / `Send` / `Poll`.  Unit-testable via loopback.
-3. **Handshake + snapshot transfer.**  Both peers reach "ready"
-   state with identical sim state; no emulation yet.
-4. **Lockstep stepping, no input.**  Both peers step frames in
-   lockstep driven by heartbeat packets; prove the stall logic
-   and frame-hash exchange work with zero input traffic.
-5. **Input capture / apply.**  Add `NetInput` exchange; play
-   Mario Bros co-op across `lo0`.  First genuinely playable build.
-6. **In-game UI.**  Host / Join dialogs (§9), status HUD,
-   disconnect.
-7. **Game Library integration.**  Right-click → "Host Online"
-   on a library entry; boot + open listener in one action.
-8. **Desync reporting.**  Snapshot dump on mismatch, friendly
-   error message.
-9. **LAN / internet testing** with a second machine.  Tune
-   default input delay.  Ship v1.0.
+The following pieces exist and are validated; they are not part
+of the AltirraSDL repo's own work list:
 
-### v1.1 — UPnP convenience
+- **`altirra-sdl-lobby`** — reference lobby server, deployed
+  to `http://92.5.13.40:8080`, auto-deploys on push to `main`.
+- **`altirra-netplay-poc`** — stdlib-only Go CLI that runs the
+  lobby-register → UDP handshake → chunked-snapshot →
+  lockstep input exchange → rolling-hash desync detection
+  flow, proving the wire format before any emulator code is
+  touched.  Induced-desync test passes.
 
-10. **UPnP / NAT-PMP port mapping.**  Best-effort automatic port
-    open on routers that support it; fall back to manual
-    forwarding message.
+The remaining work is porting the PoC's protocol code into
+AltirraSDL and wiring it to the simulator and UI.
 
-### v1.5 — LAN discovery
+### v1.0 — playable online, browser-driven
 
-11. **UDP broadcast discovery.**  `[lan]` section of `lobby.ini`
-    implemented; same-subnet sessions appear in the Library's
-    Online tab with a "LAN" source badge.  Zero infrastructure.
+1. **Loopback determinism test.**  Two `ATSimulator` instances
+   in one process, fed an identical scripted input trace,
+   assert matching state hash every frame for 60 seconds.
+   This is the make-or-break gate.
+2. **Lobby schema extension.**  Add `visibility`,
+   `requiresCode`, `cartArtHash` to `altirra-sdl-lobby`
+   create/list; bump its minor version; deploy.
+3. **Transport + handshake.**  Port `protocol/` from the PoC
+   into `src/AltirraSDL/source/netplay/transport.cpp` with
+   the `entryCodeHash` field added to `NetHello`.
+4. **Snapshot transfer.**  Wire real `IATSerializable` state
+   through the chunked snapshot channel validated by the PoC.
+5. **Lockstep coordinator.**  Port `lockstep/` into
+   `coordinator.cpp`, drive it from the real simulator loop,
+   keep the rolling-hash desync detector.
+6. **Input capture / apply.**  `NetInput` ↔ `ATInputManager`,
+   with the Port-1 → emulated-Port-N remap (§9.6).  Mario
+   Bros co-op across `lo0` is the playable milestone.
+7. **Online browser UI.**  Nickname prompt (§9.2), Online
+   browser grid (§9.3), Host-a-Game flow (§9.4), Join flow
+   (§9.5).  Empty state + conflict disambiguation included.
+8. **Waiting panel + notifications.**  `ATPlatformNotify()`
+   shim (§9.7), `SDL_FlashWindow`, chime, auto-accept +
+   prompt-me modes, preferences pane.
+9. **Lobby client.**  Parallel queries across `lobby.ini`
+   entries, merged display, per-lobby status icons.  Ship
+   with the default lobby + LAN entry pre-configured.
+10. **LAN broadcast discovery.**  `[lan]` entry implementation
+    (UDP broadcast on port 26101).
+11. **Advanced manual IP fallback.**  Reachable from
+    Preferences → Netplay → Advanced for users on networks
+    where both lobbies and LAN broadcast fail.
+12. **Desync reporting.**  Snapshot dump on mismatch, friendly
+    dialog with path to the dump.
+13. **Two-machine testing.**  LAN + internet, tune default
+    input delay.  Ship v1.0.
 
-### v2.0 — federated lobbies
+### v1.1 — convenience polish
 
-12. **Lobby protocol + reference server.**  `server/altirra-lobby/`
-    Go implementation landing in the repo; protocol spec in
-    `PORTING/NETPLAY_LOBBY_PROTOCOL.md`.
-13. **Lobby client.**  Parallel HTTP queries across `lobby.ini`
-    entries, merged display in the Online tab, per-lobby status.
-14. **Lobby editor UI.**  ImGui dialog wrapping `lobby.ini`.
-15. **STUN / hole-punching rendezvous** via lobby `/join`
-    endpoint.
+14. **UPnP / NAT-PMP port mapping.**  Best-effort automatic
+    port open on routers that support it; fall back to the
+    existing "your public IP is X, forward UDP/26101 here"
+    hint.
+15. **Lobby editor UI.**  ImGui dialog wrapping `lobby.ini`
+    for users who don't want to edit the file.
 
-### v2.1 — relay fallback
+### v2.0 — traverse harder NATs
 
-16. **TURN-style relay.**  `coturn` as reference relay; lobby
-    advertises known relays; transport substitutes relay path
-    when direct connect fails.
+16. **STUN / hole-punching rendezvous** via lobby `/join`
+    endpoint.  Extends the existing lobby, no protocol
+    changes for direct-connect clients.
+17. **TURN-style relay fallback.**  `coturn` as reference
+    relay; lobby advertises known relays; transport
+    substitutes relay path when direct connect fails.
 
-Phases 1–5 are each ~1–3 days; phases 6–9 total ~1 week.
-Realistic v1.0 timeline: **2–3 weeks of focused effort**, with
-phase 1 as the single make-or-break gate.  Everything past
-v1.0 is incremental.
+Phases 1 (determinism gate) and 3–6 (protocol port) are the
+hard work.  Everything else is integration.  Realistic v1.0
+timeline: **2–3 weeks of focused effort**, with phase 1 as the
+single make-or-break gate.
 
 ---
 
@@ -984,6 +1316,15 @@ These need user-level decisions, not more investigation:
 4. **Does cold/warm reset propagate?**  Proposal: yes, as a
    control packet; both peers reset in sync.  Issued only by
    the host.
+5. **Default accept mode for public sessions.**  Proposal:
+   *auto-accept* for public (matches the "open shelf of games"
+   browsing metaphor), *auto-accept* for private once the entry
+   code validates.  "Prompt me" is opt-in, set in Preferences.
+6. **Default for "Bring window to front on join".**  Proposal:
+   off.  Flash + toast + chime are sufficient; focus-stealing is
+   opt-in.
+7. **Default port.**  Proposal: 26101 (already matches the
+   `[lan]` entry's broadcast port and the PoC defaults).
 
 None of these is hard; they just need a default picked.
 

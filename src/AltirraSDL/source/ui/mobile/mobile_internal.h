@@ -197,6 +197,24 @@ void GameBrowser_OnBootedGame(const VDStringW &variantPath);
 class ATGameLibrary;
 ATGameLibrary *GetGameLibrary();
 
+// Lookup helpers used by the Disk Drives screen to surface a
+// "Select" button that re-opens the variant picker for multi-disk
+// entries.  Return -1 / 0 when the path / index isn't in the library.
+int GameBrowser_FindEntryForPath(const wchar_t *path);
+int GameBrowser_GetVariantCount(int entryIdx);
+// Open the variant picker in "swap" mode — instead of booting the
+// chosen variant (which would start a fresh session), invoke
+// `onPick(variantPath)` so the caller can LoadDisk() into an
+// already-running drive.
+void GameBrowser_ShowVariantPickerForSwap(int entryIdx,
+	std::function<void(const VDStringW &)> onPick);
+// Render the variant picker if currently open.  Safe no-op when
+// closed.  Called from the top-level screen dispatcher so the swap-
+// mode picker (opened from the Disk Drives screen) still renders
+// even when the user isn't on the Game Browser screen.
+void GameBrowser_RenderOverlays(ATSimulator &sim,
+	ATMobileUIState &mobileState);
+
 // Settings sub-page functions split into their own TUs
 void RenderSettingsPage_Firmware(ATMobileUIState &mobileState);
 

@@ -66,6 +66,7 @@ struct ATTouchLayout {
 	ATTouchRect btnStart;
 	ATTouchRect btnSelect;
 	ATTouchRect btnOption;
+	ATTouchRect btnWarp;       // ">>" fast-forward (press-and-hold)
 	ATTouchRect btnMenu;       // Hamburger icon
 
 	// Fire buttons

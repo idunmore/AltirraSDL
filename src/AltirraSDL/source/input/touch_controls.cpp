@@ -17,6 +17,12 @@
 
 extern ATSimulator g_sim;
 
+// Warp/fast-forward toggle — same entry point as the F1 key binding
+// in input_sdl3.cpp and the "System.PulseWarpOn/Off" command handlers.
+// Forward-declared here to avoid pulling in the Windows-side
+// uiaccessors.h which carries unrelated HWND types.
+extern void ATUISetTurboPulse(bool v);
+
 static bool s_hapticEnabled = true;
 
 void ATTouchControls_SetHapticEnabled(bool enabled) {
@@ -57,12 +63,13 @@ static bool s_fireActive = false;
 static bool s_fireAHeld = false;
 static bool s_fireBHeld = false;
 
-// Console button tracking (START/SELECT/OPTION each track independently)
+// Console button tracking (START/SELECT/OPTION/WARP each track independently)
 static SDL_FingerID s_consoleFinger = 0;
 static bool s_consoleActive = false;
 static bool s_startHeld = false;
 static bool s_selectHeld = false;
 static bool s_optionHeld = false;
+static bool s_warpHeld = false;
 
 // Menu button tap detection — not static, accessed by ui_mobile.cpp.
 // Set when the user has completed a press-and-release on btnMenu so the
@@ -190,6 +197,7 @@ void ATTouchControls_ReleaseAll() {
 	if (s_startHeld)  { SetConsoleSwitch(0x01, false); s_startHeld = false; }
 	if (s_selectHeld) { SetConsoleSwitch(0x02, false); s_selectHeld = false; }
 	if (s_optionHeld) { SetConsoleSwitch(0x04, false); s_optionHeld = false; }
+	if (s_warpHeld)   { ATUISetTurboPulse(false); s_warpHeld = false; }
 	s_consoleActive = false;
 
 	s_menuTapped = false;
@@ -333,6 +341,13 @@ bool ATTouchControls_HandleEvent(const SDL_Event &ev, const ATTouchLayout &layou
 				s_consoleActive = true;
 				s_optionHeld = true;
 				SetConsoleSwitch(0x04, true);
+				HapticPulse(10);
+				return true;
+			} else if (layout.btnWarp.Contains(px, py)) {
+				s_consoleFinger = fid;
+				s_consoleActive = true;
+				s_warpHeld = true;
+				ATUISetTurboPulse(true);
 				HapticPulse(10);
 				return true;
 			}
@@ -506,6 +521,7 @@ bool ATTouchControls_HandleEvent(const SDL_Event &ev, const ATTouchLayout &layou
 			if (s_startHeld)  { SetConsoleSwitch(0x01, false); s_startHeld = false; }
 			if (s_selectHeld) { SetConsoleSwitch(0x02, false); s_selectHeld = false; }
 			if (s_optionHeld) { SetConsoleSwitch(0x04, false); s_optionHeld = false; }
+			if (s_warpHeld)   { ATUISetTurboPulse(false); s_warpHeld = false; }
 			s_consoleActive = false;
 			return true;
 		}
@@ -679,6 +695,8 @@ void ATTouchControls_Render(const ATTouchLayout &layout, const ATTouchLayoutConf
 		DrawButton(dl, layout.btnStart, "START", btnConsole, textColor, s_startHeld);
 		DrawButton(dl, layout.btnSelect, "SELECT", btnConsole, textColor, s_selectHeld);
 		DrawButton(dl, layout.btnOption, "OPTION", btnConsole, textColor, s_optionHeld);
+		// Warp/fast-forward — same action as F1 on desktop.
+		DrawButton(dl, layout.btnWarp, ">>", btnConsole, textColor, s_warpHeld);
 	}
 
 	if (showMenu) {
