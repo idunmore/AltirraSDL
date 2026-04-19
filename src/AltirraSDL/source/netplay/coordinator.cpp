@@ -426,7 +426,14 @@ void Coordinator::HandleInputPacket(const NetInputPacket& pkt, uint64_t nowMs) {
 void Coordinator::OnFrameAdvanced() {
 	if (mPhase != Phase::Lockstepping) return;
 	mLoop.OnFrameAdvanced();
-	mWantsOutgoingInput = true;  // send our state to the peer this Poll
+	// Send the outgoing packet IMMEDIATELY rather than deferring it
+	// to the next Poll().  The peer is likely already stalled waiting
+	// for this frame's input — deferring would cost them a full render
+	// + vsync cycle (~16 ms) before our packet is transmitted, which
+	// halves effective lockstep throughput on localhost and high-RTT
+	// links alike.  PumpLockstepSend is cheap (one encode + sendto).
+	PumpLockstepSend();
+	mWantsOutgoingInput = false;
 }
 
 void Coordinator::PumpLockstepSend() {
