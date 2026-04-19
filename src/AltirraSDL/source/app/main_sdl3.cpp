@@ -2120,26 +2120,44 @@ int main(int argc, char *argv[]) {
 		const bool dropFrame = turbo && ((++s_turboFrameCounter) % turboDivisor) != 0;
 
 #ifdef ALTIRRA_NETPLAY_ENABLED
-		// If we're in an active netplay session and the peer hasn't
-		// delivered their input for the current emu frame, stall the
-		// simulator this tick.  The main loop keeps running — we
-		// still render UI, still pace — we just don't Advance.  Next
-		// iteration polls the socket again and re-evaluates.
 		if (ATNetplayGlue::IsLockstepping()) {
 			// Capture local SDL input state and push to the
 			// coordinator (keyed D frames ahead per the lockstep
 			// invariant).
 			ATNetplayGlue::SubmitLocalInput();
-		}
 
-		if (ATNetplayGlue::IsLockstepping() &&
-		    !ATNetplayGlue::CanAdvanceThisTick()) {
-			RenderAndPresent();
-			if (!turbo) g_pacer.WaitForNextFrame();
-			continue;
-		}
+			// If the peer hasn't delivered their input for the
+			// current emu frame yet, do a bounded fast-poll
+			// instead of going through the full RenderAndPresent
+			// (which blocks on vsync for up to ~16.7 ms).  On
+			// localhost the peer's packet arrives sub-ms; a
+			// vsync block here would turn a 0.5 ms wait into a
+			// 16.7 ms wait and halve aggregate throughput to
+			// ~30 fps (both peers block symmetrically each
+			// frame).  See NETPLAY_DESIGN_PLAN.md §6.
+			if (!ATNetplayGlue::CanAdvanceThisTick()) {
+				const uint64_t stallStartMs = SDL_GetTicks();
+				const uint64_t stallBudgetMs = 12;  // < 1 frame
+				while (!ATNetplayGlue::CanAdvanceThisTick()
+				       && SDL_GetTicks() - stallStartMs < stallBudgetMs) {
+					SDL_Delay(0);  // yield to OS, no block
+					ATNetplayGlue::Poll(SDL_GetTicks());
+				}
+				// Still closed after the budget — fall back to
+				// render + vsync so the UI stays responsive and
+				// the user can see the "Peer: N ms ago" HUD go
+				// red.  Retry next iteration.
+				if (!ATNetplayGlue::CanAdvanceThisTick()) {
+					RenderAndPresent();
+					if (!turbo) g_pacer.WaitForNextFrame();
+					continue;
+				}
+				// Gate opened inside the fast-poll budget —
+				// resubmit local input (currentFrame may have
+				// shifted) and fall through to Advance.
+				ATNetplayGlue::SubmitLocalInput();
+			}
 
-		if (ATNetplayGlue::IsLockstepping()) {
 			// Both peers' inputs for the upcoming frame are
 			// available — drive the netplay-owned controller
 			// ports with them so the sim's joystick reads

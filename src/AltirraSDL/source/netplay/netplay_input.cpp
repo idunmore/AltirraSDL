@@ -7,7 +7,6 @@
 #include "packets.h"  // NetInput
 
 #include "simulator.h"
-#include "simeventmanager.h"
 #include "inputmanager.h"
 #include "inputdefs.h"
 #include "devicemanager.h"
@@ -65,39 +64,12 @@ bool g_cpuIllegalSaved = true;
 bool g_cpuStopOnBRKSaved = false;
 bool g_cpuPathBrkSaved = false;
 
-// Sim-event diagnostic hook: logs "interesting" simulator events (CPU
-// traps, verifier failures, abnormal DMA, illegal instructions) while
-// a netplay session is active.  Lets us pinpoint the exact root cause
-// of a runaway-CPU or trap on either peer.
-class NetplaySimEventLogger final : public IATSimulatorCallback {
-public:
-	void OnSimulatorEvent(ATSimulatorEvent ev) override {
-		// AbnormalDMA is noise — fires many times per second in normal
-		// games and does NOT reach the emu-error handler (debugger.cpp
-		// early-returns for it).  Filter it out so the rest of the
-		// "bad event" signal is visible.
-		const char *name = nullptr;
-		switch (ev) {
-			case kATSimEvent_CPUIllegalInsn:    name = "CPUIllegalInsn";    break;
-			case kATSimEvent_VerifierFailure:   name = "VerifierFailure";   break;
-			case kATSimEvent_CPUStackBreakpoint:name = "CPUStackBreakpoint";break;
-			case kATSimEvent_CPUPCBreakpoint:   name = "CPUPCBreakpoint";   break;
-			case kATSimEvent_CPUNewPath:        name = "CPUNewPath";        break;
-			case kATSimEvent_ReadBreakpoint:    name = "ReadBreakpoint";    break;
-			case kATSimEvent_WriteBreakpoint:   name = "WriteBreakpoint";   break;
-			case kATSimEvent_ColdReset:         name = "ColdReset";         break;
-			case kATSimEvent_WarmReset:         name = "WarmReset";         break;
-			default: return;
-		}
-		ATCPUEmulator &cpu = g_sim.GetCPU();
-		g_ATLCNetplay("sim event: %s at PC=%04X (A=%02X X=%02X Y=%02X S=%02X)",
-			name, (unsigned)cpu.GetInsnPC(),
-			(unsigned)cpu.GetA(), (unsigned)cpu.GetX(),
-			(unsigned)cpu.GetY(), (unsigned)cpu.GetS());
-	}
-};
-NetplaySimEventLogger g_simEventLogger;
-bool g_simEventHooked = false;
+// Sim-event logger removed: it was a diagnostic aid used to find
+// the $01FE HLE-trap round-trip bug.  Keeping it registered adds a
+// virtual-dispatch cost to every NotifyEvent (AbnormalDMA fires many
+// times per frame for some games — cheap individually, but gratuitous
+// per-frame overhead when netplay is active).  The CPU register dump
+// in ATEmuErrorHandlerSDL3 covers real trap diagnostics already.
 SDL_Gamepad *g_padCache = nullptr;
 
 // Capture-side event state.
@@ -126,10 +98,18 @@ uint8_t g_lastKeyScan[2] = { 0, 0 };
 // OnLocalConsoleSwitch sets/clears bits here; PollLocal reads them.
 uint8_t g_localConsoleMask = 0;
 
+// Cached "no gamepad" result so PollLocal doesn't burn a syscall +
+// a small heap alloc (SDL_GetGamepads) every frame when the user has
+// no gamepad attached.  Bumped when a DEVICE_ADDED event arrives via
+// OnGamepadHotplug (called by the SDL event loop).
+bool g_padTried = false;
+
 SDL_Gamepad *AcquireGamepad() {
 	if (g_padCache) return g_padCache;
+	if (g_padTried) return nullptr;
 	int count = 0;
 	SDL_JoystickID *ids = SDL_GetGamepads(&count);
+	g_padTried = true;  // mark tried even if alloc fails
 	if (!ids) return nullptr;
 	for (int i = 0; i < count && !g_padCache; ++i) {
 		g_padCache = SDL_OpenGamepad(ids[i]);
@@ -143,6 +123,7 @@ void ReleaseGamepad() {
 		SDL_CloseGamepad(g_padCache);
 		g_padCache = nullptr;
 	}
+	g_padTried = false;
 }
 
 void ResetKeyQueue() {
@@ -253,20 +234,11 @@ void EndSession() {
 bool IsActive()                { return g_active; }
 bool IsSuppressingLocalInput() { return g_active; }
 
-void AttachEventLogger() {
-	if (g_simEventHooked) return;
-	if (auto *em = g_sim.GetEventManager()) {
-		em->AddCallback(&g_simEventLogger);
-		g_simEventHooked = true;
-	}
-}
-
-void DetachEventLogger() {
-	if (!g_simEventHooked) return;
-	if (auto *em = g_sim.GetEventManager())
-		em->RemoveCallback(&g_simEventLogger);
-	g_simEventHooked = false;
-}
+// No-op stubs: the sim-event logger was removed (see comment above).
+// Kept in the public API so the call sites in ui_main.cpp /
+// BeginSession compile unchanged — they're harmless.
+void AttachEventLogger() {}
+void DetachEventLogger() {}
 
 void OnLocalKeyDown(uint8_t atariScanCode) {
 	if (!g_active) return;
