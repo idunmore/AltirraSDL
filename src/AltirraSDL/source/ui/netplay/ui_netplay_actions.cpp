@@ -219,6 +219,25 @@ void ExtractExtensionInto(const std::string& path, char out[8]) {
 	std::memcpy(out, ext.data(), n);
 }
 
+// Compute CRC32 over the bytes of a file on disk.  Returns 0 on I/O
+// failure or if the file is empty / implausibly large.  Used both at
+// StartHost time (to stamp BootConfig.gameFileCRC32 for the joiner's
+// cache lookup) and when hashing firmware ROMs elsewhere.
+static uint32_t CRC32OfFile(const std::string& path) {
+	if (path.empty()) return 0;
+	try {
+		VDFileStream fs(VDTextU8ToW(path.c_str(), -1).c_str(),
+			nsVDFile::kRead | nsVDFile::kOpenExisting | nsVDFile::kDenyNone);
+		sint64 sz = fs.Length();
+		if (sz <= 0 || sz > 32 * 1024 * 1024) return 0;
+		std::vector<uint8_t> buf((size_t)sz);
+		fs.Read(buf.data(), (long)buf.size());
+		return VDCRCTable::CRC32.CRC(buf.data(), buf.size());
+	} catch (...) {
+		return 0;
+	}
+}
+
 // Build a NetBootConfig from a HostedGame's MachineConfig.
 ATNetplay::NetBootConfig BuildBootConfig(const HostedGame& o) {
 	ATNetplay::NetBootConfig bc{};
@@ -232,7 +251,7 @@ ATNetplay::NetBootConfig BuildBootConfig(const HostedGame& o) {
 	bc.basicCRC32      = o.config.basicCRC32;
 	bc.masterSeed      = kNetplayMasterSeed;
 	bc.bootFrames      = 0;
-	bc.gameFileCRC32   = 0;  // filled by SubmitHostGameFileForGame
+	bc.gameFileCRC32   = CRC32OfFile(o.gamePath);
 	ExtractExtensionInto(o.gamePath, bc.gameExtension);
 	return bc;
 }

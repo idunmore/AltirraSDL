@@ -711,91 +711,25 @@ void ATUIPollDeferredActions() {
 				ATAddMRU(imagePath.c_str());
 				g_sim.ColdReset();
 
-				// For HLE-loaded images (xex/exe/com/bin) the loader
-				// lives on the frontend side and works in two phases:
-				//   1. StartLoad sets IsLaunchPending=false and
-				//      installs a CPU hook at $01FE (trap address).
-				//   2. Each kernel RTS lands back at $01FE, the hook
-				//      fires, next segment is streamed into RAM.
-				//   3. After the last segment, the hook is REMOVED
-				//      and the CPU jumps to the program's run
-				//      address.  The loader fires
-				//      kATSimEvent_EXERunSegment at that exact moment
-				//      (hleprogramloader.cpp:601).
-				//
-				// CPU hooks are NOT part of the savestate, so if we
-				// capture before phase 3 completes the joiner lands
-				// at PC=$01FE with no hook registered and crashes on
-				// stack garbage.  Drain until EXERunSegment fires so
-				// the hook has self-cleaned and the CPU is in user
-				// program space.
-				//
-				// For non-HLE paths (disk / cart / 5200) no loader
-				// exists and EXERunSegment never fires — that's fine;
-				// we just pause immediately.
+				// v3 cold-boot: stay paused until lockstep engages.
+				// The joiner does Load + ColdReset + Pause symmetrically,
+				// so both peers are at "frame 0 post-ColdReset" when
+				// lockstep entry Resumes them together in netplay_glue.
+				// The HLE program loader's CPU trap at $01FE (if any)
+				// fires inside lockstep on both peers at the same
+				// emulated tick because mLockedRandomSeed seeds
+				// mProgramLaunchDelay deterministically.
 				{
 					extern ATLogChannel g_ATLCNetplay;
-					ATHLEProgramLoader *prog = g_sim.GetProgramLoader();
-					g_ATLCNetplay("host boot: pre-drain prog=%p "
-						"pending=%d imgType=%d",
-						(void*)prog,
-						prog ? (prog->IsLaunchPending() ? 1 : 0) : -1,
-						(int)imgCtx.mLoadType);
-
-					if (prog) {
-						// Arm a one-shot flag via the sim event manager:
-						// set on EXERunSegment, which only fires from
-						// the loader's OnLoadContinue last branch where
-						// the $01FE hook is unset and the CPU jumps to
-						// the real run address.
-						bool launched = false;
-						uint32 cbId = 0;
-						if (auto *em = g_sim.GetEventManager()) {
-							cbId = em->AddEventCallback(
-								kATSimEvent_EXERunSegment,
-								[&launched] { launched = true; });
-						}
-
-						g_sim.Resume();
-						const int kMaxBootFrames = 1800;  // 30 s @ 60 Hz
-						int f = 0;
-						for (; f < kMaxBootFrames; ++f) {
-							g_sim.Advance(false);
-							if (launched) break;
-						}
-						g_sim.Pause();
-
-						if (auto *em = g_sim.GetEventManager())
-							em->RemoveEventCallback(cbId);
-
-						g_ATLCNetplay("host boot: HLE loader drained "
-							"after %d frames (launched=%d, still pending=%d)",
-							f, launched ? 1 : 0,
-							prog->IsLaunchPending() ? 1 : 0);
-					} else {
-						g_sim.Pause();
-					}
-
 					VDStringA imgU8 = VDTextWToU8(imagePath);
-					g_ATLCNetplay("host boot: \"%s\" loaded (hw=%d mem=%d vid=%d), "
-						"paused for snapshot capture",
+					g_ATLCNetplay("host boot: \"%s\" loaded "
+						"(hw=%d mem=%d vid=%d), paused at cold-reset "
+						"for lockstep entry",
 						imgU8.c_str(),
 						(int)g_sim.GetHardwareMode(),
 						(int)g_sim.GetMemoryMode(),
 						(int)g_sim.GetVideoStandard());
 				}
-				// Deliberately do NOT Resume here.  If we did, the
-				// host sim would free-run for K frames during the
-				// snapshot transfer (the sim is not gated by the
-				// lockstep loop until Lockstepping is reached).  That
-				// drift means the snapshot — captured in the next
-				// deferred action a few lines later — represents a
-				// different frame than the host is on by the time
-				// Lockstepping begins, and the rolling hash desyncs
-				// immediately.  Keeping paused until the host coord
-				// enters Lockstepping (done in
-				// ReconcileHostedGames) makes both sides start from
-				// exactly the snapshot state.
 				g_sim.Pause();
 				break;
 			}
@@ -859,7 +793,11 @@ void ATUIPollDeferredActions() {
 					if (g_sim.Load(a.path.c_str(),
 					        kATMediaWriteMode_RO, &ctx)) {
 						g_sim.ColdReset();
-						g_sim.Resume();
+						// Stay paused — lockstep entry in netplay_glue
+						// Resumes both peers together, preventing any
+						// free-run drift between ColdReset and the
+						// first gated frame.
+						g_sim.Pause();
 						ATCPUEmulator &cpu = g_sim.GetCPU();
 						g_ATLCNetplay("joiner cold-boot: OK "
 							"hw=%d mem=%d vid=%d "
