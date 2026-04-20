@@ -141,6 +141,12 @@ MachineConfig CaptureCurrentMachineConfig();
 // 0 if the id is unknown or the firmware can't be loaded.
 uint32_t ComputeFirmwareCRC32(uint64_t firmwareId);
 
+// Translate a raw http_minimal / lobby_client error string + HTTP
+// status into user-friendly text.  Raw "recv() failed", "HTTP 429",
+// "getaddrinfo: Name or service not known" etc. become the kind of
+// sentence we want on a tooltip, not a stderr log line.
+std::string FriendlyLobbyError(const std::string& rawError, int httpStatus);
+
 // High-level "is the user busy" flag that drives the suspension of
 // every hosted game the user didn't explicitly start.
 enum class UserActivity : uint8_t {
@@ -266,11 +272,28 @@ struct Browser {
 	int         selectedIdx = -1;
 };
 
+// Cross-window lobby reachability signal.  Every lobby HTTP op
+// (List, Create, Heartbeat, Delete) updates this so both the Browse
+// and Host Games windows can show a consistent "lobby is up" /
+// "lobby is down" indicator without independent polling — the free
+// Oracle tier has a small req/min budget and we must not flood it.
+struct LobbyHealth {
+	// Wall-clock ms of the last successful lobby response.  0 = never.
+	uint64_t    lastOkMs = 0;
+	// Wall-clock ms of the last failed lobby response.  0 = never.
+	uint64_t    lastFailMs = 0;
+	// Friendly error text from the last failure.  Cleared on success.
+	std::string lastError;
+	// HTTP status code from the last response (0 = network error).
+	int         lastStatus = 0;
+};
+
 struct State {
-	Screen   screen      = Screen::Closed;
-	Prefs    prefs;
-	Session  session;
-	Browser  browser;
+	Screen      screen      = Screen::Closed;
+	Prefs       prefs;
+	Session     session;
+	Browser     browser;
+	LobbyHealth lobbyHealth;
 
 	// My Hosted Games — the user's advertised hostedGames.  Persisted across
 	// runs; runtime fields (state/port/tokens) reset each launch.

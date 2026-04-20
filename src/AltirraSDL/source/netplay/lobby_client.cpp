@@ -348,7 +348,7 @@ bool LobbyClient::Create(const LobbyCreateRequest& req,
 	hr.timeoutMs   = mEp.timeoutMs;
 
 	HttpResponse resp;
-	HttpRequestSync(hr, resp);
+	HttpRequestSync(hr, resp); mLastStatus = resp.status;
 	if (resp.status != 201) {
 		FormatHttpError(mLastError, resp);
 		return false;
@@ -373,7 +373,7 @@ bool LobbyClient::List(std::vector<LobbySession>& out) {
 	hr.timeoutMs = mEp.timeoutMs;
 
 	HttpResponse resp;
-	HttpRequestSync(hr, resp);
+	HttpRequestSync(hr, resp); mLastStatus = resp.status;
 	if (resp.status != 200) {
 		FormatHttpError(mLastError, resp);
 		return false;
@@ -430,7 +430,7 @@ bool LobbyClient::Heartbeat(const std::string& sessionId,
 	hr.timeoutMs   = mEp.timeoutMs;
 
 	HttpResponse resp;
-	HttpRequestSync(hr, resp);
+	HttpRequestSync(hr, resp); mLastStatus = resp.status;
 	if (resp.status != 200) {
 		FormatHttpError(mLastError, resp);
 		return false;
@@ -456,7 +456,7 @@ bool LobbyClient::Delete(const std::string& sessionId,
 	hr.timeoutMs   = mEp.timeoutMs;
 
 	HttpResponse resp;
-	HttpRequestSync(hr, resp);
+	HttpRequestSync(hr, resp); mLastStatus = resp.status;
 	if (resp.status == 204 || resp.status == 404) {
 		mLastError.clear();
 		return true;

@@ -58,6 +58,7 @@ struct LobbyResult {
 	LobbyOp                             op = LobbyOp::List;
 	bool                                ok = false;
 	std::string                         error;
+	int                                 httpStatus = 0;  // 0 = network-level failure
 	uint32_t                            tag = 0;
 
 	// Populated depending on op:

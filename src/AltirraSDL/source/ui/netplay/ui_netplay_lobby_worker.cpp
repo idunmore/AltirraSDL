@@ -88,6 +88,7 @@ void LobbyWorker::ThreadMain() {
 				break;
 		}
 		if (!out.ok) out.error = client.LastError();
+		out.httpStatus = client.LastStatus();
 
 		{
 			std::lock_guard<std::mutex> lk(mMu);

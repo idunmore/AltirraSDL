@@ -83,6 +83,10 @@ public:
 	const LobbyEndpoint& GetEndpoint() const { return mEp; }
 
 	const char* LastError() const { return mLastError.c_str(); }
+	// HTTP status from the last call (0 if network-level failure or
+	// never called).  Used by the UI to distinguish rate-limit 429,
+	// auth 401/403, server 5xx etc. for friendly error text.
+	int         LastStatus() const { return mLastStatus; }
 
 	// Returns true on HTTP 201.  On failure, LastError() holds the reason.
 	bool Create(const LobbyCreateRequest& req, LobbyCreateResponse& out);
@@ -104,6 +108,7 @@ public:
 private:
 	LobbyEndpoint mEp;
 	std::string   mLastError;
+	int           mLastStatus = 0;
 };
 
 } // namespace ATNetplay

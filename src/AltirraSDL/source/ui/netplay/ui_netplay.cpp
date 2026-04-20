@@ -96,6 +96,20 @@ void ATNetplayUI_Poll(uint64_t nowMs) {
 		(ATNetplayUI::GetWorker().InFlightCount() > 0);
 	ATNetplayUI::GetWorker().Poll(
 		[&](ATNetplayUI::LobbyResult& r) {
+			// Record cross-window lobby reachability — every op
+			// updates this so Browse and Host Games show a consistent
+			// status without each window polling on its own.
+			if (r.ok) {
+				st.lobbyHealth.lastOkMs   = nowMs;
+				st.lobbyHealth.lastStatus = r.httpStatus;
+				st.lobbyHealth.lastError.clear();
+			} else {
+				st.lobbyHealth.lastFailMs = nowMs;
+				st.lobbyHealth.lastStatus = r.httpStatus;
+				st.lobbyHealth.lastError  =
+					ATNetplayUI::FriendlyLobbyError(r.error, r.httpStatus);
+			}
+
 			// -- Create: route by tag to the HostedGame that fired it.
 			if (r.op == ATNetplayUI::LobbyOp::Create) {
 				ATNetplayUI::HostedGame* o =
@@ -111,11 +125,12 @@ void ATNetplayUI_Poll(uint64_t nowMs) {
 						o->gameName.c_str(),
 						r.create.sessionId.c_str());
 				} else {
-					o->lastError = r.error.empty()
-						? "Lobby announce failed"
-						: ("Lobby announce failed: " + r.error);
-					g_ATLCNetplay("lobby Create FAILED for \"%s\": %s",
+					o->lastError = "Listing failed: "
+						+ st.lobbyHealth.lastError;
+					g_ATLCNetplay("lobby Create FAILED for \"%s\": "
+						"status=%d raw=\"%s\"",
 						o->gameName.c_str(),
+						r.httpStatus,
 						r.error.empty() ? "(no detail)"
 						                : r.error.c_str());
 					// Do NOT transition the offer to Failed just
@@ -130,7 +145,8 @@ void ATNetplayUI_Poll(uint64_t nowMs) {
 				// own cadence; only log failures so we surface lobby
 				// outages without spamming every 30 s tick.
 				if (!r.ok) {
-					g_ATLCNetplay("lobby Heartbeat FAILED: %s",
+					g_ATLCNetplay("lobby Heartbeat FAILED: status=%d raw=\"%s\"",
+						r.httpStatus,
 						r.error.empty() ? "(no detail)"
 						                : r.error.c_str());
 				}
@@ -138,7 +154,8 @@ void ATNetplayUI_Poll(uint64_t nowMs) {
 			}
 			if (r.op == ATNetplayUI::LobbyOp::Delete) {
 				if (!r.ok) {
-					g_ATLCNetplay("lobby Delete FAILED: %s",
+					g_ATLCNetplay("lobby Delete FAILED: status=%d raw=\"%s\"",
+						r.httpStatus,
 						r.error.empty() ? "(no detail)"
 						                : r.error.c_str());
 				}
@@ -146,11 +163,10 @@ void ATNetplayUI_Poll(uint64_t nowMs) {
 			}
 			if (r.op != ATNetplayUI::LobbyOp::List) return;
 			if (!r.ok) {
-				st.browser.statusLine = r.error.empty()
-					? "Lobby unreachable — use Direct IP in Preferences"
-					: ("Lobby: " + r.error
-					   + " — try Direct IP in Preferences");
-				g_ATLCNetplay("lobby List FAILED: %s",
+				st.browser.statusLine = st.lobbyHealth.lastError
+					+ " — use Direct IP in Preferences";
+				g_ATLCNetplay("lobby List FAILED: status=%d raw=\"%s\"",
+					r.httpStatus,
 					r.error.empty() ? "(no detail)"
 					                : r.error.c_str());
 				// Exponential backoff: 10s, 20s, 40s, 60s cap.

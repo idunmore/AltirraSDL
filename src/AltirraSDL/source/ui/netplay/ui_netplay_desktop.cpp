@@ -19,6 +19,7 @@
 #include "ui/gamelibrary/game_library.h"
 #include "ui_file_dialog_sdl3.h"
 #include <SDL3/SDL_dialog.h>
+#include <SDL3/SDL_timer.h>
 
 #include <vd2/system/registry.h>
 #include <vd2/system/VDString.h>
@@ -35,6 +36,7 @@ extern ATSimulator g_sim;
 extern SDL_Window *g_pWindow;
 extern VDStringA ATGetConfigDir();
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 
@@ -46,6 +48,75 @@ void CenterNext(ImVec2 size) {
 	ImGui::SetNextWindowSize(size, ImGuiCond_Appearing);
 	ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(),
 		ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+}
+
+// Render a single-line lobby reachability indicator — coloured dot
+// plus status text.  Shared between the Browse and Host Games windows.
+// Does NOT itself trigger lobby traffic; the caller is expected to
+// arrange an occasional ping (see MaybePingLobby).
+void LobbyStatusIndicator(uint64_t nowMs) {
+	const LobbyHealth& h = GetState().lobbyHealth;
+
+	ImVec4 dotCol(0.55f, 0.55f, 0.55f, 1.0f);  // gray: unknown
+	const char *label = "Lobby: checking…";
+	char buf[128];
+
+	const bool haveOk   = (h.lastOkMs   != 0);
+	const bool haveFail = (h.lastFailMs != 0);
+	const bool okIsNewer = haveOk && (!haveFail || h.lastOkMs >= h.lastFailMs);
+
+	if (okIsNewer) {
+		// Green — reachable.  Show age to make it obvious the signal
+		// is live (not a stale cached "OK").
+		dotCol = ImVec4(0.4f, 0.85f, 0.4f, 1.0f);
+		uint64_t age = (nowMs >= h.lastOkMs) ? nowMs - h.lastOkMs : 0;
+		uint64_t sec = age / 1000;
+		std::snprintf(buf, sizeof buf,
+			"Lobby: reachable  (%llus ago)", (unsigned long long)sec);
+		label = buf;
+	} else if (haveFail) {
+		// Red — most recent result was a failure.
+		dotCol = ImVec4(0.95f, 0.45f, 0.45f, 1.0f);
+		const char *reason = h.lastError.empty()
+			? "unreachable" : h.lastError.c_str();
+		std::snprintf(buf, sizeof buf, "Lobby: %s", reason);
+		label = buf;
+	}
+
+	ImGui::TextColored(dotCol, "\xE2\x97\x8F");  // U+25CF black circle
+	ImGui::SameLine();
+	if (okIsNewer)
+		ImGui::TextUnformatted(label);
+	else if (haveFail)
+		ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.45f, 1.0f), "%s", label);
+	else
+		ImGui::TextDisabled("%s", label);
+}
+
+// Fire a single List if nothing has told us about the lobby in the
+// last kStaleMs.  Respects rate-limit backoff set by the List failure
+// path in ui_netplay.cpp so the free-tier Oracle lobby doesn't get
+// hammered.  Called from any window that wants to render a live
+// Lobby Status indicator — without this, a user who never opens the
+// Browser and has no enabled offers would see a stale "checking…"
+// indicator forever.
+void MaybePingLobby(uint64_t nowMs) {
+	State& st = GetState();
+	constexpr uint64_t kStaleMs = 60000;  // 60s
+
+	const uint64_t last = std::max(
+		st.lobbyHealth.lastOkMs, st.lobbyHealth.lastFailMs);
+	const bool stale = (last == 0) || (nowMs - last >= kStaleMs);
+	if (!stale) return;
+
+	const bool backoffActive =
+		st.browser.nextRetryMs != 0 && nowMs < st.browser.nextRetryMs;
+	if (backoffActive) return;
+	if (st.browser.refreshInFlight) return;
+
+	// Piggy-back on the Browser's refresh path — it runs a List which
+	// both confirms reachability and refreshes the session list.
+	st.browser.refreshRequested = true;
 }
 
 // -----------------------------------------------------------------------
@@ -118,6 +189,12 @@ void DesktopBrowser() {
 		if (!open) Navigate(Screen::Closed);
 		return;
 	}
+
+	// Lobby reachability indicator — always on top of the window.
+	// The Browser already refreshes every 10s while open so the
+	// indicator stays fresh without MaybePingLobby.
+	LobbyStatusIndicator(SDL_GetTicks());
+	ImGui::Separator();
 
 	// Activity banner when the user is hosting / in session — the
 	// session list below filters out the user's own hostedGames, so
@@ -574,6 +651,7 @@ const char *ActivityBannerText(UserActivity a, size_t gameCount) {
 
 void DesktopMyHostedGames() {
 	State& st = GetState();
+	const uint64_t nowMs = (uint64_t)SDL_GetTicks();
 	CenterNext(ImVec2(820, 520));
 	bool open = true;
 	if (!ImGui::Begin("Online Play — Host Games##netplay", &open,
@@ -582,6 +660,14 @@ void DesktopMyHostedGames() {
 		if (!open) Navigate(Screen::Closed);
 		return;
 	}
+
+	// Lobby reachability indicator — always on top.  Host Games may
+	// be open without the Browser ever having been visited, so fire
+	// an occasional lightweight ping to keep the signal live.  Ping
+	// respects backoff from lobby List failures.
+	LobbyStatusIndicator(nowMs);
+	MaybePingLobby(nowMs);
+	ImGui::Separator();
 
 	// Activity banner.
 	ImVec4 bc = (st.activity == UserActivity::Idle)
@@ -614,6 +700,33 @@ void DesktopMyHostedGames() {
 		Navigate(Screen::Prefs);
 	}
 
+	// Master "all" checkbox — three-state: checked if every offer is
+	// enabled, unchecked if none, mixed otherwise.  Click flips them
+	// all to the opposite of the majority state.
+	if (!st.hostedGames.empty()) {
+		ImGui::SameLine();
+		int enCount = 0;
+		for (const auto& o : st.hostedGames) if (o.enabled) ++enCount;
+		const bool allEnabled = (enCount == (int)st.hostedGames.size());
+		const bool anyEnabled = (enCount > 0);
+		bool toggle = allEnabled;
+		// Show a small tri-state by disabling the visual when mixed.
+		if (anyEnabled && !allEnabled)
+			ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+				ImGui::GetStyle().Alpha * 0.6f);
+		if (ImGui::Checkbox("Enable all", &toggle)) {
+			const bool target = !allEnabled;
+			for (auto& o : st.hostedGames) {
+				if (o.enabled != target) {
+					target ? EnableHostedGame(o.id)
+					       : DisableHostedGame(o.id);
+				}
+			}
+		}
+		if (anyEnabled && !allEnabled)
+			ImGui::PopStyleVar();
+	}
+
 	ImGui::Separator();
 
 	const ImGuiTableFlags tflags =
@@ -622,11 +735,12 @@ void DesktopMyHostedGames() {
 	ImVec2 tableSize(0, ImGui::GetContentRegionAvail().y - 50);
 	if (ImGui::BeginTable("##hostedGames", 6, tflags, tableSize)) {
 		ImGui::TableSetupScrollFreeze(0, 1);
+		// Enabled first — user's primary control.
+		ImGui::TableSetupColumn("On",         ImGuiTableColumnFlags_WidthFixed,   36.0f);
 		ImGui::TableSetupColumn("Game",       ImGuiTableColumnFlags_WidthStretch, 2.5f);
 		ImGui::TableSetupColumn("Visibility", ImGuiTableColumnFlags_WidthFixed,   90.0f);
 		ImGui::TableSetupColumn("State",      ImGuiTableColumnFlags_WidthFixed,  110.0f);
 		ImGui::TableSetupColumn("Port",       ImGuiTableColumnFlags_WidthFixed,   70.0f);
-		ImGui::TableSetupColumn("Enabled",    ImGuiTableColumnFlags_WidthFixed,   80.0f);
 		ImGui::TableSetupColumn("Actions",    ImGuiTableColumnFlags_WidthFixed,  130.0f);
 		ImGui::TableHeadersRow();
 
@@ -638,6 +752,12 @@ void DesktopMyHostedGames() {
 		for (auto& o : st.hostedGames) {
 			ImGui::PushID(o.id.c_str());
 			ImGui::TableNextRow();
+
+			ImGui::TableNextColumn();
+			bool en = o.enabled;
+			if (ImGui::Checkbox("##en", &en)) {
+				pendingToggle = o.id;
+			}
 
 			ImGui::TableNextColumn();
 			ImGui::TextUnformatted(o.gameName.c_str());
@@ -658,12 +778,6 @@ void DesktopMyHostedGames() {
 			ImGui::TableNextColumn();
 			if (o.boundPort) ImGui::Text("%u", (unsigned)o.boundPort);
 			else             ImGui::TextDisabled("—");
-
-			ImGui::TableNextColumn();
-			bool en = o.enabled;
-			if (ImGui::Checkbox("##en", &en)) {
-				pendingToggle = o.id;
-			}
 
 			ImGui::TableNextColumn();
 			if (ImGui::SmallButton("Remove")) {

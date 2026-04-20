@@ -288,6 +288,57 @@ MachineConfig CaptureCurrentMachineConfig() {
 	return c;
 }
 
+std::string FriendlyLobbyError(const std::string& raw, int httpStatus) {
+	// HTTP-level statuses take priority — they carry specific meaning.
+	if (httpStatus == 429)
+		return "Lobby is rate-limiting — please wait a moment";
+	if (httpStatus == 401 || httpStatus == 403)
+		return "Lobby refused the request (auth)";
+	if (httpStatus == 404)
+		return "Lobby endpoint not found (server may have changed)";
+	if (httpStatus == 409)
+		return "Lobby says this session is already registered";
+	if (httpStatus >= 500 && httpStatus < 600) {
+		char buf[64];
+		std::snprintf(buf, sizeof buf,
+			"Lobby server error (HTTP %d) — try again later",
+			httpStatus);
+		return buf;
+	}
+	if (httpStatus >= 400 && httpStatus < 500) {
+		char buf[64];
+		std::snprintf(buf, sizeof buf,
+			"Lobby rejected the request (HTTP %d)",
+			httpStatus);
+		return buf;
+	}
+
+	// Network-level errors: match on known strings from http_minimal.cpp.
+	if (raw.empty())
+		return "Could not reach lobby server";
+	if (raw == "recv() failed" ||
+	    raw == "send() failed")
+		return "Lobby server closed the connection unexpectedly";
+	if (raw == "recv hdr timeout" ||
+	    raw == "recv body timeout")
+		return "Lobby server timed out";
+	if (raw == "connection closed before headers")
+		return "Lobby dropped the connection before replying";
+	if (raw == "malformed status line" ||
+	    raw == "chunked transfer-encoding not supported" ||
+	    raw == "response too large")
+		return "Lobby returned data in an unexpected format";
+	if (raw.find("getaddrinfo") != std::string::npos ||
+	    raw.find("DNS") != std::string::npos)
+		return "Could not resolve lobby hostname (check DNS)";
+	if (raw.find("connect") != std::string::npos ||
+	    raw.find("refused") != std::string::npos)
+		return "Could not connect to lobby (server down?)";
+
+	// Unknown — prefix so users know it's a lobby issue.
+	return std::string("Lobby error: ") + raw;
+}
+
 HostedGame* FindHostedGame(const std::string& id) {
 	if (id.empty()) return nullptr;
 	for (auto& o : g_state.hostedGames)
