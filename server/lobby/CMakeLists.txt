@@ -4,9 +4,16 @@ cmake_minimum_required(VERSION 3.24)
 # any AltirraSDL code — only the shared protocol headers in
 # src/AltirraSDL/source/netplay/ (lobby_protocol.h, json_cursor.h).
 
+# Shared protocol headers live two levels up in the AltirraSDL tree.
+# Resolve relative to this file so the directory works both when
+# included from the top-level AltirraSDL build and when configured
+# standalone (e.g. from the deploy repo's CI).
+get_filename_component(_lobby_altirra_root
+    "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
+
 set(_lobby_include_dirs
     ${CMAKE_CURRENT_SOURCE_DIR}/vendor/cpp-httplib
-    ${CMAKE_SOURCE_DIR}/src/AltirraSDL/source/netplay)
+    ${_lobby_altirra_root}/src/AltirraSDL/source/netplay)
 
 add_executable(altirra-lobby server.cpp)
 target_include_directories(altirra-lobby PRIVATE ${_lobby_include_dirs})
