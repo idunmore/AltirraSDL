@@ -37,6 +37,8 @@
 #include "../netplay/ui_netplay_actions.h"
 #include "netplay/netplay_input.h"
 #include "netplay/netplay_simhash.h"
+#include "netplay/netplay_glue.h"
+#include "netplay/packets.h"
 #endif
 #include "ui_main_internal.h"
 #include "ui_mobile.h"
@@ -542,13 +544,12 @@ void ATUIPollDeferredActions() {
 			}
 #ifdef ALTIRRA_NETPLAY_ENABLED
 			case kATDeferred_NetplayHostSnapshot: {
-				// a.path carries the offer id (re-using the string
-				// slot to avoid extending the struct).  Boot step (if
-				// any) was enqueued before us so the sim is loaded by
-				// the time we run here.
-				extern void ATNetplayUI_SubmitHostSnapshotForGame(const char *gameId);
+				// a.path carries the offer id.  Reads the game-file
+				// bytes off disk and ships them via the existing
+				// snapshot-chunk channel.  Name kept for history —
+				// there is no savestate involved in v3.
 				VDStringA u8OfferId = VDTextWToU8(a.path);
-				ATNetplayUI_SubmitHostSnapshotForGame(u8OfferId.c_str());
+				ATNetplayUI::SubmitHostGameFileForGame(u8OfferId.c_str());
 				break;
 			}
 			case kATDeferred_NetplayHostBoot: {
@@ -602,6 +603,12 @@ void ATUIPollDeferredActions() {
 						break;
 					}
 				}
+
+				// Lock the RNG seed to the same master seed the
+				// joiner will use, so PIA floating inputs + HLE
+				// program-launch delay are bit-identical.  Shared
+				// constant with ui_netplay_actions.cpp.
+				g_sim.SetLockedRandomSeed(0xA7C0BEEFu);
 
 				g_sim.UnloadAll(ATUIGetBootUnloadStorageMask());
 
@@ -793,27 +800,17 @@ void ATUIPollDeferredActions() {
 				break;
 			}
 			case kATDeferred_NetplayJoinerApply: {
-				// a.path is the temp file containing the snapshot
-				// bytes we received from the host.  Load it, Resume,
-				// then ack the coordinator so it advances to
-				// Lockstepping.  On failure we MUST tear down the
-				// join and notify the user — otherwise the coord sits
-				// in SnapshotReady forever and the Waiting modal
-				// hangs with no explanation.
-				//
-				// Like the host side, we save the user's pre-session
-				// state first so the session-end hook can restore the
-				// emulator to exactly how they left it.
+				// a.path is a local cache file containing the host's
+				// game bytes.  v3 cold-boot path: apply BootConfig,
+				// set locked seed, UnloadAll, Load, ColdReset, Resume,
+				// then ack the coordinator → Lockstepping.
 				extern void ATNetplayUI_JoinerSnapshotApplied();
 				extern void ATNetplayUI_JoinerSnapshotFailed(const char *);
 				extern ATLogChannel g_ATLCNetplay;
 
-				// Arm the sim-event diagnostic logger BEFORE the first
-				// Advance so the first bad event on the joiner (which
-				// fires before BeginSession() runs) gets captured.
 				ATNetplayInput::AttachEventLogger();
 
-				g_ATLCNetplay("joiner apply: pre-state "
+				g_ATLCNetplay("joiner cold-boot: pre-state "
 					"running=%d paused=%d hw=%d mem=%d vid=%d",
 					g_sim.IsRunning() ? 1 : 0,
 					g_sim.IsPaused()  ? 1 : 0,
@@ -827,18 +824,32 @@ void ATUIPollDeferredActions() {
 					break;
 				}
 
-				// Unload the joiner's pre-session media BEFORE applying
-				// the host's snapshot.  Symmetry with the host's
-				// kATDeferred_NetplayHostBoot path (UnloadAll before
-				// Load).  Without this, disks / cartridges / cassettes
-				// the user had mounted pre-session stay attached and
-				// the savestate's device manager state layers on top,
-				// producing inconsistent phantom devices that don't
-				// exist on the host — a guaranteed lockstep desync
-				// source even when the RAM / CPU / GTIA state is
-				// identical.  The pre-session restore point captures
-				// the media so EndSession's RestoreSessionRestorePoint
-				// brings it all back.
+				// Apply host's MachineConfig (firmware-by-CRC32).
+				auto netBoot = ATNetplayGlue::JoinBootConfig();
+				ATNetplayUI::MachineConfig cfg;
+				cfg.hardwareMode    = (ATHardwareMode)netBoot.hardwareMode;
+				cfg.memoryMode      = (ATMemoryMode)netBoot.memoryMode;
+				cfg.videoStandard   = (ATVideoStandard)netBoot.videoStandard;
+				cfg.cpuMode         = (ATCPUMode)netBoot.cpuMode;
+				cfg.basicEnabled    = (netBoot.basicEnabled != 0);
+				cfg.sioPatchEnabled = (netBoot.sioAcceleration != 0);
+				cfg.kernelCRC32     = netBoot.kernelCRC32;
+				cfg.basicCRC32      = netBoot.basicCRC32;
+				std::string err = ATNetplayUI::ApplyMachineConfig(cfg);
+				if (!err.empty()) {
+					ATNetplayUI::RestoreSessionRestorePoint();
+					ATNetplayUI_JoinerSnapshotFailed(err.c_str());
+					break;
+				}
+
+				// Lock the RNG seed to the host's master seed so PIA
+				// floating inputs + HLE program-launch delay are
+				// deterministic across peers.
+				g_sim.SetLockedRandomSeed(netBoot.masterSeed);
+
+				// Unload the joiner's pre-session media before Load.
+				// EndSession's RestoreSessionRestorePoint brings it
+				// all back.
 				g_sim.UnloadAll(ATUIGetBootUnloadStorageMask());
 
 				VDStringA reason;
@@ -847,114 +858,39 @@ void ATUIPollDeferredActions() {
 					ATImageLoadContext ctx {};
 					if (g_sim.Load(a.path.c_str(),
 					        kATMediaWriteMode_RO, &ctx)) {
-						{
-							ATCPUEmulator &cpu = g_sim.GetCPU();
-							ATNetplay::SimHashBreakdown br{};
-							ATNetplay::ComputeSimStateHashBreakdown(
-								g_sim, br);
-							g_ATLCNetplay("joiner apply: Load OK, "
-								"post-Load running=%d paused=%d "
-								"hw=%d mem=%d vid=%d "
-								"PC=%04X A=%02X X=%02X Y=%02X S=%02X P=%02X",
-								g_sim.IsRunning() ? 1 : 0,
-								g_sim.IsPaused()  ? 1 : 0,
-								(int)g_sim.GetHardwareMode(),
-								(int)g_sim.GetMemoryMode(),
-								(int)g_sim.GetVideoStandard(),
-								(unsigned)cpu.GetInsnPC(),
-								(unsigned)cpu.GetA(),
-								(unsigned)cpu.GetX(),
-								(unsigned)cpu.GetY(),
-								(unsigned)cpu.GetS(),
-								(unsigned)cpu.GetP());
-							g_ATLCNetplay("joiner apply breakdown: "
-								"total=%08x cpu=%08x "
-								"ram0=%08x ram1=%08x ram2=%08x ram3=%08x "
-								"gtia=%08x antic=%08x pokey=%08x "
-								"schedTick=%08x",
-								br.total, br.cpuRegs,
-								br.ramBank0, br.ramBank1,
-								br.ramBank2, br.ramBank3,
-								br.gtiaRegs, br.anticRegs,
-								br.pokeyRegs, br.schedTick);
-
-							// Cross-peer post-Load byte diff:
-							// re-serialise AFTER Load and dump to disk
-							// so we can compare against the host's
-							// post-Load snapshot.  See host side in
-							// ui_netplay_actions.cpp for details.
-							{
-								extern VDStringA ATGetConfigDir();
-								vdfastvector<uint8_t> buf;
-								if (ATNetplay::SerializeSimToSnapshotBytes(
-										g_sim, buf)) {
-									uint32_t jh = ATNetplay::
-										HashSavestateJsonInSnapshot(
-											buf.data(), buf.size());
-									g_ATLCNetplay(
-										"joiner post-Load re-serialise: "
-										"%zu bytes, savestate.json "
-										"FNV=%08x", buf.size(), jh);
-									VDStringA dumpPath = ATGetConfigDir();
-									if (!dumpPath.empty()
-									    && dumpPath.back() != '/'
-									    && dumpPath.back() != '\\')
-										dumpPath.push_back('/');
-									dumpPath.append(
-										"netplay_joiner_post_load.astate");
-									try {
-										VDFileStream fs(
-											VDTextU8ToW(dumpPath.c_str(),
-												-1).c_str(),
-											nsVDFile::kWrite
-											| nsVDFile::kCreateAlways
-											| nsVDFile::kDenyAll);
-										fs.Write(buf.data(),
-											(sint32)buf.size());
-									} catch (...) {
-										g_ATLCNetplay("joiner post-Load "
-											"dump: write failed");
-									}
-								} else {
-									g_ATLCNetplay("joiner post-Load "
-										"re-serialise: FAILED");
-								}
-							}
-						}
+						g_sim.ColdReset();
 						g_sim.Resume();
-						g_ATLCNetplay("joiner apply: after Resume "
-							"running=%d paused=%d",
-							g_sim.IsRunning() ? 1 : 0,
-							g_sim.IsPaused()  ? 1 : 0);
+						ATCPUEmulator &cpu = g_sim.GetCPU();
+						g_ATLCNetplay("joiner cold-boot: OK "
+							"hw=%d mem=%d vid=%d "
+							"PC=%04X A=%02X X=%02X Y=%02X S=%02X P=%02X",
+							(int)g_sim.GetHardwareMode(),
+							(int)g_sim.GetMemoryMode(),
+							(int)g_sim.GetVideoStandard(),
+							(unsigned)cpu.GetInsnPC(),
+							(unsigned)cpu.GetA(),
+							(unsigned)cpu.GetX(),
+							(unsigned)cpu.GetY(),
+							(unsigned)cpu.GetS(),
+							(unsigned)cpu.GetP());
 						ok = true;
 					} else {
-						// Most common causes here are OS/BASIC ROM
-						// refString mismatches (host has firmware X,
-						// joiner has firmware Y) — the savestate
-						// loader sets mbKernelMismatchDetected and
-						// returns false.  We can't inspect that
-						// directly, but the generic message is
-						// still actionable.
-						reason = "host's firmware / hardware config "
-						         "is not available on this machine";
+						reason = "could not load the game file";
 					}
 				} catch (const MyError &e) {
 					reason = e.c_str();
 				} catch (...) {
-					reason = "unknown error while applying snapshot";
+					reason = "unknown error during cold-boot load";
 				}
 
 				if (ok) {
 					ATNetplayUI_JoinerSnapshotApplied();
 				} else {
-					// Restore so the user gets back to exactly what
-					// they were doing before they clicked Join.
 					ATNetplayUI::RestoreSessionRestorePoint();
 					ATNetplayUI_JoinerSnapshotFailed(
-						reason.empty() ? "snapshot apply failed"
+						reason.empty() ? "cold-boot failed"
 						               : reason.c_str());
 				}
-				// Temp file is deleted by the UI after either ack.
 				break;
 			}
 #endif

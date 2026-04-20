@@ -88,7 +88,8 @@ public:
 	               uint64_t basicRomHash,
 	               uint64_t settingsHash,
 	               uint16_t inputDelayFrames,
-	               const uint8_t* entryCodeHash /* 16 bytes or nullptr */);
+	               const uint8_t* entryCodeHash /* 16 bytes or nullptr */,
+	               const NetBootConfig& bootConfig);
 
 	// ---- joiner entrypoint ------------------------------------------------
 
@@ -132,6 +133,10 @@ public:
 	// deserialises via ATSimulator::ApplySnapshot and then calls
 	// AcknowledgeSnapshotApplied() to move to Lockstepping.
 	const std::vector<uint8_t>& GetReceivedSnapshot() const { return mSnapRx.Data(); }
+	// Joiner: BootConfig parsed from the last NetWelcome.  Valid once
+	// Phase >= ReceivingSnapshot.  Host-side returns the config we
+	// will ship.
+	const NetBootConfig& GetBootConfig() const { return mBootConfig; }
 	void AcknowledgeSnapshotApplied();
 
 	// ---- lockstep frame API (valid only in Lockstepping) -----------------
@@ -210,6 +215,10 @@ private:
 	uint8_t  mEntryCodeHash[kEntryCodeHashLen] = {};
 	bool     mHasEntryCode = false;
 	bool     mAcceptTos    = false;
+
+	// v3 BootConfig — filled on host by BeginHost, on joiner by
+	// HandleWelcomeFromHost.
+	NetBootConfig mBootConfig{};
 
 	// Host pending-welcome: a joiner Hello arrived, but
 	// SubmitSnapshotForUpload() hasn't been called yet.  We hold

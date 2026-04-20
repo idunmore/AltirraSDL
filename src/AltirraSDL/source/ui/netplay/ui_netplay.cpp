@@ -11,6 +11,7 @@
 
 #include "netplay/platform_notify.h"
 #include "netplay/netplay_glue.h"
+#include "netplay/packets.h"
 
 #include "ui/core/ui_mode.h"
 #include "ui/core/ui_main.h"
@@ -212,9 +213,9 @@ void ATNetplayUI_Poll(uint64_t nowMs) {
 	// Drive the multi-offer state machine.
 	ATNetplayUI::ReconcileHostedGames(nowMs);
 
-	// Joiner flow: when we receive SnapshotReady, write the bytes to
-	// a temp file and enqueue an apply+resume deferred action.  The
-	// deferred callback calls ATNetplayUI_JoinerSnapshotApplied()
+	// Joiner flow: when we receive SnapshotReady, write the game-file
+	// bytes to a cache path and enqueue a cold-boot deferred action.
+	// The deferred callback calls ATNetplayUI_JoinerSnapshotApplied()
 	// which acks the coordinator → Lockstepping.
 	using GP = ATNetplayGlue::Phase;
 	GP jp = ATNetplayGlue::JoinPhase();
@@ -224,11 +225,17 @@ void ATNetplayUI_Poll(uint64_t nowMs) {
 		size_t len = 0;
 		ATNetplayGlue::GetReceivedSnapshot(&data, &len);
 		if (data && len > 0) {
-			// Write to $configdir/netplay_inbound.astate
+			// Write to $configdir/netplay_inbound<ext> so ATSimulator
+			// content-sniffs by extension.
+			auto bc = ATNetplayGlue::JoinBootConfig();
+			char extBuf[16] = {};
+			strncpy(extBuf, bc.gameExtension, 8);
+			if (extBuf[0] == 0) strcpy(extBuf, ".bin");
 			VDStringA p = ATGetConfigDir();
 			if (!p.empty() && p.back() != '/' && p.back() != '\\')
 				p.push_back('/');
-			p.append("netplay_inbound.astate");
+			p.append("netplay_inbound");
+			p.append(extBuf);
 			try {
 				VDFileStream fs(VDTextU8ToW(p.c_str(), -1).c_str(),
 					nsVDFile::kWrite | nsVDFile::kCreateAlways
@@ -424,8 +431,8 @@ void ATNetplayUI_JoinerSnapshotApplied() {
 
 // C-linkage trampoline so ui_main.cpp's deferred handler can call the
 // ATNetplayUI::-namespaced implementation without pulling the header.
-void ATNetplayUI_SubmitHostSnapshotForGame(const char *gameId) {
-	ATNetplayUI::SubmitHostSnapshotForGame(gameId);
+void ATNetplayUI_SubmitHostGameFileForGame(const char *gameId) {
+	ATNetplayUI::SubmitHostGameFileForGame(gameId);
 }
 
 void ATNetplayUI_HostBootFailed(const char *gameId, const char *reason) {

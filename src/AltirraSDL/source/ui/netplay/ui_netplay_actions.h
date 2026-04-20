@@ -72,11 +72,11 @@ void ActivityTrack_OnLocalPlayStop();
 
 void StartJoiningAction();
 
-// Serialise the current simulator state and hand it to the host
+// Read the game file bytes from disk and hand them to the host
 // coordinator for the given offer id.  Called from the
-// kATDeferred_NetplayHostSnapshot deferred action on the UI thread,
-// so the sim is safe to touch.  No-op if the id is unknown.
-void SubmitHostSnapshotForGame(const char *gameId);
+// kATDeferred_NetplayHostSnapshot deferred action on the UI thread.
+// No-op if the id is unknown.
+void SubmitHostGameFileForGame(const char *gameId);
 
 // --- Machine-preset apply + session restore-point -----------------------
 //

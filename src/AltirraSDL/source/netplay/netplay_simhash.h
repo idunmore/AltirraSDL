@@ -54,24 +54,4 @@ uint32_t ComputeSimStateHash(ATSimulator& sim);
 // Expensive path — called only on first desync detection.
 void ComputeSimStateHashBreakdown(ATSimulator& sim, SimHashBreakdown& out);
 
-// -------------------------------------------------------------------
-// Diagnostic helpers for the "cross-peer post-Load byte diff"
-// (2026-04-20).  Only used while chasing a determinism regression.
-// -------------------------------------------------------------------
-
-// Re-serialise the current simulator to a zip-wrapped savestate buffer
-// (same format ShippedToJoiner uses).  Returns false on failure.
-// The buffer is suitable to be written to disk and unzipped for diffing
-// across peers.  Note: the zip container embeds a file modification
-// timestamp, so raw zip bytes WILL differ across runs even when sim
-// state is identical — compare the extracted `savestate.json` content,
-// not the zip itself.
-bool SerializeSimToSnapshotBytes(ATSimulator& sim, vdfastvector<uint8_t>& out);
-
-// Extract `savestate.json` from a zip-wrapped snapshot buffer and FNV-1a
-// hash its content.  Returns 0 on failure (e.g., the entry is missing).
-// This hash IS comparable across peers — the zip-timestamp noise is
-// excluded by pulling only the JSON entry.
-uint32_t HashSavestateJsonInSnapshot(const uint8_t *zipBytes, size_t zipLen);
-
 } // namespace ATNetplay

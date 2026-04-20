@@ -5,6 +5,7 @@
 #include "netplay_glue.h"
 
 #include "coordinator.h"
+#include "packets.h"
 #include "netplay_input.h"
 #include "netplay_simhash.h"
 
@@ -365,7 +366,8 @@ bool StartHost(const char* gameId,
                uint64_t basicRomHash,
                uint64_t settingsHash,
                uint16_t inputDelayFrames,
-               const uint8_t* entryCodeHash) {
+               const uint8_t* entryCodeHash,
+               const ATNetplay::NetBootConfig& bootConfig) {
 	if (!gameId || !*gameId) return false;
 
 	// If the id already has a coordinator, tear the old one down first.
@@ -376,7 +378,7 @@ bool StartHost(const char* gameId,
 	slot.coord   = std::make_unique<ATNetplay::Coordinator>();
 	bool ok = slot.coord->BeginHost(localPort, playerHandle, cartName,
 		osRomHash, basicRomHash, settingsHash, inputDelayFrames,
-		entryCodeHash);
+		entryCodeHash, bootConfig);
 	if (!ok) return false;
 
 	g_hosts.push_back(std::move(slot));
@@ -467,6 +469,11 @@ void GetReceivedSnapshot(const uint8_t** data, size_t* len) {
 void AcknowledgeSnapshotApplied() {
 	if (!g_joiner) return;
 	g_joiner->AcknowledgeSnapshotApplied();
+}
+
+ATNetplay::NetBootConfig JoinBootConfig() {
+	if (!g_joiner) return ATNetplay::NetBootConfig{};
+	return g_joiner->GetBootConfig();
 }
 
 uint32_t CurrentFrame() {

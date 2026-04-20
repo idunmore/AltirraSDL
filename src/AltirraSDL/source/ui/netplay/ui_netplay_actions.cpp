@@ -10,6 +10,7 @@
 #include "netplay/netplay_glue.h"
 #include "netplay/lobby_config.h"
 #include "netplay/netplay_simhash.h"
+#include "netplay/packets.h"
 
 #include "ui/gamelibrary/game_library.h"
 #include "ui/core/ui_main.h"
@@ -201,11 +202,48 @@ void PostLobbyDelete(HostedGame& o) {
 // Kick off an actual host coordinator for this offer, binding an
 // ephemeral port and posting Create afterwards.  Idempotent relative
 // to an already-running coordinator.
+// Constant master seed for locked-RNG netplay; both peers reseed at
+// the lockstep-entry edge in netplay_glue.cpp.
+constexpr uint32_t kNetplayMasterSeed = 0xA7C0BEEFu;
+
+// Extract the file extension from a UTF-8 path into a NUL-padded
+// 8-byte field (with the leading dot kept for ATSimulator::Load's
+// content-sniff via path extension).
+void ExtractExtensionInto(const std::string& path, char out[8]) {
+	std::memset(out, 0, 8);
+	size_t dot = path.find_last_of('.');
+	if (dot == std::string::npos) return;
+	std::string ext = path.substr(dot);
+	size_t n = ext.size();
+	if (n > 7) n = 7;
+	std::memcpy(out, ext.data(), n);
+}
+
+// Build a NetBootConfig from a HostedGame's MachineConfig.
+ATNetplay::NetBootConfig BuildBootConfig(const HostedGame& o) {
+	ATNetplay::NetBootConfig bc{};
+	bc.hardwareMode    = (uint8_t)o.config.hardwareMode;
+	bc.memoryMode      = (uint8_t)o.config.memoryMode;
+	bc.videoStandard   = (uint8_t)o.config.videoStandard;
+	bc.basicEnabled    = o.config.basicEnabled ? 1 : 0;
+	bc.cpuMode         = (uint8_t)o.config.cpuMode;
+	bc.sioAcceleration = o.config.sioPatchEnabled ? 1 : 0;
+	bc.kernelCRC32     = o.config.kernelCRC32;
+	bc.basicCRC32      = o.config.basicCRC32;
+	bc.masterSeed      = kNetplayMasterSeed;
+	bc.bootFrames      = 0;
+	bc.gameFileCRC32   = 0;  // filled by SubmitHostGameFileForGame
+	ExtractExtensionInto(o.gamePath, bc.gameExtension);
+	return bc;
+}
+
 void StartCoordForHostedGame(HostedGame& o) {
 	if (ATNetplayGlue::HostExists(o.id.c_str())) return;
 
 	uint8_t codeHash[16];
 	const uint8_t* codePtr = FoldEntryCode(o, codeHash);
+
+	ATNetplay::NetBootConfig bc = BuildBootConfig(o);
 
 	bool ok = ATNetplayGlue::StartHost(
 		o.id.c_str(),
@@ -216,7 +254,8 @@ void StartCoordForHostedGame(HostedGame& o) {
 		/*basicRomHash*/     0,
 		/*settingsHash*/     0,
 		/*inputDelayFrames*/ (uint16_t)GetState().prefs.defaultInputDelayInternet,
-		/*entryCodeHash*/    codePtr);
+		/*entryCodeHash*/    codePtr,
+		/*bootConfig*/       bc);
 	if (!ok) {
 		const char* err = ATNetplayGlue::HostLastError(o.id.c_str());
 		o.lastError = (err && *err) ? err : "Failed to start host";
@@ -519,195 +558,36 @@ void StopHostingAction() {
 	}
 }
 
-void SubmitHostSnapshotForGame(const char *gameId) {
+void SubmitHostGameFileForGame(const char *gameId) {
 	if (!gameId || !*gameId) return;
 	HostedGame* o = FindHostedGame(gameId);
 	if (!o) return;
 	if (!ATNetplayGlue::HostExists(gameId)) return;
 
-	{
-		ATCPUEmulator &cpu = g_sim.GetCPU();
-		ATNetplay::SimHashBreakdown br{};
-		ATNetplay::ComputeSimStateHashBreakdown(g_sim, br);
-		g_ATLCNetplay("host snapshot: capturing for \"%s\" "
-			"(running=%d paused=%d hw=%d mem=%d vid=%d "
-			"PC=%04X A=%02X X=%02X Y=%02X S=%02X P=%02X)",
-			gameId,
-			g_sim.IsRunning() ? 1 : 0,
-			g_sim.IsPaused()  ? 1 : 0,
-			(int)g_sim.GetHardwareMode(),
-			(int)g_sim.GetMemoryMode(),
-			(int)g_sim.GetVideoStandard(),
-			(unsigned)cpu.GetInsnPC(),
-			(unsigned)cpu.GetA(),
-			(unsigned)cpu.GetX(),
-			(unsigned)cpu.GetY(),
-			(unsigned)cpu.GetS(),
-			(unsigned)cpu.GetP());
-		// Pre-save breakdown.  Compare line-by-line with the
-		// post-self-load breakdown printed below: any subsystem whose
-		// hash changes is a lossy round-trip in Altirra's save format,
-		// independent of netplay.
-		g_ATLCNetplay("host pre-save breakdown: "
-			"total=%08x cpu=%08x "
-			"ram0=%08x ram1=%08x ram2=%08x ram3=%08x "
-			"gtia=%08x antic=%08x pokey=%08x schedTick=%08x",
-			br.total, br.cpuRegs,
-			br.ramBank0, br.ramBank1, br.ramBank2, br.ramBank3,
-			br.gtiaRegs, br.anticRegs, br.pokeyRegs, br.schedTick);
-	}
-
+	// Read the game file bytes straight off disk (no savestate).  The
+	// joiner will cold-boot from these bytes + our BootConfig.
 	try {
-		// Mirror ATSimulator::SaveState (simulator.cpp:3870) but write
-		// to memory instead of a file stream.  The zip archive format
-		// is identical to what the joiner's ApplySnapshot expects.
-		vdrefptr<IATSerializable> snapshot;
-		vdrefptr<IATSerializable> snapshotInfo;
-		g_sim.CreateSnapshot(~snapshot, ~snapshotInfo);
-
-		VDMemoryBufferStream mem;
-		VDBufferedWriteStream bs(&mem, 4096);
-		vdautoptr<IVDZipArchiveWriter> zip(VDCreateZipArchiveWriter(bs));
-
-		{
-			vdautoptr<IATSaveStateSerializer> ser(
-				ATCreateSaveStateSerializer(L"savestate.json"));
-			ser->Serialize(*zip, *snapshot);
+		VDFileStream fs(VDTextU8ToW(o->gamePath.c_str(), -1).c_str(),
+			nsVDFile::kRead | nsVDFile::kOpenExisting | nsVDFile::kDenyNone);
+		sint64 sz = fs.Length();
+		if (sz <= 0 || sz > 32 * 1024 * 1024) {
+			o->lastError = "game file is empty or too large";
+			return;
 		}
-		{
-			vdautoptr<IATSaveStateSerializer> ser(
-				ATCreateSaveStateSerializer(L"savestateinfo.json"));
-			ser->Serialize(*zip, *snapshotInfo);
-		}
-		zip->Finalize();
-		bs.Flush();
+		std::vector<uint8_t> bytes((size_t)sz);
+		fs.Read(bytes.data(), (long)bytes.size());
 
-		auto bytes = mem.GetBuffer();
-		g_ATLCNetplay("host snapshot: serialised %zu bytes for \"%s\"",
-			bytes.size(), gameId);
-
-		// DETERMINISTIC-LOCKSTEP HOST ROUND-TRIP (2026-04-20)
-		//
-		// Force the HOST's own sim through the EXACT same zip → JSON →
-		// deserialize → ApplySnapshot pipeline the joiner uses.  The
-		// goal is that after this call, the host's live sim state is
-		// bit-identical to the joiner's post-Load state — any field
-		// that the serializer cannot round-trip losslessly is lossy
-		// IDENTICALLY on both sides, so a deterministic lockstep
-		// holds from frame 0.
-		//
-		// Why not just call g_sim.ApplySnapshot(*snapshot, nullptr)
-		// directly on the in-memory object?  Because that skips the
-		// JSON encode/decode step.  Live IATSerializable objects
-		// carry references that the zip/JSON pair externalises (e.g.
-		// memory buffers become `memory.bin` file entries) — only
-		// going through the actual zip bytes guarantees the host's
-		// post-state matches the joiner's post-state bit for bit.
-		// We observed WKC frame-0 desync with direct ApplySnapshot:
-		// host/joiner's GTIA/ANTIC/POKEY/CPU/RAM hashes still
-		// differed because JSON precision / buffer reference vs
-		// in-memory reference paths produce subtly different states.
-		//
-		// We write to a temp file and Load() because that is bit-
-		// exactly what the joiner does (see ui_netplay.cpp ~line 230
-		// writing netplay_inbound.astate, and the joiner's
-		// kATDeferred_NetplayJoinerApply calling g_sim.Load()).  Any
-		// future hardening of the zip-deserialize path auto-applies
-		// to both sides symmetrically.
-		{
-			VDStringA tmpPath = ATGetConfigDir();
-			if (!tmpPath.empty() && tmpPath.back() != '/'
-			                     && tmpPath.back() != '\\')
-				tmpPath.push_back('/');
-			tmpPath.append("netplay_host_selfload.astate");
-
-			try {
-				{
-					VDFileStream fs(
-						VDTextU8ToW(tmpPath.c_str(), -1).c_str(),
-						nsVDFile::kWrite | nsVDFile::kCreateAlways
-						| nsVDFile::kDenyAll);
-					fs.Write(bytes.data(), (sint32)bytes.size());
-				}
-				if (!g_sim.Load(VDTextU8ToW(tmpPath.c_str(), -1).c_str(),
-				                kATMediaWriteMode_RO, nullptr)) {
-					g_ATLCNetplay("host self-load: Load() returned false");
-				} else {
-					ATCPUEmulator &cpu = g_sim.GetCPU();
-					ATNetplay::SimHashBreakdown br{};
-					ATNetplay::ComputeSimStateHashBreakdown(g_sim, br);
-					g_ATLCNetplay("host self-load: OK post-Load "
-						"PC=%04X A=%02X X=%02X Y=%02X S=%02X P=%02X",
-						(unsigned)cpu.GetInsnPC(),
-						(unsigned)cpu.GetA(),
-						(unsigned)cpu.GetX(),
-						(unsigned)cpu.GetY(),
-						(unsigned)cpu.GetS(),
-						(unsigned)cpu.GetP());
-					g_ATLCNetplay("host self-load breakdown: "
-						"total=%08x cpu=%08x "
-						"ram0=%08x ram1=%08x ram2=%08x ram3=%08x "
-						"gtia=%08x antic=%08x pokey=%08x schedTick=%08x",
-						br.total, br.cpuRegs,
-						br.ramBank0, br.ramBank1, br.ramBank2, br.ramBank3,
-						br.gtiaRegs, br.anticRegs, br.pokeyRegs,
-						br.schedTick);
-
-					// Cross-peer post-Load byte diff: re-serialise the
-					// sim right after self-Load and dump to disk so we
-					// can compare with the joiner's post-Load snapshot
-					// byte-for-byte.  The JSON-content hash is stable
-					// (no zip timestamp noise) and IS comparable across
-					// peers; if it matches the joiner's, post-Load
-					// state is identical and divergence is during
-					// execution.  If it differs, diff the unzipped
-					// savestate.json to find the non-round-tripping
-					// field.
-					{
-						vdfastvector<uint8_t> buf;
-						if (ATNetplay::SerializeSimToSnapshotBytes(g_sim, buf)) {
-							uint32_t jh = ATNetplay::HashSavestateJsonInSnapshot(
-								buf.data(), buf.size());
-							g_ATLCNetplay("host post-Load re-serialise: "
-								"%zu bytes, savestate.json FNV=%08x",
-								buf.size(), jh);
-							VDStringA dumpPath = ATGetConfigDir();
-							if (!dumpPath.empty() && dumpPath.back() != '/'
-							                      && dumpPath.back() != '\\')
-								dumpPath.push_back('/');
-							dumpPath.append("netplay_host_post_load.astate");
-							try {
-								VDFileStream fs(
-									VDTextU8ToW(dumpPath.c_str(), -1).c_str(),
-									nsVDFile::kWrite | nsVDFile::kCreateAlways
-									| nsVDFile::kDenyAll);
-								fs.Write(buf.data(), (sint32)buf.size());
-							} catch (...) {
-								g_ATLCNetplay("host post-Load dump: "
-									"write failed (continuing)");
-							}
-						} else {
-							g_ATLCNetplay("host post-Load re-serialise: "
-								"FAILED");
-						}
-					}
-				}
-			} catch (const MyError &e) {
-				g_ATLCNetplay("host self-load: FAILED: %s", e.c_str());
-				// If the host cannot re-load its own snapshot, the
-				// joiner almost certainly can't either — surface the
-				// error via the offer row.
-				o->lastError = std::string(
-					"host self-load failed: ") + e.c_str();
-			}
-		}
+		uint32_t crc = VDCRCTable::CRC32.CRC(bytes.data(), bytes.size());
+		g_ATLCNetplay("host: shipping game file \"%s\" (%zu bytes, "
+			"CRC32=%08X) for \"%s\"",
+			o->gamePath.c_str(), bytes.size(), crc, gameId);
 
 		ATNetplayGlue::SubmitHostSnapshot(gameId,
 			bytes.data(), bytes.size());
 	} catch (const MyError& e) {
-		o->lastError = std::string("snapshot failed: ") + e.c_str();
+		o->lastError = std::string("read game file failed: ") + e.c_str();
 	} catch (...) {
-		o->lastError = "snapshot failed (unknown)";
+		o->lastError = "read game file failed (unknown)";
 	}
 }
 

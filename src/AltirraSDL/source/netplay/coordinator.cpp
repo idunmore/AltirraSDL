@@ -57,7 +57,9 @@ bool Coordinator::BeginHost(uint16_t localPort,
                             uint64_t basicRomHash,
                             uint64_t settingsHash,
                             uint16_t inputDelayFrames,
-                            const uint8_t* entryCodeHash) {
+                            const uint8_t* entryCodeHash,
+                            const NetBootConfig& bootConfig) {
+	mBootConfig = bootConfig;
 	if (!mTransport.Listen(localPort)) {
 		FailWith("failed to bind UDP socket");
 		return false;
@@ -341,6 +343,7 @@ void Coordinator::HandleWelcomeFromHost(const NetWelcome& w, uint64_t /*nowMs*/)
 	mInputDelay = w.inputDelayFrames;
 	std::memcpy(mCartName, w.cartName, kCartLen);
 	mSettingsHash = w.settingsHash;
+	mBootConfig = w.boot;
 
 	// Prepare receiver.
 	mSnapRx.Begin(w.snapshotChunks, w.snapshotBytes);
@@ -539,6 +542,7 @@ void Coordinator::SendWelcome() {
 		(uint32_t)((mSnapTxBuffer.size() + kSnapshotChunkSize - 1)
 			/ kSnapshotChunkSize);
 	w.settingsHash = mSettingsHash;
+	w.boot = mBootConfig;
 
 	size_t n = EncodeWelcome(w, mTxBuf, sizeof mTxBuf);
 	if (n && mPeerKnown) mTransport.SendTo(mTxBuf, n, mPeer);

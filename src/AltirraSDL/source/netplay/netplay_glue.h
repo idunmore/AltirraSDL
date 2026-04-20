@@ -32,7 +32,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace ATNetplay { enum class CoordPhase; }
+namespace ATNetplay { enum class CoordPhase; struct NetBootConfig; }
 
 namespace ATNetplayGlue {
 
@@ -104,7 +104,12 @@ bool StartHost(const char* gameId,
                uint64_t basicRomHash,
                uint64_t settingsHash,
                uint16_t inputDelayFrames,
-               const uint8_t* entryCodeHash);
+               const uint8_t* entryCodeHash,
+               const ATNetplay::NetBootConfig& bootConfig);
+
+// Joiner-side view of the BootConfig shipped in NetWelcome.  Returns
+// a zero-initialised struct if no joiner coordinator exists yet.
+ATNetplay::NetBootConfig JoinBootConfig();
 
 // Tear down one host offer.  Safe to call on an unknown id.
 void StopHost(const char* gameId);
