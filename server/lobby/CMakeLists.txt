@@ -25,7 +25,7 @@ set(_lobby_include_dirs
 
 add_executable(altirra-lobby server.cpp)
 target_include_directories(altirra-lobby PRIVATE ${_lobby_include_dirs})
-target_compile_features(altirra-lobby PRIVATE cxx_std_23)
+target_compile_features(altirra-lobby PRIVATE cxx_std_20)
 
 # cpp-httplib requires threads on all platforms; Winsock on Windows
 # is pulled in by its own headers.
@@ -51,7 +51,7 @@ add_executable(altirra-lobby-test server_test.cpp)
 target_include_directories(altirra-lobby-test PRIVATE
     ${_lobby_include_dirs}
     ${CMAKE_CURRENT_SOURCE_DIR})
-target_compile_features(altirra-lobby-test PRIVATE cxx_std_23)
+target_compile_features(altirra-lobby-test PRIVATE cxx_std_20)
 target_compile_definitions(altirra-lobby-test PRIVATE
     ALTIRRA_LOBBY_TEST_MAIN=1)
 if(NOT WIN32)
