@@ -34,7 +34,7 @@ static void testDefaultIni() {
 	if (xs.size() >= 2) {
 		CHECK(xs[0].section == "official");
 		CHECK(xs[0].kind == LobbyKind::Http);
-		CHECK(xs[0].url == "http://92.5.13.40:8080");
+		CHECK(xs[0].url == "http://158.180.27.70:8080");
 		CHECK(xs[0].enabled);
 
 		CHECK(xs[1].section == "lan");

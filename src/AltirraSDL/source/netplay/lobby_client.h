@@ -2,7 +2,7 @@
 //
 // Typed facade over http_minimal.cpp + a tiny hand-rolled JSON reader.
 // Talks to the altirra-sdl-lobby reference server (Go, deployed at
-// http://92.5.13.40:8080 — see NETPLAY_DESIGN_PLAN.md §11).
+// http://158.180.27.70:8080 — see NETPLAY_DESIGN_PLAN.md §11).
 //
 // The lobby is a session directory, not a rendezvous server.  Calls:
 //
@@ -65,7 +65,7 @@ struct LobbyCreateResponse {
 
 struct LobbyEndpoint {
 	// HTTP transport.
-	std::string host       = "92.5.13.40";
+	std::string host       = "158.180.27.70";
 	uint16_t    port       = 8080;
 	// Fail fast — the lobby is optional infrastructure (peers can
 	// still connect via direct IP).  A 5 s wait on every Create /

@@ -256,7 +256,7 @@ const char *VideoStandardShort(ATVideoStandard v) {
 
 const char *MachineConfigSummary(const MachineConfig& c) {
 	static char buf[96];
-	std::snprintf(buf, sizeof buf, "%s \xC2\xB7 %s \xC2\xB7 %s \xC2\xB7 BASIC %s",
+	std::snprintf(buf, sizeof buf, "%s | %s | %s | BASIC %s",
 		HardwareModeShort(c.hardwareMode),
 		MemoryModeShort(c.memoryMode),
 		VideoStandardShort(c.videoStandard),
@@ -291,7 +291,7 @@ MachineConfig CaptureCurrentMachineConfig() {
 std::string FriendlyLobbyError(const std::string& raw, int httpStatus) {
 	// HTTP-level statuses take priority — they carry specific meaning.
 	if (httpStatus == 429)
-		return "Lobby is rate-limiting — please wait a moment";
+		return "Lobby is rate-limiting - please wait a moment";
 	if (httpStatus == 401 || httpStatus == 403)
 		return "Lobby refused the request (auth)";
 	if (httpStatus == 404)
@@ -301,7 +301,7 @@ std::string FriendlyLobbyError(const std::string& raw, int httpStatus) {
 	if (httpStatus >= 500 && httpStatus < 600) {
 		char buf[64];
 		std::snprintf(buf, sizeof buf,
-			"Lobby server error (HTTP %d) — try again later",
+			"Lobby server error (HTTP %d) - try again later",
 			httpStatus);
 		return buf;
 	}

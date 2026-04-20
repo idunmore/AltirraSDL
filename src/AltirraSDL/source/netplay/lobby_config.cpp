@@ -18,7 +18,7 @@ const char* const kDefaultLobbyIni =
 	"\n"
 	"[official]\n"
 	"name    = Altirra Official Lobby\n"
-	"url     = http://92.5.13.40:8080\n"
+	"url     = http://158.180.27.70:8080\n"
 	"region  = global\n"
 	"enabled = true\n"
 	"\n"

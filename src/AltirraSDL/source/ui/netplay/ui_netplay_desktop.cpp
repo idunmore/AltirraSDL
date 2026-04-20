@@ -58,7 +58,7 @@ void LobbyStatusIndicator(uint64_t nowMs) {
 	const LobbyHealth& h = GetState().lobbyHealth;
 
 	ImVec4 dotCol(0.55f, 0.55f, 0.55f, 1.0f);  // gray: unknown
-	const char *label = "Lobby: checking…";
+	const char *label = "Lobby: checking...";
 	char buf[128];
 
 	const bool haveOk   = (h.lastOkMs   != 0);
@@ -83,7 +83,12 @@ void LobbyStatusIndicator(uint64_t nowMs) {
 		label = buf;
 	}
 
-	ImGui::TextColored(dotCol, "\xE2\x97\x8F");  // U+25CF black circle
+	// ASCII-only marker — the bundled default ImGui font doesn't
+	// carry full Unicode glyph coverage, so U+25CF et al. render as
+	// "?" boxes.  Use bracketed letters for status and rely on
+	// colour to carry the signal.
+	const char *marker = okIsNewer ? "[OK]" : (haveFail ? "[!!]" : "[..]");
+	ImGui::TextColored(dotCol, "%s", marker);
 	ImGui::SameLine();
 	if (okIsNewer)
 		ImGui::TextUnformatted(label);

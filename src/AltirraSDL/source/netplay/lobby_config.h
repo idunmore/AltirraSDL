@@ -5,7 +5,7 @@
 //
 //   [official]
 //   name    = Altirra Official Lobby
-//   url     = http://92.5.13.40:8080
+//   url     = http://158.180.27.70:8080
 //   region  = global
 //
 //   [lan]

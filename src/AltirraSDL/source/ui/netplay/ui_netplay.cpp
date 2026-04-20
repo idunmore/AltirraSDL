@@ -164,7 +164,7 @@ void ATNetplayUI_Poll(uint64_t nowMs) {
 			if (r.op != ATNetplayUI::LobbyOp::List) return;
 			if (!r.ok) {
 				st.browser.statusLine = st.lobbyHealth.lastError
-					+ " — use Direct IP in Preferences";
+					+ " - use Direct IP in Preferences";
 				g_ATLCNetplay("lobby List FAILED: status=%d raw=\"%s\"",
 					r.httpStatus,
 					r.error.empty() ? "(no detail)"
