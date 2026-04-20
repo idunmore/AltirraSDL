@@ -170,6 +170,21 @@ This frontend is developed heavily with the assistance of AI coding tools. Depen
 
 Altirra is licensed under the **GNU General Public License v2 (GPLv2)**, with a GPLv2 + exemption for certain core libraries. This fork inherits the same license. See [LICENSE](LICENSE) for details.
 
+## Documentation
+
+- [BUILD.md](BUILD.md) — building AltirraSDL from source on Linux,
+  macOS, Windows (CMake) and Android.
+- [NETPLAY.md](NETPLAY.md) — playing online: host a game, join a
+  game, point at a different lobby, and step-by-step instructions
+  for running your own lobby server (localhost, Docker, VPS with
+  systemd, and behind an HTTPS reverse proxy).
+- [server/lobby/README.md](server/lobby/README.md) — lobby server
+  build / API reference / protocol coupling with the client.
+- [NETPLAY_DESIGN_PLAN.md](NETPLAY_DESIGN_PLAN.md) — protocol-level
+  design: packet formats, lockstep determinism rationale.
+- [PORTING/](PORTING/) — SDL3 port design docs (system library,
+  display, audio, input, UI, network, main loop).
+
 ## Links
 
 - **Official Altirra** — [virtualdub.org/altirra.html](https://www.virtualdub.org/altirra.html)
