@@ -2,6 +2,12 @@
 Description=Altirra SDL netplay lobby
 After=network-online.target
 Wants=network-online.target
+# Never let StartLimit mark the unit `failed` — we want systemd to
+# keep restarting no matter how long the crash-loop goes on, so a
+# broken deploy heals itself the moment a working binary lands.
+# RestartSec below controls the pace so we don't burn CPU or trip
+# sshd's fail2ban from the restart churn.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -11,8 +17,25 @@ ExecStart=/usr/local/bin/altirra-lobby
 Environment=BIND=:8080
 Environment=MAX_SESSIONS=1000
 Environment=TTL_SECONDS=90
-Restart=on-failure
-RestartSec=5
+
+# Restart behaviour.
+# Restart=always — come back even on clean exit (shouldn't happen,
+#                  but if the binary ever decides to exit 0 we still
+#                  want the service back).
+# RestartSec=5s — gentle enough that a crash-loop doesn't flood the
+#                 journal or keep the CPU busy.
+Restart=always
+RestartSec=5s
+
+# Resource caps.  If the server leaks or a flood exhausts fds, the
+# kernel bounds it instead of letting it take the whole VM with it.
+# Oracle free-tier VMs are small (1 GB RAM); leave headroom for the
+# OS and any sidecar.
+MemoryMax=256M
+TasksMax=64
+LimitNOFILE=4096
+
+# Security hardening (unchanged from original).
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
