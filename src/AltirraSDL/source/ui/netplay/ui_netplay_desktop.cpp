@@ -39,6 +39,7 @@ extern VDStringA ATGetConfigDir();
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <cstring>
 
 namespace ATNetplayUI {
 
@@ -258,11 +259,11 @@ void DesktopBrowser() {
 	ImVec2 tableSize(0, ImGui::GetContentRegionAvail().y - 50);
 	if (ImGui::BeginTable("##lobby", 5, tflags, tableSize)) {
 		ImGui::TableSetupScrollFreeze(0, 1);
-		ImGui::TableSetupColumn("Game",       ImGuiTableColumnFlags_WidthStretch, 2.0f);
-		ImGui::TableSetupColumn("Host",       ImGuiTableColumnFlags_WidthStretch, 1.2f);
-		ImGui::TableSetupColumn("Region",     ImGuiTableColumnFlags_WidthFixed,   80.0f);
-		ImGui::TableSetupColumn("Players",    ImGuiTableColumnFlags_WidthFixed,   70.0f);
-		ImGui::TableSetupColumn("Visibility", ImGuiTableColumnFlags_WidthFixed,   90.0f);
+		ImGui::TableSetupColumn("Game",   ImGuiTableColumnFlags_WidthStretch, 2.0f);
+		ImGui::TableSetupColumn("Open",   ImGuiTableColumnFlags_WidthFixed,   90.0f);
+		ImGui::TableSetupColumn("Host",   ImGuiTableColumnFlags_WidthStretch, 1.2f);
+		ImGui::TableSetupColumn("Region", ImGuiTableColumnFlags_WidthFixed,   80.0f);
+		ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed,   90.0f);
 		ImGui::TableHeadersRow();
 
 		const bool dark = ATUIIsDarkTheme();
@@ -332,20 +333,32 @@ void DesktopBrowser() {
 				std::snprintf(sub, sizeof sub, "  %s", hw);
 			}
 			ImGui::TextColored(cDim, "%s", sub);
-			ImGui::PopID();
 
+			// Open (Public/Private)
+			ImGui::TableNextColumn();
+			ImGui::TextUnformatted(s.requiresCode ? "Private" : "Public");
+
+			// Host
 			ImGui::TableNextColumn();
 			ImGui::TextUnformatted(s.hostHandle.empty()
 				? "Anonymous" : s.hostHandle.c_str());
+
+			// Region
 			ImGui::TableNextColumn();
 			ImGui::TextUnformatted(s.region.c_str());
+
+			// Action — per-row Join (matches double-click behaviour).
 			ImGui::TableNextColumn();
-			if (playing)
-				ImGui::TextColored(cPlaying, "in play");
-			else
-				ImGui::Text("%d/%d", s.playerCount, s.maxPlayers);
-			ImGui::TableNextColumn();
-			ImGui::TextUnformatted(s.requiresCode ? "Private" : "Public");
+			const bool rowJoinable = joinable && !ATNetplayGlue::IsActive();
+			ImGui::BeginDisabled(!rowJoinable);
+			if (ImGui::SmallButton(playing ? "in play" : "Join")) {
+				br.selectedIdx = (int)i;
+				st.session.joinTarget = s;
+				Navigate(s.requiresCode ? Screen::JoinPrompt
+				                        : Screen::JoinConfirm);
+			}
+			ImGui::EndDisabled();
+			ImGui::PopID();
 		}
 		ImGui::EndTable();
 	}
@@ -850,188 +863,7 @@ const char *ActivityBannerText(UserActivity a,
 	return "";
 }
 
-void DesktopMyHostedGames() {
-	State& st = GetState();
-	const uint64_t nowMs = (uint64_t)SDL_GetTicks();
-	CenterNext(ImVec2(820, 520));
-	bool open = true;
-	if (!ImGui::Begin("Online Play — Host Games##netplay", &open,
-		ImGuiWindowFlags_NoSavedSettings)) {
-		ImGui::End();
-		if (!open) Navigate(Screen::Closed);
-		return;
-	}
-
-	// Lobby reachability indicator — always on top.  Host Games may
-	// be open without the Browser ever having been visited, so fire
-	// an occasional lightweight ping to keep the signal live.  Ping
-	// respects backoff from lobby List failures.
-	LobbyStatusIndicator(nowMs);
-	MaybePingLobby(nowMs);
-	ImGui::Separator();
-
-	// Activity banner.  Colour depends on whether anything is actually
-	// listable: green only when at least one game is enabled and idle.
-	size_t enabledCount = 0;
-	for (const auto& o : st.hostedGames) if (o.enabled) ++enabledCount;
-	const bool listed = (st.activity == UserActivity::Idle && enabledCount > 0);
-	ImVec4 bc = listed
-		? ImVec4(0.55f, 0.85f, 0.55f, 1)
-		: ImVec4(0.85f, 0.85f, 0.85f, 1);
-	if (st.activity != UserActivity::Idle)
-		bc = ImVec4(0.95f, 0.75f, 0.4f, 1);
-	ImGui::TextColored(bc, "%s",
-		ActivityBannerText(st.activity, st.hostedGames.size(), enabledCount));
-
-	ImGui::Separator();
-
-	bool atCap = (st.hostedGames.size() >= State::kMaxHostedGames);
-	ImGui::BeginDisabled(atCap);
-	if (ImGui::Button("Add Game...", ImVec2(140, 0))) {
-		st.editingGameId.clear();
-		Navigate(Screen::AddGame);
-	}
-	ImGui::EndDisabled();
-	if (atCap) {
-		ImGui::SameLine();
-		ImGui::TextDisabled("(%zu/%zu — remove one first)",
-			st.hostedGames.size(), State::kMaxHostedGames);
-	}
-
-	ImGui::SameLine();
-	if (ImGui::Button("Browse Hosted Games...", ImVec2(200, 0))) {
-		Navigate(Screen::Browser);
-	}
-	ImGui::SameLine();
-	if (ImGui::Button("Preferences...", ImVec2(140, 0))) {
-		Navigate(Screen::Prefs);
-	}
-
-	// Master "all" checkbox — three-state: checked if every offer is
-	// enabled, unchecked if none, mixed otherwise.  Click flips them
-	// all to the opposite of the majority state.
-	if (!st.hostedGames.empty()) {
-		ImGui::SameLine();
-		int enCount = 0;
-		for (const auto& o : st.hostedGames) if (o.enabled) ++enCount;
-		const bool allEnabled = (enCount == (int)st.hostedGames.size());
-		const bool anyEnabled = (enCount > 0);
-		bool toggle = allEnabled;
-		// Show a small tri-state by disabling the visual when mixed.
-		if (anyEnabled && !allEnabled)
-			ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
-				ImGui::GetStyle().Alpha * 0.6f);
-		if (ImGui::Checkbox("Enable all", &toggle)) {
-			const bool target = !allEnabled;
-			for (auto& o : st.hostedGames) {
-				if (o.enabled != target) {
-					target ? EnableHostedGame(o.id)
-					       : DisableHostedGame(o.id);
-				}
-			}
-		}
-		if (anyEnabled && !allEnabled)
-			ImGui::PopStyleVar();
-	}
-
-	ImGui::Separator();
-
-	const ImGuiTableFlags tflags =
-		ImGuiTableFlags_RowBg    | ImGuiTableFlags_Borders   |
-		ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY;
-	ImVec2 tableSize(0, ImGui::GetContentRegionAvail().y - 50);
-	if (ImGui::BeginTable("##hostedGames", 6, tflags, tableSize)) {
-		ImGui::TableSetupScrollFreeze(0, 1);
-		// Enabled first — user's primary control.
-		ImGui::TableSetupColumn("On",         ImGuiTableColumnFlags_WidthFixed,   36.0f);
-		ImGui::TableSetupColumn("Game",       ImGuiTableColumnFlags_WidthStretch, 2.5f);
-		ImGui::TableSetupColumn("Visibility", ImGuiTableColumnFlags_WidthFixed,   90.0f);
-		ImGui::TableSetupColumn("State",      ImGuiTableColumnFlags_WidthFixed,  110.0f);
-		ImGui::TableSetupColumn("Port",       ImGuiTableColumnFlags_WidthFixed,   70.0f);
-		ImGui::TableSetupColumn("Actions",    ImGuiTableColumnFlags_WidthFixed,  130.0f);
-		ImGui::TableHeadersRow();
-
-		// Collect pending actions to apply AFTER the loop (can't mutate
-		// state.hostedGames mid-iteration).
-		std::string pendingRemove;
-		std::string pendingToggle;  // non-empty: flip enabled of this id
-
-		for (auto& o : st.hostedGames) {
-			ImGui::PushID(o.id.c_str());
-			ImGui::TableNextRow();
-
-			ImGui::TableNextColumn();
-			bool en = o.enabled;
-			if (ImGui::Checkbox("##en", &en)) {
-				pendingToggle = o.id;
-			}
-
-			ImGui::TableNextColumn();
-			ImGui::TextUnformatted(o.gameName.c_str());
-			ImGui::TextColored(ImVec4(0.65f, 0.65f, 0.70f, 1.0f),
-				"  %s", MachineConfigSummary(o.config));
-			if (!o.lastError.empty()) {
-				ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.45f, 1.0f),
-					"  %s", o.lastError.c_str());
-			}
-
-			ImGui::TableNextColumn();
-			ImGui::TextUnformatted(o.isPrivate ? "Private" : "Public");
-
-			ImGui::TableNextColumn();
-			ImGui::TextColored(OfferStateColour(o.state), "%s",
-				OfferStateLabel(o.state));
-
-			ImGui::TableNextColumn();
-			if (o.boundPort) ImGui::Text("%u", (unsigned)o.boundPort);
-			else             ImGui::TextDisabled("—");
-
-			ImGui::TableNextColumn();
-			if (ImGui::SmallButton("Remove")) {
-				pendingRemove = o.id;
-			}
-
-			ImGui::PopID();
-		}
-
-		if (!pendingToggle.empty()) {
-			HostedGame* o = FindHostedGame(pendingToggle);
-			if (o) { o->enabled ? DisableHostedGame(pendingToggle)
-			                    : EnableHostedGame(pendingToggle); }
-		}
-		if (!pendingRemove.empty()) {
-			RemoveHostedGame(pendingRemove);
-		}
-
-		ImGui::EndTable();
-	}
-
-	ImGui::Separator();
-	if (ImGui::Button("Close", ImVec2(120, 0))) Navigate(Screen::Closed);
-
-	if (!open) Navigate(Screen::Closed);
-	ImGui::End();
-}
-
-// -----------------------------------------------------------------------
-// Add Offer modal — pick from library OR choose file.
-// -----------------------------------------------------------------------
-
-// Staged fields for the Add Offer form.  File-dialog result lands here
-// from the callback.
 namespace {
-	VDStringW s_pickedPath;
-	bool      s_pickedPathPending = false;
-	int       s_addSource = 0;        // 0 = Library, 1 = File
-	bool      s_addPrivate = false;
-	char      s_addEntryCode[32] = {};
-	int       s_librarySel = -1;
-	// Seeded from the current emulator config on first Add-Game open;
-	// the user can override via the Machine Config section or reset
-	// via the "Copy from current emulator" button.
-	MachineConfig s_addConfig;
-	bool          s_addConfigSeeded = false;
-
 	// Firmware dropdown cache.  Built lazily on first dialog open;
 	// each entry caches the firmware's CRC32 so we don't re-read the
 	// ROM bytes every frame.  Index 0 is a sentinel meaning
@@ -1091,6 +923,243 @@ namespace {
 		s_firmwareChoicesLoaded = true;
 	}
 
+	// Resolve a firmware CRC32 back to the human-readable name shipped
+	// by ATFirmwareManager, using the caches built by ReloadFirmwareChoices.
+	// Returns a pointer to the bare firmware name ("AltirraOS-XL" etc.)
+	// or "Unknown" if the CRC isn't installed locally, or an empty string
+	// when the CRC is 0 (meaning "default for hardware / not pinned").
+	const char *FirmwareNameForCRC(uint32_t crc) {
+		if (crc == 0) return "";
+		auto scan = [crc](const std::vector<FirmwareChoice>& v) -> const char * {
+			for (const auto& c : v) {
+				if (c.crc32 != 0 && c.crc32 == crc) {
+					const std::string& s = c.label;
+					size_t end = s.find(" (");
+					if (end == std::string::npos) end = s.find(" [");
+					if (end == std::string::npos) end = s.size();
+					static thread_local std::string out;
+					out.assign(s, 0, end);
+					return out.c_str();
+				}
+			}
+			return nullptr;
+		};
+		if (auto *n = scan(s_kernelChoices)) return n;
+		if (auto *n = scan(s_basicChoices))  return n;
+		return "Unknown";
+	}
+} // anonymous
+
+void DesktopMyHostedGames() {
+	State& st = GetState();
+	const uint64_t nowMs = (uint64_t)SDL_GetTicks();
+	if (!s_firmwareChoicesLoaded) ReloadFirmwareChoices();
+	CenterNext(ImVec2(820, 520));
+	bool open = true;
+	if (!ImGui::Begin("Online Play — Host Games##netplay", &open,
+		ImGuiWindowFlags_NoSavedSettings)) {
+		ImGui::End();
+		if (!open) Navigate(Screen::Closed);
+		return;
+	}
+
+	// Lobby reachability indicator — always on top.  Host Games may
+	// be open without the Browser ever having been visited, so fire
+	// an occasional lightweight ping to keep the signal live.  Ping
+	// respects backoff from lobby List failures.
+	LobbyStatusIndicator(nowMs);
+	MaybePingLobby(nowMs);
+	ImGui::Separator();
+
+	// Activity banner.  Colour depends on whether anything is actually
+	// listable: green only when at least one game is enabled and idle.
+	size_t enabledCount = 0;
+	for (const auto& o : st.hostedGames) if (o.enabled) ++enabledCount;
+	const bool listed = (st.activity == UserActivity::Idle && enabledCount > 0);
+	ImVec4 bc = listed
+		? ImVec4(0.55f, 0.85f, 0.55f, 1)
+		: ImVec4(0.85f, 0.85f, 0.85f, 1);
+	if (st.activity != UserActivity::Idle)
+		bc = ImVec4(0.95f, 0.75f, 0.4f, 1);
+	ImGui::TextColored(bc, "%s",
+		ActivityBannerText(st.activity, st.hostedGames.size(), enabledCount));
+
+	ImGui::Separator();
+
+	bool atCap = (st.hostedGames.size() >= State::kMaxHostedGames);
+	ImGui::BeginDisabled(atCap);
+	if (ImGui::Button("Add Game...", ImVec2(140, 0))) {
+		st.editingGameId.clear();
+		Navigate(Screen::AddGame);
+	}
+	ImGui::EndDisabled();
+	if (atCap) {
+		ImGui::SameLine();
+		ImGui::TextDisabled("(%zu/%zu — remove one first)",
+			st.hostedGames.size(), State::kMaxHostedGames);
+	}
+
+	ImGui::SameLine();
+	if (ImGui::Button("Browse Hosted Games...", ImVec2(200, 0))) {
+		Navigate(Screen::Browser);
+	}
+	ImGui::SameLine();
+	if (ImGui::Button("Preferences...", ImVec2(140, 0))) {
+		Navigate(Screen::Prefs);
+	}
+
+	ImGui::Separator();
+
+	const ImGuiTableFlags tflags =
+		ImGuiTableFlags_RowBg    | ImGuiTableFlags_Borders   |
+		ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY;
+	ImVec2 tableSize(0, ImGui::GetContentRegionAvail().y - 50);
+	if (ImGui::BeginTable("##hostedGames", 6, tflags, tableSize)) {
+		ImGui::TableSetupScrollFreeze(0, 1);
+		// Enabled first — user's primary control.
+		ImGui::TableSetupColumn("On",      ImGuiTableColumnFlags_WidthFixed,   36.0f);
+		ImGui::TableSetupColumn("Game",    ImGuiTableColumnFlags_WidthStretch, 2.5f);
+		ImGui::TableSetupColumn("Open",    ImGuiTableColumnFlags_WidthFixed,   90.0f);
+		ImGui::TableSetupColumn("State",   ImGuiTableColumnFlags_WidthFixed,  110.0f);
+		ImGui::TableSetupColumn("Port",    ImGuiTableColumnFlags_WidthFixed,   70.0f);
+		ImGui::TableSetupColumn("Actions", ImGuiTableColumnFlags_WidthFixed,  130.0f);
+		ImGui::TableHeadersRow();
+
+		// Collect pending actions to apply AFTER the loop (can't mutate
+		// state.hostedGames mid-iteration).
+		std::string pendingRemove;
+		std::string pendingToggle;  // non-empty: flip enabled of this id
+
+		for (auto& o : st.hostedGames) {
+			ImGui::PushID(o.id.c_str());
+			ImGui::TableNextRow();
+
+			ImGui::TableNextColumn();
+			bool en = o.enabled;
+			if (ImGui::Checkbox("##en", &en)) {
+				pendingToggle = o.id;
+			}
+
+			ImGui::TableNextColumn();
+			ImGui::TextUnformatted(o.gameName.c_str());
+			const ImVec4 cDim = ImVec4(0.65f, 0.65f, 0.70f, 1.0f);
+			const ImVec4 cWarn = ImVec4(1.0f, 0.70f, 0.45f, 1.0f);
+			ImGui::TextColored(cDim, "  %s", MachineConfigSummary(o.config));
+			if (o.config.kernelCRC32 != 0 || o.config.basicCRC32 != 0) {
+				char fwBuf[192];
+				auto fmt = [](char *dst, size_t cap, const char *tag,
+						uint32_t crc, bool *missingOut) {
+					if (crc == 0) {
+						std::snprintf(dst, cap, "%s: default", tag);
+						if (missingOut) *missingOut = false;
+						return;
+					}
+					const char *name = FirmwareNameForCRC(crc);
+					const bool missing = (name && std::strcmp(name, "Unknown") == 0);
+					if (missingOut) *missingOut = missing;
+					if (missing)
+						std::snprintf(dst, cap, "%s: (%08X — not installed)",
+							tag, crc);
+					else
+						std::snprintf(dst, cap, "%s: %s (%08X)",
+							tag, name && *name ? name : "Unknown", crc);
+				};
+				char osBuf[96], baBuf[96];
+				bool osMiss = false, baMiss = false;
+				fmt(osBuf, sizeof osBuf, "OS",    o.config.kernelCRC32, &osMiss);
+				fmt(baBuf, sizeof baBuf, "BASIC", o.config.basicCRC32,  &baMiss);
+				std::snprintf(fwBuf, sizeof fwBuf, "  %s  ·  %s", osBuf, baBuf);
+				ImGui::TextColored((osMiss || baMiss) ? cWarn : cDim,
+					"%s", fwBuf);
+			}
+			if (!o.lastError.empty()) {
+				ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.45f, 1.0f),
+					"  %s", o.lastError.c_str());
+			}
+
+			ImGui::TableNextColumn();
+			ImGui::TextUnformatted(o.isPrivate ? "Private" : "Public");
+
+			ImGui::TableNextColumn();
+			ImGui::TextColored(OfferStateColour(o.state), "%s",
+				OfferStateLabel(o.state));
+
+			ImGui::TableNextColumn();
+			if (o.boundPort) ImGui::Text("%u", (unsigned)o.boundPort);
+			else             ImGui::TextDisabled("—");
+
+			ImGui::TableNextColumn();
+			if (ImGui::SmallButton("Remove")) {
+				pendingRemove = o.id;
+			}
+
+			ImGui::PopID();
+		}
+
+		if (!pendingToggle.empty()) {
+			HostedGame* o = FindHostedGame(pendingToggle);
+			if (o) { o->enabled ? DisableHostedGame(pendingToggle)
+			                    : EnableHostedGame(pendingToggle); }
+		}
+		if (!pendingRemove.empty()) {
+			RemoveHostedGame(pendingRemove);
+		}
+
+		ImGui::EndTable();
+	}
+
+	ImGui::Separator();
+
+	// Master "Host all" checkbox — tri-state: checked if every game is
+	// enabled, unchecked if none, dim when mixed.  Click flips them all
+	// to the opposite of the majority state.
+	if (!st.hostedGames.empty()) {
+		int enCount = 0;
+		for (const auto& o : st.hostedGames) if (o.enabled) ++enCount;
+		const bool allEnabled = (enCount == (int)st.hostedGames.size());
+		const bool anyEnabled = (enCount > 0);
+		bool toggle = allEnabled;
+		if (anyEnabled && !allEnabled)
+			ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+				ImGui::GetStyle().Alpha * 0.6f);
+		if (ImGui::Checkbox("Host all", &toggle)) {
+			const bool target = !allEnabled;
+			for (auto& o : st.hostedGames) {
+				if (o.enabled != target) {
+					target ? EnableHostedGame(o.id)
+					       : DisableHostedGame(o.id);
+				}
+			}
+		}
+		if (anyEnabled && !allEnabled)
+			ImGui::PopStyleVar();
+		ImGui::SameLine();
+	}
+	if (ImGui::Button("Close", ImVec2(120, 0))) Navigate(Screen::Closed);
+
+	if (!open) Navigate(Screen::Closed);
+	ImGui::End();
+}
+
+// -----------------------------------------------------------------------
+// Add Offer modal — pick from library OR choose file.
+// -----------------------------------------------------------------------
+
+// Staged fields for the Add Offer form.  File-dialog result lands here
+// from the callback.
+namespace {
+	VDStringW s_pickedPath;
+	bool      s_pickedPathPending = false;
+	int       s_addSource = 0;        // 0 = Library, 1 = File
+	bool      s_addPrivate = false;
+	char      s_addEntryCode[32] = {};
+	int       s_librarySel = -1;
+	// Seeded from the current emulator config on first Add-Game open;
+	// the user can override via the Machine Config section or reset
+	// via the "Copy from current emulator" button.
+	MachineConfig s_addConfig;
+	bool          s_addConfigSeeded = false;
+
 	// Render a firmware combo that writes the chosen entry's CRC32
 	// into *crcOut.  If the current CRC has no matching entry (user
 	// selected a firmware that was later uninstalled), a synthetic
@@ -1149,6 +1218,25 @@ namespace {
 		s_pickedPathPending = true;
 	}
 
+	// Stable signature covering the hosted-game fields that define
+	// whether two entries would actually boot the same peer experience:
+	// the image path + every joiner-visible machine-config knob.  Name,
+	// privacy, and entry code are excluded — the user may legitimately
+	// want one public and one private listing of the same game.
+	std::string HostedGameSignature(const std::string& path,
+	                                const MachineConfig& c) {
+		char buf[384];
+		std::snprintf(buf, sizeof buf,
+			"%s|hw=%d|mem=%d|vs=%d|cpu=%d|basic=%d|sio=%d"
+			"|kc=%08X|bc=%08X",
+			path.c_str(),
+			(int)c.hardwareMode, (int)c.memoryMode,
+			(int)c.videoStandard, (int)c.cpuMode,
+			c.basicEnabled ? 1 : 0, c.sioPatchEnabled ? 1 : 0,
+			c.kernelCRC32, c.basicCRC32);
+		return buf;
+	}
+
 	// Lazy singleton to avoid pulling Game Library init/shutdown into
 	// this TU.  Reuses the user's configured library if available.
 	void CommitNewOffer(const std::string& path, const std::string& name) {
@@ -1158,6 +1246,20 @@ namespace {
 			Navigate(Screen::Error);
 			return;
 		}
+
+		// Reject duplicates — same image path + same machine config.
+		const std::string sig = HostedGameSignature(path, s_addConfig);
+		for (const auto& existing : st.hostedGames) {
+			if (HostedGameSignature(existing.gamePath, existing.config) == sig) {
+				st.session.lastError =
+					"This game is already added to hosting with this "
+					"configuration — change the machine config or remove "
+					"the existing entry first.";
+				Navigate(Screen::Error);
+				return;
+			}
+		}
+
 		HostedGame o;
 		o.id           = GenerateHostedGameId();
 		o.gamePath     = path;
@@ -1185,11 +1287,18 @@ namespace {
 }
 
 void DesktopAddOffer() {
+	static bool s_forceFileTab = false;
 	if (!s_addConfigSeeded) {
 		// Seed from the current emulator so the host's Add-Game
 		// always starts with a config they can actually boot.
 		s_addConfig = CaptureCurrentMachineConfig();
 		s_addConfigSeeded = true;
+		// When the Game Library is empty, land on the File tab so
+		// users without a library aren't greeted by a blank panel.
+		if (LibrarySingleton().GetEntries().empty()) {
+			s_addSource    = 1;
+			s_forceFileTab = true;
+		}
 	}
 	if (!s_firmwareChoicesLoaded) {
 		ReloadFirmwareChoices();
@@ -1204,89 +1313,130 @@ void DesktopAddOffer() {
 		return;
 	}
 
-	// Source picker (Library / File).
-	ImGui::Text("Source:");
-	ImGui::SameLine();
-	ImGui::RadioButton("From Library", &s_addSource, 0);
-	ImGui::SameLine();
-	ImGui::RadioButton("From File",    &s_addSource, 1);
-
-	ImGui::Separator();
-
 	std::string stagedPath;
 	std::string stagedName;
 
-	if (s_addSource == 0) {
+	// Reserve room for the pinned footer (separator + button row).  The
+	// scrollable body fills the remaining space so long machine-config
+	// content scrolls internally and the footer stays visible regardless
+	// of window height.
+	const float footerH = ImGui::GetFrameHeightWithSpacing() + 12.0f;
+	ImGui::BeginChild("##addGameBody",
+		ImVec2(0, -footerH), false, ImGuiWindowFlags_NoSavedSettings);
+
+	// Source picker (Library / File) — tabs, matching Preferences.
+	// SetSelected is a one-shot: only used when `s_forceFileTab` is set
+	// (library is empty on first open).  After that ImGui's own tab-bar
+	// state tracks user clicks; forcing every frame would trap the user
+	// on one tab.
+	if (ImGui::BeginTabBar("##addGameSource")) {
+		const ImGuiTabItemFlags fileFlags = s_forceFileTab
+				? ImGuiTabItemFlags_SetSelected : 0;
+
+		if (ImGui::BeginTabItem("From Library")) {
+			s_addSource = 0;
+			ATGameLibrary& lib = LibrarySingleton();
+			const auto& entries = lib.GetEntries();
+			ImGui::Text("Select a game from your library (%zu entries):",
+				entries.size());
+
+			const ImGuiTableFlags tf = ImGuiTableFlags_RowBg |
+				ImGuiTableFlags_Borders | ImGuiTableFlags_ScrollY;
+			ImVec2 sz(0, ImGui::GetContentRegionAvail().y - 8);
+			if (ImGui::BeginTable("##lib", 2, tf, sz)) {
+				ImGui::TableSetupScrollFreeze(0, 1);
+				ImGui::TableSetupColumn("Game");
+				ImGui::TableSetupColumn("Variants",
+					ImGuiTableColumnFlags_WidthFixed, 80.0f);
+				ImGui::TableHeadersRow();
+				for (size_t i = 0; i < entries.size(); ++i) {
+					const auto& e = entries[i];
+					if (e.mVariants.empty()) continue;
+					ImGui::TableNextRow();
+					ImGui::TableNextColumn();
+					bool sel = ((int)i == s_librarySel);
+					VDStringA displayU8 = VDTextWToU8(e.mDisplayName);
+					ImGui::PushID((int)i);
+					if (ImGui::Selectable(displayU8.c_str(), sel,
+						ImGuiSelectableFlags_SpanAllColumns)) {
+						s_librarySel = (int)i;
+					}
+					ImGui::PopID();
+					ImGui::TableNextColumn();
+					ImGui::Text("%zu", e.mVariants.size());
+				}
+				ImGui::EndTable();
+			}
+
+			if (s_librarySel >= 0 && (size_t)s_librarySel < entries.size()) {
+				const auto& e = entries[s_librarySel];
+				if (!e.mVariants.empty()) {
+					VDStringA u8Path = VDTextWToU8(e.mVariants[0].mPath);
+					VDStringA u8Name = VDTextWToU8(e.mDisplayName);
+					stagedPath.assign(u8Path.c_str(), u8Path.size());
+					stagedName.assign(u8Name.c_str(), u8Name.size());
+				}
+			}
+			ImGui::EndTabItem();
+		}
+
+		if (ImGui::BeginTabItem("From File", nullptr, fileFlags)) {
+			s_addSource = 1;
+			ImGui::Text("Selected file:");
+			ImGui::SameLine();
+			if (s_pickedPath.empty()) {
+				ImGui::TextDisabled("(none)");
+			} else {
+				VDStringA u8 = VDTextWToU8(s_pickedPath);
+				ImGui::TextUnformatted(u8.c_str());
+			}
+			if (ImGui::Button("Browse...##addoffer", ImVec2(140, 0))) {
+				ATUIShowOpenFileDialog('npad', AddOfferFileCallback,
+					nullptr, g_pWindow,
+					kAddOfferFilters,
+					(int)(sizeof kAddOfferFilters / sizeof kAddOfferFilters[0]),
+					false);
+			}
+			if (!s_pickedPath.empty()) {
+				VDStringA u8Path = VDTextWToU8(s_pickedPath);
+				// Basename.
+				const wchar_t *last = nullptr;
+				for (const wchar_t *q = s_pickedPath.c_str(); *q; ++q)
+					if (*q == L'/' || *q == L'\\') last = q;
+				VDStringW base = last ? VDStringW(last + 1) : s_pickedPath;
+				VDStringA u8Base = VDTextWToU8(base);
+				stagedPath.assign(u8Path.c_str(), u8Path.size());
+				stagedName.assign(u8Base.c_str(), u8Base.size());
+			}
+			ImGui::EndTabItem();
+		}
+		ImGui::EndTabBar();
+	}
+	s_forceFileTab = false;
+
+	// If the user picked a library game on a previous frame, keep the
+	// staged path populated when the tab is inactive so the footer's
+	// Add button stays live while the user adjusts the machine config.
+	if (stagedPath.empty() && s_addSource == 0 && s_librarySel >= 0) {
 		ATGameLibrary& lib = LibrarySingleton();
 		const auto& entries = lib.GetEntries();
-		ImGui::Text("Select a game from your library (%zu entries):",
-			entries.size());
-
-		const ImGuiTableFlags tf = ImGuiTableFlags_RowBg |
-			ImGuiTableFlags_Borders | ImGuiTableFlags_ScrollY;
-		ImVec2 sz(0, ImGui::GetContentRegionAvail().y - 150);
-		if (ImGui::BeginTable("##lib", 2, tf, sz)) {
-			ImGui::TableSetupScrollFreeze(0, 1);
-			ImGui::TableSetupColumn("Game");
-			ImGui::TableSetupColumn("Variants",
-				ImGuiTableColumnFlags_WidthFixed, 80.0f);
-			ImGui::TableHeadersRow();
-			for (size_t i = 0; i < entries.size(); ++i) {
-				const auto& e = entries[i];
-				if (e.mVariants.empty()) continue;
-				ImGui::TableNextRow();
-				ImGui::TableNextColumn();
-				bool sel = ((int)i == s_librarySel);
-				VDStringA displayU8 = VDTextWToU8(e.mDisplayName);
-				ImGui::PushID((int)i);
-				if (ImGui::Selectable(displayU8.c_str(), sel,
-					ImGuiSelectableFlags_SpanAllColumns)) {
-					s_librarySel = (int)i;
-				}
-				ImGui::PopID();
-				ImGui::TableNextColumn();
-				ImGui::Text("%zu", e.mVariants.size());
-			}
-			ImGui::EndTable();
-		}
-
-		if (s_librarySel >= 0 && (size_t)s_librarySel < entries.size()) {
-			const auto& e = entries[s_librarySel];
-			if (!e.mVariants.empty()) {
-				VDStringA u8Path = VDTextWToU8(e.mVariants[0].mPath);
-				VDStringA u8Name = VDTextWToU8(e.mDisplayName);
-				stagedPath.assign(u8Path.c_str(), u8Path.size());
-				stagedName.assign(u8Name.c_str(), u8Name.size());
-			}
-		}
-	} else {
-		// File source.
-		ImGui::Text("Selected file:");
-		ImGui::SameLine();
-		if (s_pickedPath.empty()) {
-			ImGui::TextDisabled("(none)");
-		} else {
-			VDStringA u8 = VDTextWToU8(s_pickedPath);
-			ImGui::TextUnformatted(u8.c_str());
-		}
-		if (ImGui::Button("Browse...##addoffer", ImVec2(140, 0))) {
-			ATUIShowOpenFileDialog('npad', AddOfferFileCallback,
-				nullptr, g_pWindow,
-				kAddOfferFilters,
-				(int)(sizeof kAddOfferFilters / sizeof kAddOfferFilters[0]),
-				false);
-		}
-		if (!s_pickedPath.empty()) {
-			VDStringA u8Path = VDTextWToU8(s_pickedPath);
-			// Basename.
-			const wchar_t *last = nullptr;
-			for (const wchar_t *q = s_pickedPath.c_str(); *q; ++q)
-				if (*q == L'/' || *q == L'\\') last = q;
-			VDStringW base = last ? VDStringW(last + 1) : s_pickedPath;
-			VDStringA u8Base = VDTextWToU8(base);
+		if ((size_t)s_librarySel < entries.size()
+				&& !entries[s_librarySel].mVariants.empty()) {
+			VDStringA u8Path = VDTextWToU8(entries[s_librarySel].mVariants[0].mPath);
+			VDStringA u8Name = VDTextWToU8(entries[s_librarySel].mDisplayName);
 			stagedPath.assign(u8Path.c_str(), u8Path.size());
-			stagedName.assign(u8Base.c_str(), u8Base.size());
+			stagedName.assign(u8Name.c_str(), u8Name.size());
 		}
+	}
+	if (stagedPath.empty() && s_addSource == 1 && !s_pickedPath.empty()) {
+		VDStringA u8Path = VDTextWToU8(s_pickedPath);
+		const wchar_t *last = nullptr;
+		for (const wchar_t *q = s_pickedPath.c_str(); *q; ++q)
+			if (*q == L'/' || *q == L'\\') last = q;
+		VDStringW base = last ? VDStringW(last + 1) : s_pickedPath;
+		VDStringA u8Base = VDTextWToU8(base);
+		stagedPath.assign(u8Path.c_str(), u8Path.size());
+		stagedName.assign(u8Base.c_str(), u8Base.size());
 	}
 
 	ImGui::Separator();
@@ -1369,8 +1519,10 @@ void DesktopAddOffer() {
 		ImGui::PopItemWidth();
 	}
 
-	ImGui::Separator();
+	ImGui::EndChild();
 
+	// Pinned footer — always visible at the window's bottom edge.
+	ImGui::Separator();
 	bool ready = !stagedPath.empty() && !stagedName.empty()
 		&& (!s_addPrivate || s_addEntryCode[0] != 0);
 	ImGui::BeginDisabled(!ready);
