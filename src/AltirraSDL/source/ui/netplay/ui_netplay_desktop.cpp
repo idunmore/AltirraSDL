@@ -1199,7 +1199,27 @@ namespace {
 
 	void AddOfferFileCallback(void*, const char * const *filelist, int) {
 		if (!filelist || !filelist[0]) return;
-		s_pickedPath = VDTextU8ToW(filelist[0], -1);
+		VDStringW wp = VDTextU8ToW(filelist[0], -1);
+		if (wp.empty()) return;
+
+		const wchar_t *last = nullptr;
+		for (const wchar_t *q = wp.c_str(); *q; ++q)
+			if (*q == L'/' || *q == L'\\') last = q;
+		VDStringW base = last ? VDStringW(last + 1) : wp;
+		VDStringA pu = VDTextWToU8(wp);
+		VDStringA bu = VDTextWToU8(base);
+
+		OfferDraft& d = GetState().offerDraft;
+		d.path.assign(pu.c_str(), pu.size());
+		d.displayName.assign(bu.c_str(), bu.size());
+		d.source = OfferSource::File;
+		d.variantLabel.clear();
+		d.libraryEntryIdx = -1;
+		d.libraryVariantIdx = -1;
+
+		// Keep legacy locals in sync so the rest of the Desktop file
+		// keeps working while we migrate call sites.
+		s_pickedPath = wp;
 		s_pickedPathPending = true;
 	}
 
@@ -1249,24 +1269,18 @@ namespace {
 		s_addPrivate = false;
 		s_addEntryCode[0] = 0;
 		s_librarySel = -1;
+		st.offerDraft = OfferDraft();
 
 		Navigate(Screen::MyHostedGames);
 	}
 }
 
 void DesktopAddOffer() {
-	static bool s_forceFileTab = false;
 	if (!s_addConfigSeeded) {
 		// Seed from the current emulator so the host's Add-Game
 		// always starts with a config they can actually boot.
 		s_addConfig = CaptureCurrentMachineConfig();
 		s_addConfigSeeded = true;
-		// When the Game Library is empty, land on the File tab so
-		// users without a library aren't greeted by a blank panel.
-		if (LibrarySingleton().GetEntries().empty()) {
-			s_addSource    = 1;
-			s_forceFileTab = true;
-		}
 	}
 	if (!s_firmwareChoicesLoaded) {
 		ReloadFirmwareChoices();
@@ -1281,8 +1295,10 @@ void DesktopAddOffer() {
 		return;
 	}
 
-	std::string stagedPath;
-	std::string stagedName;
+	State& st = GetState();
+	const OfferDraft& draft = st.offerDraft;
+	const std::string& stagedPath = draft.path;
+	const std::string& stagedName = draft.displayName;
 
 	// Reserve room for the pinned footer (separator + button row).  The
 	// scrollable body fills the remaining space so long machine-config
@@ -1292,119 +1308,45 @@ void DesktopAddOffer() {
 	ImGui::BeginChild("##addGameBody",
 		ImVec2(0, -footerH), false, ImGuiWindowFlags_NoSavedSettings);
 
-	// Source picker (Library / File) — tabs, matching Preferences.
-	// SetSelected is a one-shot: only used when `s_forceFileTab` is set
-	// (library is empty on first open).  After that ImGui's own tab-bar
-	// state tracks user clicks; forcing every frame would trap the user
-	// on one tab.
-	if (ImGui::BeginTabBar("##addGameSource")) {
-		const ImGuiTabItemFlags fileFlags = s_forceFileTab
-				? ImGuiTabItemFlags_SetSelected : 0;
-
-		if (ImGui::BeginTabItem("From Library")) {
-			s_addSource = 0;
-			ATGameLibrary& lib = LibrarySingleton();
-			const auto& entries = lib.GetEntries();
-			ImGui::Text("Select a game from your library (%zu entries):",
-				entries.size());
-
-			const ImGuiTableFlags tf = ImGuiTableFlags_RowBg |
-				ImGuiTableFlags_Borders | ImGuiTableFlags_ScrollY;
-			ImVec2 sz(0, ImGui::GetContentRegionAvail().y - 8);
-			if (ImGui::BeginTable("##lib", 2, tf, sz)) {
-				ImGui::TableSetupScrollFreeze(0, 1);
-				ImGui::TableSetupColumn("Game");
-				ImGui::TableSetupColumn("Variants",
-					ImGuiTableColumnFlags_WidthFixed, 80.0f);
-				ImGui::TableHeadersRow();
-				for (size_t i = 0; i < entries.size(); ++i) {
-					const auto& e = entries[i];
-					if (e.mVariants.empty()) continue;
-					ImGui::TableNextRow();
-					ImGui::TableNextColumn();
-					bool sel = ((int)i == s_librarySel);
-					VDStringA displayU8 = VDTextWToU8(e.mDisplayName);
-					ImGui::PushID((int)i);
-					if (ImGui::Selectable(displayU8.c_str(), sel,
-						ImGuiSelectableFlags_SpanAllColumns)) {
-						s_librarySel = (int)i;
-					}
-					ImGui::PopID();
-					ImGui::TableNextColumn();
-					ImGui::Text("%zu", e.mVariants.size());
-				}
-				ImGui::EndTable();
-			}
-
-			if (s_librarySel >= 0 && (size_t)s_librarySel < entries.size()) {
-				const auto& e = entries[s_librarySel];
-				if (!e.mVariants.empty()) {
-					VDStringA u8Path = VDTextWToU8(e.mVariants[0].mPath);
-					VDStringA u8Name = VDTextWToU8(e.mDisplayName);
-					stagedPath.assign(u8Path.c_str(), u8Path.size());
-					stagedName.assign(u8Name.c_str(), u8Name.size());
-				}
-			}
-			ImGui::EndTabItem();
-		}
-
-		if (ImGui::BeginTabItem("From File", nullptr, fileFlags)) {
-			s_addSource = 1;
-			ImGui::Text("Selected file:");
-			ImGui::SameLine();
-			if (s_pickedPath.empty()) {
-				ImGui::TextDisabled("(none)");
-			} else {
-				VDStringA u8 = VDTextWToU8(s_pickedPath);
-				ImGui::TextUnformatted(u8.c_str());
-			}
-			if (ImGui::Button("Browse...##addoffer", ImVec2(140, 0))) {
-				ATUIShowOpenFileDialog('npad', AddOfferFileCallback,
-					nullptr, g_pWindow,
-					kAddOfferFilters,
-					(int)(sizeof kAddOfferFilters / sizeof kAddOfferFilters[0]),
-					false);
-			}
-			if (!s_pickedPath.empty()) {
-				VDStringA u8Path = VDTextWToU8(s_pickedPath);
-				// Basename.
-				const wchar_t *last = nullptr;
-				for (const wchar_t *q = s_pickedPath.c_str(); *q; ++q)
-					if (*q == L'/' || *q == L'\\') last = q;
-				VDStringW base = last ? VDStringW(last + 1) : s_pickedPath;
-				VDStringA u8Base = VDTextWToU8(base);
-				stagedPath.assign(u8Path.c_str(), u8Path.size());
-				stagedName.assign(u8Base.c_str(), u8Base.size());
-			}
-			ImGui::EndTabItem();
-		}
-		ImGui::EndTabBar();
+	// ── Game (source + selection) ─────────────────────────────
+	// One linear form: read-only "Selected / Source" summary plus two
+	// browse buttons.  The previous tabbed Library / File picker has
+	// been replaced by a full-screen Library Picker sheet (shared with
+	// Gaming Mode) that launches via the "Library…" button.
+	ImGui::TextUnformatted("Game:");
+	ImGui::SameLine();
+	if (stagedName.empty()) {
+		ImGui::TextDisabled("(none selected)");
+	} else {
+		ImGui::TextUnformatted(stagedName.c_str());
 	}
-	s_forceFileTab = false;
-
-	// If the user picked a library game on a previous frame, keep the
-	// staged path populated when the tab is inactive so the footer's
-	// Add button stays live while the user adjusts the machine config.
-	if (stagedPath.empty() && s_addSource == 0 && s_librarySel >= 0) {
-		ATGameLibrary& lib = LibrarySingleton();
-		const auto& entries = lib.GetEntries();
-		if ((size_t)s_librarySel < entries.size()
-				&& !entries[s_librarySel].mVariants.empty()) {
-			VDStringA u8Path = VDTextWToU8(entries[s_librarySel].mVariants[0].mPath);
-			VDStringA u8Name = VDTextWToU8(entries[s_librarySel].mDisplayName);
-			stagedPath.assign(u8Path.c_str(), u8Path.size());
-			stagedName.assign(u8Name.c_str(), u8Name.size());
-		}
+	ImGui::SameLine();
+	if (ImGui::Button("Library…##addoffer", ImVec2(120, 0))) {
+		Navigate(Screen::LibraryPicker);
 	}
-	if (stagedPath.empty() && s_addSource == 1 && !s_pickedPath.empty()) {
-		VDStringA u8Path = VDTextWToU8(s_pickedPath);
-		const wchar_t *last = nullptr;
-		for (const wchar_t *q = s_pickedPath.c_str(); *q; ++q)
-			if (*q == L'/' || *q == L'\\') last = q;
-		VDStringW base = last ? VDStringW(last + 1) : s_pickedPath;
-		VDStringA u8Base = VDTextWToU8(base);
-		stagedPath.assign(u8Path.c_str(), u8Path.size());
-		stagedName.assign(u8Base.c_str(), u8Base.size());
+	ImGui::SameLine();
+	if (ImGui::Button("File…##addoffer", ImVec2(90, 0))) {
+		ATUIShowOpenFileDialog('npad', AddOfferFileCallback,
+			nullptr, g_pWindow,
+			kAddOfferFilters,
+			(int)(sizeof kAddOfferFilters / sizeof kAddOfferFilters[0]),
+			false);
+	}
+
+	if (!stagedName.empty()) {
+		VDStringA srcLine;
+		if (draft.source == OfferSource::Library) {
+			srcLine = "Source: Game Library";
+			if (!draft.variantLabel.empty()) {
+				srcLine += " · variant \"";
+				srcLine += draft.variantLabel.c_str();
+				srcLine += '"';
+			}
+		} else {
+			srcLine = "Source: File · ";
+			srcLine += draft.path.c_str();
+		}
+		ImGui::TextDisabled("%s", srcLine.c_str());
 	}
 
 	ImGui::Separator();
@@ -1529,6 +1471,10 @@ void DesktopError() {
 
 } // anonymous
 
+// Defined in ui_netplay_screens.cpp — shared library-picker sheet
+// that services both Gaming Mode (grid) and Desktop (table).
+void RenderLibraryPicker();
+
 // Called from ui_netplay.cpp when the caller is in Desktop mode.
 bool DesktopDispatch() {
 	State& st = GetState();
@@ -1547,6 +1493,7 @@ bool DesktopDispatch() {
 		case Screen::Browser:      DesktopBrowser();     break;
 		case Screen::MyHostedGames:DesktopMyHostedGames(); break;
 		case Screen::AddGame:     DesktopAddOffer();    break;
+		case Screen::LibraryPicker: RenderLibraryPicker(); break;
 		case Screen::HostSetup:    DesktopHostSetup();   break;
 		case Screen::JoinPrompt:   DesktopJoinPrompt();  break;
 		case Screen::JoinConfirm:  DesktopJoinConfirm(); break;

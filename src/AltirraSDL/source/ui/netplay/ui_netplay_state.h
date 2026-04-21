@@ -50,6 +50,7 @@ enum class Screen {
 	Browser,          // Online sessions grid (browse peers)
 	MyHostedGames,    // List of this user's own hosted hostedGames
 	AddGame,         // Add-an-offer picker (Library / File)
+	LibraryPicker,    // Full-screen Game Library picker (drives AddGame)
 	HostSetup,        // Pick cart → visibility → entry code (per-offer edit)
 	JoinPrompt,       // Enter entry code (private session)
 	JoinConfirm,      // Confirm ROM / TOS before joining public
@@ -362,6 +363,34 @@ struct AggregateStats {
 	int      acc_hosts    = 0;
 };
 
+// Active-draft state for the Add-Game form + Library Picker.  Shared
+// across Gaming Mode and Desktop so both renderings read/write the
+// same pending selection.  Cleared on successful commit; retained
+// while the user flips between the Library picker and the Add-Game
+// sheet.
+enum class OfferSource : uint8_t { None = 0, Library, File };
+
+struct OfferDraft {
+	// Absolute UTF-8 path to the chosen image (Library variant path or
+	// File picker path).  Empty while no selection is staged.
+	std::string path;
+	// Display name — game library name for Library picks, basename for
+	// File picks.  Shown in the Add-Game form's "Selected: …" row.
+	std::string displayName;
+	// Source classification for the summary line + for recording
+	// Library indices below.
+	OfferSource source = OfferSource::None;
+	// Library variant label (e.g. "NTSC") when source == Library; empty
+	// otherwise.  Purely informational — the lobby wire protocol has
+	// no awareness of variants; the path is the source of truth.
+	std::string variantLabel;
+	// Library indices (cached so re-opening the Library Picker can
+	// steer focus/selection back to the last choice).  -1 when the
+	// pick came from File.
+	int libraryEntryIdx   = -1;
+	int libraryVariantIdx = -1;
+};
+
 struct State {
 	Screen         screen      = Screen::Closed;
 	Prefs          prefs;
@@ -397,6 +426,12 @@ struct State {
 	// UI uses this to disable "Host a Game" / "Join" while the user is
 	// already in a session, and to show the End-Session path.
 	bool sessionActive = false;
+
+	// Pending selection from the Add-Game form / Library Picker.
+	// Shared between modes so the Library Picker (which may navigate
+	// away from Desktop AddOffer / Gaming AddOffer) can hand back a
+	// result via common state rather than file-local statics.
+	OfferDraft offerDraft;
 };
 
 // Helper: find offer by id in State::hostedGames.  Returns nullptr if missing.

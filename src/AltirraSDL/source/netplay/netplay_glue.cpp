@@ -10,6 +10,7 @@
 #include "netplay_simhash.h"
 
 #include "simulator.h"
+#include "cpu.h"
 #include <at/atcore/logging.h>
 
 extern ATLogChannel g_ATLCNetplay;
@@ -175,6 +176,27 @@ void Poll(uint64_t nowMs) {
 		g_sim.ReseedNetplayRandomState(kNetplayMasterSeed);
 		g_ATLCNetplay("lockstep entry: reseeded RNG (master=0x%08X)",
 			kNetplayMasterSeed);
+
+		// Normalize CPU registers across peers.  ATCPUEmulator::ColdReset
+		// (cpu.cpp:217-253 → WarmReset) only resets PC/InsnPC/P/pipeline
+		// state — A/X/Y/S are deliberately left at whatever the previous
+		// program had in flight, mirroring real Atari power-on (random
+		// register state).  For netplay that's a desync source: the host
+		// peer's registers carry forward whatever the user was running
+		// locally before the joiner connected, while the joiner peer's
+		// registers carry forward whatever they had before joining.
+		// netplay_simhash.cpp:50-61 hashes A/X/Y/S directly so the very
+		// first frame's hash diverges and Lockstep flags a frame-0 desync
+		// (observed 2026-04-21: host cpu=80329d0a vs joiner cpu=c391ee09
+		// with byte-identical RAM).  Forcing a constant on both peers is
+		// the same trick we use for the PIA RNG above.
+		ATCPUEmulator &cpu = g_sim.GetCPU();
+		cpu.SetA(0);
+		cpu.SetX(0);
+		cpu.SetY(0);
+		cpu.SetS(0xFF);
+		g_ATLCNetplay("lockstep entry: normalized CPU regs "
+			"(A=X=Y=0, S=FF)");
 
 		ATNetplayInput::BeginSession();
 		g_ATLCNetplay("input: BeginSession (sim running=%d paused=%d)",

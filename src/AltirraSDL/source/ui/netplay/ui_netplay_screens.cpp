@@ -927,17 +927,35 @@ void RenderMyHostedGames() {
 // -------------------------------------------------------------------
 
 namespace {
-VDStringW s_mobilePickedPath;
-int       s_mobileAddSource = 0;
+
+// Gaming-Mode Add-Offer form state.  The two-button form (Library /
+// File) stores the active selection in `State::offerDraft` so Desktop
+// and Gaming Mode share a single draft through the same struct.
+// Privacy + machine-config fields stay local to Gaming Mode.
+
 bool      s_mobileAddPrivate = false;
 char      s_mobileAddCode[32] = {};
-int       s_mobileLibrarySel = -1;
 MachineConfig s_mobileAddConfig;
 bool          s_mobileAddConfigSeeded = false;
 
 void MobileAddOfferFileCallback(void*, const char * const *filelist, int) {
 	if (!filelist || !filelist[0]) return;
-	s_mobilePickedPath = VDTextU8ToW(filelist[0], -1);
+	VDStringW p = VDTextU8ToW(filelist[0], -1);
+	if (p.empty()) return;
+	const wchar_t *last = nullptr;
+	for (const wchar_t *q = p.c_str(); *q; ++q)
+		if (*q == L'/' || *q == L'\\') last = q;
+	VDStringW base = last ? VDStringW(last + 1) : p;
+	VDStringA pu = VDTextWToU8(p);
+	VDStringA bu = VDTextWToU8(base);
+
+	OfferDraft& d = GetState().offerDraft;
+	d.path.assign(pu.c_str(), pu.size());
+	d.displayName.assign(bu.c_str(), bu.size());
+	d.source = OfferSource::File;
+	d.variantLabel.clear();
+	d.libraryEntryIdx = -1;
+	d.libraryVariantIdx = -1;
 }
 
 // File-dialog filters — same as desktop.
@@ -946,6 +964,7 @@ const SDL_DialogFileFilter kMobileAddOfferFilters[] = {
 	  "atr;xex;bin;car;rom;a52;a8s;exe;com;ucf;pro;xfd;atx;dcm;zip;cas" },
 	{ "All files", "*" },
 };
+
 } // anonymous
 
 void RenderAddOffer() {
@@ -965,63 +984,47 @@ void RenderAddOffer() {
 		Back();
 	}
 
-	int src = s_mobileAddSource;
-	const char *srcItems[] = { "From Library", "From File" };
-	if (ATTouchSegmented("##src", &src, srcItems, 2)) {
-		s_mobileAddSource = src;
-	}
-	ImGui::Spacing();
-
-	std::string stagedPath;
-	std::string stagedName;
-
-	if (s_mobileAddSource == 0) {
-		ATGameLibrary& lib = LibrarySingleton();
-		const auto& entries = lib.GetEntries();
-		ATTouchMutedText(entries.empty()
-			? "Library is empty — use Settings to add a source."
-			: "");
-
-		ImVec2 avail = ImGui::GetContentRegionAvail();
-		ImGui::BeginChild("##lib", ImVec2(avail.x, avail.y - Dp(200)),
-			ImGuiChildFlags_NavFlattened, 0);
-		ATTouchDragScroll();
-		for (size_t i = 0; i < entries.size(); ++i) {
-			const auto& e = entries[i];
-			if (e.mVariants.empty()) continue;
-			VDStringA nameU8 = VDTextWToU8(e.mDisplayName);
-			char sub[64];
-			std::snprintf(sub, sizeof sub, "%zu variant%s",
-				e.mVariants.size(),
-				e.mVariants.size() == 1 ? "" : "s");
-			ImGui::PushID((int)i);
-			bool sel = ((int)i == s_mobileLibrarySel);
-			if (ATTouchListItem(nameU8.c_str(), sub, sel, true)) {
-				s_mobileLibrarySel = (int)i;
-			}
-			ImGui::PopID();
-		}
-		ATTouchEndDragScroll();
-		ImGui::EndChild();
-
-		if (s_mobileLibrarySel >= 0
-		    && (size_t)s_mobileLibrarySel < entries.size()) {
-			const auto& e = entries[s_mobileLibrarySel];
-			if (!e.mVariants.empty()) {
-				VDStringA p = VDTextWToU8(e.mVariants[0].mPath);
-				VDStringA n = VDTextWToU8(e.mDisplayName);
-				stagedPath.assign(p.c_str(), p.size());
-				stagedName.assign(n.c_str(), n.size());
-			}
-		}
+	// ── GAME (source + selection) ──────────────────────────────
+	// A single linear form: two Browse buttons + a read-only
+	// Selected/Source summary.  No tabs — both buttons open their
+	// respective pickers as full-screen sheets (Library Picker for
+	// Library; the SDL native file dialog for File).
+	const OfferDraft& draft = st.offerDraft;
+	ATTouchSection("Game");
+	if (draft.source == OfferSource::None || draft.displayName.empty()) {
+		ATTouchMutedText("No game selected. "
+		                 "Pick one from your Library, or from a file.");
 	} else {
-		if (s_mobilePickedPath.empty()) {
-			ATTouchMutedText("Tap Browse to choose a file.");
+		ImGui::TextUnformatted("Selected:");
+		ImGui::SameLine();
+		ImGui::TextUnformatted(draft.displayName.c_str());
+
+		VDStringA srcLine;
+		if (draft.source == OfferSource::Library) {
+			srcLine = "Game Library";
+			if (!draft.variantLabel.empty()) {
+				srcLine += " · variant \"";
+				srcLine += draft.variantLabel.c_str();
+				srcLine += '"';
+			}
 		} else {
-			VDStringA u8 = VDTextWToU8(s_mobilePickedPath);
-			ATTouchMutedText(u8.c_str());
+			srcLine = "File · ";
+			srcLine += draft.path.c_str();
 		}
-		if (ATTouchButton("Browse...", ImVec2(Dp(200), Dp(48)),
+		ATTouchMutedText(srcLine.c_str());
+	}
+
+	ImGui::Spacing();
+	{
+		float bW = (ImGui::GetContentRegionAvail().x - Dp(10)) * 0.5f;
+		if (ATTouchButton("Pick from Library…",
+		                  ImVec2(bW, Dp(48)),
+		                  ATTouchButtonStyle::Neutral)) {
+			Navigate(Screen::LibraryPicker);
+		}
+		ImGui::SameLine(0, Dp(10));
+		if (ATTouchButton("Pick a File…",
+		                  ImVec2(bW, Dp(48)),
 		                  ATTouchButtonStyle::Neutral)) {
 			ATUIShowOpenFileDialog('npam', MobileAddOfferFileCallback,
 				nullptr, g_pWindow,
@@ -1030,24 +1033,15 @@ void RenderAddOffer() {
 				      sizeof kMobileAddOfferFilters[0]),
 				false);
 		}
-		if (!s_mobilePickedPath.empty()) {
-			VDStringA pathU8 = VDTextWToU8(s_mobilePickedPath);
-			const wchar_t *last = nullptr;
-			for (const wchar_t *q = s_mobilePickedPath.c_str(); *q; ++q)
-				if (*q == L'/' || *q == L'\\') last = q;
-			VDStringW base = last ? VDStringW(last + 1) : s_mobilePickedPath;
-			VDStringA baseU8 = VDTextWToU8(base);
-			stagedPath.assign(pathU8.c_str(), pathU8.size());
-			stagedName.assign(baseU8.c_str(), baseU8.size());
-		}
 	}
 
 	ImGui::Spacing();
 
-	// Machine configuration — applied only during a session; never
-	// touches the user's saved Altirra configuration.  Gaming Mode
-	// uses touch widgets that mirror the Desktop dialog.
-	ATTouchMutedText("Machine:");
+	// ── MACHINE CONFIGURATION ───────────────────────────────────
+	// Applied only during a session; never touches the user's saved
+	// Altirra configuration.  Gaming Mode uses touch widgets that
+	// mirror the Desktop dialog.
+	ATTouchSection("Machine configuration");
 	ATTouchMutedText(MachineConfigSummary(s_mobileAddConfig));
 	if (ATTouchButton("Copy from current emulator",
 	                  ImVec2(Dp(260), Dp(40)),
@@ -1058,6 +1052,8 @@ void RenderAddOffer() {
 	ATTouchToggle("SIO full-speed", &s_mobileAddConfig.sioPatchEnabled);
 
 	ImGui::Spacing();
+	// ── PRIVACY ─────────────────────────────────────────────────
+	ATTouchSection("Privacy");
 	ATTouchToggle("Private (require entry code)", &s_mobileAddPrivate);
 	if (s_mobileAddPrivate) {
 		ImGui::PushItemWidth(Dp(240));
@@ -1069,6 +1065,9 @@ void RenderAddOffer() {
 	ImGui::Separator();
 	ImGui::Spacing();
 
+	const std::string& stagedPath = draft.path;
+	const std::string& stagedName = draft.displayName;
+
 	bool ready = !stagedPath.empty() && !stagedName.empty()
 		&& (!s_mobileAddPrivate || s_mobileAddCode[0] != 0);
 	float bW = (ImGui::GetContentRegionAvail().x - Dp(10)) * 0.5f;
@@ -1078,7 +1077,7 @@ void RenderAddOffer() {
 	}
 	ImGui::SameLine(0, Dp(10));
 	ImGui::BeginDisabled(!ready);
-	if (ATTouchButton("Add Game", ImVec2(bW, Dp(48)),
+	if (ATTouchButton("Add to Hosted", ImVec2(bW, Dp(48)),
 	                  ATTouchButtonStyle::Accent)) {
 		State& s = GetState();
 		// Reject duplicates — same image path + same machine config.
@@ -1110,12 +1109,12 @@ void RenderAddOffer() {
 			s.prefs.lastAddConfig = s_mobileAddConfig;
 			SaveToRegistry();
 			EnableHostedGame(s.hostedGames.back().id);
-			s_mobilePickedPath.clear();
-			s_mobileLibrarySel = -1;
+			// Reset pick state for next Add Game.
+			s.offerDraft = OfferDraft();
 			s_mobileAddPrivate = false;
 			s_mobileAddCode[0] = 0;
-			// Preset intentionally retained so next Add Game opens
-			// with the same choice.
+			// MachineConfig preset intentionally retained so next Add
+			// Game opens with the same choice.
 		}
 		Navigate(Screen::MyHostedGames);
 	}
@@ -1242,6 +1241,519 @@ void RenderError() {
 	if (!open) { st.session.lastError.clear(); Back(); }
 	EndSheet();
 }
+
+// -------------------------------------------------------------------
+// Library Picker (shared Gaming Mode + Desktop) — full-screen sheet
+// that lets the user choose a game from their Game Library.  Mirrors
+// the UX patterns of the main mobile Game Browser: search, A-Z letter
+// filter, grid tiles with cover art, variant sub-modal for entries
+// with multiple ROMs.  Desktop falls back to a dense table.
+//
+// The picker is driven by navigating to Screen::LibraryPicker.  It
+// reuses the same ATGameLibrary singleton the netplay browsers
+// already hit via `LibrarySingleton()`, and pulls cover art through
+// the existing `LookupArtByGameName()` helper so no new caches are
+// needed.
+//
+// On commit (single-variant: one tap; multi-variant: picks variant
+// via sub-modal) the result lands in the Gaming-Mode draft state
+// (`s_mobilePicked*`) and we `Back()` to AddGame.  Desktop's own
+// AddOffer reads the same draft so both modes share one picker flow.
+// -------------------------------------------------------------------
+
+// Picker transient state.  Cleared on sheet open.
+char s_libPickSearch[128] = {};
+int  s_libPickLetter = -1;    // -1 = All, 0..25 = A-Z, 26 = non-alpha
+bool s_libPickAvail[27] = {};
+bool s_libPickAvailDirty = true;
+int  s_libPickVariantEntry = -1;  // >=0 while variant sub-modal open
+bool s_libPickFocusSearchNext = false;
+
+// Canonical first-letter bucket of a library entry name.  Returns
+// 0..25 for A-Z (case-insensitive), 26 for any other leading char.
+int LibPickLetterBucket(const wchar_t *s) {
+	if (!s) return 26;
+	while (*s == L' ' || *s == L'\t') ++s;
+	wchar_t c = *s;
+	if (c >= L'a' && c <= L'z') return (int)(c - L'a');
+	if (c >= L'A' && c <= L'Z') return (int)(c - L'A');
+	return 26;
+}
+
+bool LibPickEntryMatches(const GameEntry& e, const char *searchLower,
+	int letterFilter)
+{
+	if (e.mVariants.empty()) return false;
+	if (letterFilter >= 0) {
+		if (LibPickLetterBucket(e.mDisplayName.c_str()) != letterFilter)
+			return false;
+	}
+	if (searchLower && *searchLower) {
+		VDStringA name = VDTextWToU8(e.mDisplayName);
+		for (auto& ch : name)
+			if (ch >= 'A' && ch <= 'Z') ch = (char)(ch + 32);
+		if (std::strstr(name.c_str(), searchLower) == nullptr)
+			return false;
+	}
+	return true;
+}
+
+void LibPickComputeAvailable(const std::vector<GameEntry>& entries) {
+	for (int i = 0; i < 27; ++i) s_libPickAvail[i] = false;
+	for (const auto& e : entries) {
+		if (e.mVariants.empty()) continue;
+		int b = LibPickLetterBucket(e.mDisplayName.c_str());
+		s_libPickAvail[b] = true;
+	}
+	s_libPickAvailDirty = false;
+}
+
+// Small sub-modal: when the user picks a multi-variant entry, ask
+// which variant to host.  Returns `true` iff the user committed a
+// pick in this frame; returns via out-params.  On cancel, clears the
+// picker state and returns false.
+bool RenderLibVariantSubModal(ATGameLibrary& lib,
+	int& outEntryIdx, int& outVariantIdx,
+	VDStringW& outPath, VDStringW& outDisplay, VDStringW& outLabel)
+{
+	if (s_libPickVariantEntry < 0) return false;
+	const auto& entries = lib.GetEntries();
+	if ((size_t)s_libPickVariantEntry >= entries.size()) {
+		s_libPickVariantEntry = -1;
+		return false;
+	}
+	const GameEntry& e = entries[s_libPickVariantEntry];
+	VDStringA title = VDTextWToU8(e.mDisplayName);
+
+	ImGui::SetNextWindowSize(ImVec2(Dp(380), 0), ImGuiCond_Appearing);
+	ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(),
+		ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+
+	ImGuiWindowFlags flags = ImGuiWindowFlags_NoResize
+		| ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse
+		| ImGuiWindowFlags_NoSavedSettings;
+
+	bool commit = false;
+	bool open = true;
+	char winTitle[256];
+	std::snprintf(winTitle, sizeof winTitle,
+		"Select variant — %s###libpickvariant", title.c_str());
+	if (ImGui::Begin(winTitle, &open, flags)) {
+		ImGui::TextUnformatted("Which variant to host?");
+		ImGui::Spacing();
+		for (size_t i = 0; i < e.mVariants.size(); ++i) {
+			const auto& v = e.mVariants[i];
+			VDStringA lab = VDTextWToU8(v.mLabel);
+			char szStr[32];
+			if (v.mFileSize >= 1024 * 1024)
+				std::snprintf(szStr, sizeof szStr, "%.1f MB",
+					v.mFileSize / (1024.0 * 1024.0));
+			else if (v.mFileSize >= 1024)
+				std::snprintf(szStr, sizeof szStr, "%d KB",
+					(int)(v.mFileSize / 1024));
+			else
+				std::snprintf(szStr, sizeof szStr, "%d B",
+					(int)v.mFileSize);
+
+			char btn[320];
+			std::snprintf(btn, sizeof btn, "%s    %s##vpv%zu",
+				lab.c_str(), szStr, i);
+			if (i == 0) ImGui::SetItemDefaultFocus();
+			if (ATTouchButton(btn, ImVec2(-FLT_MIN, Dp(44)),
+				ATTouchButtonStyle::Neutral))
+			{
+				outEntryIdx   = s_libPickVariantEntry;
+				outVariantIdx = (int)i;
+				outPath       = v.mPath;
+				outDisplay    = e.mDisplayName;
+				outLabel      = v.mLabel;
+				commit = true;
+			}
+		}
+		ImGui::Spacing();
+		if (ATTouchButton("Cancel", ImVec2(-FLT_MIN, Dp(40)),
+			ATTouchButtonStyle::Subtle))
+		{
+			s_libPickVariantEntry = -1;
+		}
+	}
+	ImGui::End();
+	if (commit || !open) s_libPickVariantEntry = -1;
+	return commit;
+}
+
+// Render the Desktop table view of the picker.  Returns true if the
+// user committed a single-variant pick this frame (result via
+// out-params); false otherwise.  The variant sub-modal is rendered
+// separately above.
+bool RenderLibPickDesktopTable(ATGameLibrary& lib,
+	int& outEntryIdx, int& outVariantIdx,
+	VDStringW& outPath, VDStringW& outDisplay, VDStringW& outLabel)
+{
+	const auto& entries = lib.GetEntries();
+	const ImGuiTableFlags tf = ImGuiTableFlags_RowBg
+		| ImGuiTableFlags_Borders | ImGuiTableFlags_ScrollY
+		| ImGuiTableFlags_Resizable;
+	ImVec2 sz(0, ImGui::GetContentRegionAvail().y);
+
+	char searchLower[128];
+	std::snprintf(searchLower, sizeof searchLower, "%s", s_libPickSearch);
+	for (char *c = searchLower; *c; ++c)
+		if (*c >= 'A' && *c <= 'Z') *c = (char)(*c + 32);
+
+	bool committed = false;
+	if (ImGui::BeginTable("##libpick_tbl", 3, tf, sz)) {
+		ImGui::TableSetupScrollFreeze(0, 1);
+		ImGui::TableSetupColumn("Game");
+		ImGui::TableSetupColumn("Variants",
+			ImGuiTableColumnFlags_WidthFixed, 80.0f);
+		ImGui::TableSetupColumn("Path");
+		ImGui::TableHeadersRow();
+
+		for (size_t i = 0; i < entries.size(); ++i) {
+			const auto& e = entries[i];
+			if (!LibPickEntryMatches(e, searchLower, s_libPickLetter))
+				continue;
+
+			ImGui::TableNextRow();
+			ImGui::TableNextColumn();
+			VDStringA n = VDTextWToU8(e.mDisplayName);
+			ImGui::PushID((int)i);
+			bool activated = ImGui::Selectable(n.c_str(), false,
+				ImGuiSelectableFlags_SpanAllColumns
+				| ImGuiSelectableFlags_AllowDoubleClick);
+			bool dbl = ImGui::IsItemHovered()
+				&& ImGui::IsMouseDoubleClicked(0);
+			bool keyEnter = ImGui::IsItemFocused()
+				&& ImGui::IsKeyPressed(ImGuiKey_Enter, false);
+			ImGui::PopID();
+			ImGui::TableNextColumn();
+			ImGui::Text("%zu", e.mVariants.size());
+			ImGui::TableNextColumn();
+			VDStringA primary = e.mVariants.empty()
+				? VDStringA()
+				: VDTextWToU8(e.mVariants[0].mPath);
+			ImGui::TextUnformatted(primary.c_str());
+
+			if (dbl || keyEnter || activated) {
+				if (e.mVariants.size() == 1) {
+					outEntryIdx   = (int)i;
+					outVariantIdx = 0;
+					outPath       = e.mVariants[0].mPath;
+					outDisplay    = e.mDisplayName;
+					outLabel      = e.mVariants[0].mLabel;
+					committed = true;
+				} else if (e.mVariants.size() > 1) {
+					s_libPickVariantEntry = (int)i;
+				}
+			}
+		}
+		ImGui::EndTable();
+	}
+	return committed;
+}
+
+// Render the Gaming-Mode grid view.  Mirrors the main Game Browser's
+// 4-column grid with cover art.  Returns true on single-variant tap
+// commit.
+bool RenderLibPickMobileGrid(ATGameLibrary& lib,
+	int& outEntryIdx, int& outVariantIdx,
+	VDStringW& outPath, VDStringW& outDisplay, VDStringW& outLabel)
+{
+	const auto& entries = lib.GetEntries();
+
+	char searchLower[128];
+	std::snprintf(searchLower, sizeof searchLower, "%s", s_libPickSearch);
+	for (char *c = searchLower; *c; ++c)
+		if (*c >= 'A' && *c <= 'Z') *c = (char)(*c + 32);
+
+	// Build filtered index list.
+	std::vector<size_t> filtered;
+	filtered.reserve(entries.size());
+	for (size_t i = 0; i < entries.size(); ++i) {
+		if (LibPickEntryMatches(entries[i], searchLower, s_libPickLetter))
+			filtered.push_back(i);
+	}
+
+	const float availW = ImGui::GetContentRegionAvail().x;
+	const float tileMin = Dp(140.0f);
+	int cols = std::max(1, (int)(availW / tileMin));
+	if (cols > 6) cols = 6;
+	const float gap = Dp(8.0f);
+	const float tileW = (availW - gap * (cols - 1)) / (float)cols;
+	const float imageH = tileW * 0.75f;
+	const float nameH  = ImGui::GetTextLineHeight() * 1.6f;
+	const float tileH  = imageH + nameH + Dp(6.0f);
+
+	bool committed = false;
+	ImGui::BeginChild("##libpickgrid", ImVec2(0, 0),
+		ImGuiChildFlags_None, 0);
+	ATTouchDragScroll();
+
+	int drawn = 0;
+	for (size_t fi = 0; fi < filtered.size(); ++fi) {
+		size_t idx = filtered[fi];
+		const GameEntry& e = entries[idx];
+
+		if (drawn % cols != 0) ImGui::SameLine(0, gap);
+
+		ImVec2 cursor = ImGui::GetCursorScreenPos();
+		ImDrawList *dl = ImGui::GetWindowDrawList();
+
+		char id[32];
+		std::snprintf(id, sizeof id, "##ltile_%zu", idx);
+
+		ImGui::PushID((int)idx);
+		ImGui::PushStyleColor(ImGuiCol_Header,        ImVec4(0,0,0,0));
+		ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0,0,0,0));
+		ImGui::PushStyleColor(ImGuiCol_HeaderActive,  ImVec4(0,0,0,0));
+		bool clicked = ImGui::Selectable(id, false,
+			ImGuiSelectableFlags_None, ImVec2(tileW, tileH));
+		ImGui::PopStyleColor(3);
+		bool hovered = ImGui::IsItemHovered() || ImGui::IsItemFocused();
+		ImGui::PopID();
+
+		// Image area.
+		ImVec2 imgTL(cursor.x, cursor.y);
+		ImVec2 imgBR(cursor.x + tileW, cursor.y + imageH);
+		dl->AddRectFilled(imgTL, imgBR, IM_COL32(20, 20, 25, 255),
+			Dp(4.0f));
+
+		int artW = 0, artH = 0;
+		VDStringA nameU8 = VDTextWToU8(e.mDisplayName);
+		uintptr_t tex = 0;
+		if (!e.mVariants.empty()) {
+			// Use basename of the first variant's path — same key the
+			// netplay rows already use.
+			const wchar_t *p = e.mVariants[0].mPath.c_str();
+			const wchar_t *slash = nullptr;
+			for (const wchar_t *q = p; *q; ++q)
+				if (*q == L'/' || *q == L'\\') slash = q;
+			const wchar_t *base = slash ? slash + 1 : p;
+			VDStringA bu = VDTextWToU8(base, -1);
+			tex = LookupArtByGameName(bu.c_str(), &artW, &artH);
+		}
+		if (tex && artW > 0 && artH > 0) {
+			float srcA = (float)artW / (float)artH;
+			float tileA = tileW / imageH;
+			float dW, dH;
+			if (srcA > tileA) { dW = tileW; dH = tileW / srcA; }
+			else              { dH = imageH; dW = imageH * srcA; }
+			float ox = (tileW - dW) * 0.5f;
+			float oy = (imageH - dH) * 0.5f;
+			dl->AddImage((ImTextureID)tex,
+				ImVec2(imgTL.x + ox, imgTL.y + oy),
+				ImVec2(imgTL.x + ox + dW, imgTL.y + oy + dH));
+		} else {
+			// Placeholder glyph when no art is available.
+			const char *glyph = e.mVariants.empty() ? "?" : "*";
+			ImVec2 gs = ImGui::CalcTextSize(glyph);
+			dl->AddText(ImVec2(cursor.x + (tileW - gs.x) * 0.5f,
+				cursor.y + (imageH - gs.y) * 0.5f),
+				IM_COL32(180, 180, 190, 200), glyph);
+		}
+
+		// Variant count pill.
+		if (e.mVariants.size() > 1) {
+			char cnt[16];
+			std::snprintf(cnt, sizeof cnt, "x%zu", e.mVariants.size());
+			ImVec2 cs = ImGui::CalcTextSize(cnt);
+			float pad = Dp(4.0f);
+			dl->AddRectFilled(
+				ImVec2(imgBR.x - cs.x - pad * 2, imgTL.y),
+				ImVec2(imgBR.x, imgTL.y + cs.y + pad * 2),
+				IM_COL32(0, 0, 0, 180), Dp(4.0f));
+			dl->AddText(
+				ImVec2(imgBR.x - cs.x - pad, imgTL.y + pad),
+				IM_COL32(255, 255, 255, 220), cnt);
+		}
+
+		if (hovered) {
+			const ATMobilePalette &pal = ATMobileGetPalette();
+			dl->AddRect(imgTL, imgBR, pal.rowFocus, Dp(4.0f),
+				0, Dp(2.0f));
+		}
+
+		// Name below tile (clipped).
+		float nameY = cursor.y + imageH + Dp(4.0f);
+		ImGui::PushClipRect(ImVec2(cursor.x, nameY),
+			ImVec2(cursor.x + tileW, cursor.y + tileH), true);
+		ImVec2 ns = ImGui::CalcTextSize(nameU8.c_str());
+		float nx = cursor.x + (tileW - ns.x) * 0.5f;
+		if (nx < cursor.x) nx = cursor.x;
+		const ATMobilePalette &pal = ATMobileGetPalette();
+		dl->AddText(ImVec2(nx, nameY), pal.text, nameU8.c_str());
+		ImGui::PopClipRect();
+
+		if (clicked && !ATTouchIsDraggingBeyondSlop()) {
+			if (e.mVariants.size() == 1) {
+				outEntryIdx   = (int)idx;
+				outVariantIdx = 0;
+				outPath       = e.mVariants[0].mPath;
+				outDisplay    = e.mDisplayName;
+				outLabel      = e.mVariants[0].mLabel;
+				committed = true;
+			} else if (e.mVariants.size() > 1) {
+				s_libPickVariantEntry = (int)idx;
+			}
+		}
+
+		++drawn;
+	}
+
+	if (filtered.empty()) {
+		ImGui::Spacing();
+		if (entries.empty()) {
+			ATTouchMutedText("Game Library is empty — add sources in "
+				"Settings → Game Library.");
+		} else {
+			ATTouchMutedText("No games match your search or letter filter.");
+		}
+	}
+
+	ATTouchEndDragScroll();
+	ImGui::EndChild();
+	return committed;
+}
+
+} // close anonymous namespace so RenderLibraryPicker is externally
+  // visible — Desktop Dispatch in ui_netplay_desktop.cpp calls into
+  // this shared definition.
+
+void RenderLibraryPicker() {
+	ATGameLibrary& lib = LibrarySingleton();
+	const auto& entries = lib.GetEntries();
+	if (s_libPickAvailDirty)
+		LibPickComputeAvailable(entries);
+
+	bool open = true;
+	if (!BeginSheet("Pick a Game to Host", &open,
+	                ImVec2(Dp(640), Dp(520)),
+	                ImVec2(Dp(1400), Dp(900)))) {
+		return;
+	}
+
+	if (ScreenHeader("Pick a Game to Host")) {
+		Back();
+	}
+
+	// Banner explaining the picker context — same string Gaming Mode
+	// and Desktop; reads cleanly on both.
+	ATTouchMutedText(
+		"Select a game from your Library to host — Esc/Back to cancel "
+		"and keep the previous selection.");
+	ImGui::Spacing();
+
+	// ── Search + Letter row ────────────────────────────────────
+	{
+		float rowW = ImGui::GetContentRegionAvail().x;
+		float searchW = std::min(rowW * 0.4f, Dp(280.0f));
+		if (s_libPickFocusSearchNext) {
+			ImGui::SetKeyboardFocusHere();
+			s_libPickFocusSearchNext = false;
+		}
+		ImGui::SetNextItemWidth(searchW);
+		if (ImGui::InputTextWithHint("##libpicksearch", "Search…",
+			s_libPickSearch, sizeof s_libPickSearch))
+		{
+			// Typing a search implicitly clears the letter filter so the
+			// user isn't hidden from matching rows.
+			s_libPickLetter = -1;
+		}
+
+		ImGui::SameLine();
+		if (ATTouchButton("Clear##libpick",
+			ImVec2(Dp(70), Dp(28)), ATTouchButtonStyle::Subtle))
+		{
+			s_libPickSearch[0] = 0;
+			s_libPickLetter = -1;
+		}
+	}
+
+	// A-Z buttons.  Disabled letters (no entries) are visually dim
+	// but remain focusable to keep keyboard nav consistent.
+	{
+		const float letW = Dp(28);
+		const float letH = Dp(28);
+		// "All" button
+		bool allActive = (s_libPickLetter < 0);
+		ATTouchButtonStyle allStyle = allActive
+			? ATTouchButtonStyle::Accent : ATTouchButtonStyle::Neutral;
+		if (ATTouchButton("All##libpickL",
+			ImVec2(Dp(40), letH), allStyle))
+		{
+			s_libPickLetter = -1;
+		}
+
+		for (int L = 0; L < 26; ++L) {
+			ImGui::SameLine(0, Dp(2));
+			char buf[12];
+			std::snprintf(buf, sizeof buf, "%c##libpickL%d",
+				(char)('A' + L), L);
+			bool active = (s_libPickLetter == L);
+			ATTouchButtonStyle st = active
+				? ATTouchButtonStyle::Accent
+				: ATTouchButtonStyle::Neutral;
+			bool avail = s_libPickAvail[L];
+			if (!avail) ImGui::BeginDisabled();
+			if (ATTouchButton(buf, ImVec2(letW, letH), st)) {
+				s_libPickLetter = L;
+			}
+			if (!avail) ImGui::EndDisabled();
+		}
+		if (s_libPickAvail[26]) {
+			ImGui::SameLine(0, Dp(2));
+			bool active = (s_libPickLetter == 26);
+			ATTouchButtonStyle st = active
+				? ATTouchButtonStyle::Accent
+				: ATTouchButtonStyle::Neutral;
+			if (ATTouchButton("###libpickL26", ImVec2(letW, letH), st))
+				s_libPickLetter = 26;
+		}
+	}
+
+	ImGui::Spacing();
+
+	// ── Body: grid (Gaming Mode) / table (Desktop) ─────────────
+	int eIdx = -1, vIdx = -1;
+	VDStringW resPath, resDisplay, resLabel;
+	bool committed = false;
+	if (ATUIIsGamingMode()) {
+		committed = RenderLibPickMobileGrid(lib, eIdx, vIdx,
+			resPath, resDisplay, resLabel);
+	} else {
+		committed = RenderLibPickDesktopTable(lib, eIdx, vIdx,
+			resPath, resDisplay, resLabel);
+	}
+
+	// Variant sub-modal — may also commit this frame.
+	if (s_libPickVariantEntry >= 0) {
+		bool vc = RenderLibVariantSubModal(lib, eIdx, vIdx,
+			resPath, resDisplay, resLabel);
+		if (vc) committed = true;
+	}
+
+	if (committed) {
+		VDStringA pU8 = VDTextWToU8(resPath);
+		VDStringA nU8 = VDTextWToU8(resDisplay);
+		VDStringA lU8 = VDTextWToU8(resLabel);
+		OfferDraft& d = GetState().offerDraft;
+		d.path.assign(pU8.c_str(), pU8.size());
+		d.displayName.assign(nU8.c_str(), nU8.size());
+		d.source = OfferSource::Library;
+		d.variantLabel.assign(lU8.c_str(), lU8.size());
+		d.libraryEntryIdx = eIdx;
+		d.libraryVariantIdx = vIdx;
+		s_libPickVariantEntry = -1;
+		Back();
+	}
+
+	if (!open) Back();
+	EndSheet();
+}
+
+namespace { // reopen anonymous namespace — remaining screen renderers
+            // and their helpers continue to be file-local.
 
 // -------------------------------------------------------------------
 // Online Play hub (Gaming Mode entry) — three hero cards that drill
@@ -1371,6 +1883,7 @@ bool ATNetplayUI_DispatchScreen() {
 		case Screen::Browser:       RenderBrowser();        break;
 		case Screen::MyHostedGames: RenderMyHostedGames();  break;
 		case Screen::AddGame:       RenderAddOffer();       break;
+		case Screen::LibraryPicker: RenderLibraryPicker();  break;
 		case Screen::HostSetup:     RenderHostSetup();      break;
 		case Screen::JoinPrompt:    RenderJoinPrompt();     break;
 		case Screen::JoinConfirm:   RenderJoinConfirm();    break;
