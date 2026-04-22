@@ -83,6 +83,8 @@ target_sources(AltirraSDL PRIVATE
     source/ui/menus/ui_menus_view.cpp
     source/ui/menus/ui_menus_system.cpp
     source/ui/menus/ui_menus_debug.cpp
+    source/ui/menus/ui_menus_online.cpp
+
     # macOS native menu bar (NSMenu) — see the APPLE section below for the
     # custom-compiled .mm object file that gets linked in.
 
@@ -265,6 +267,63 @@ if(ALTIRRA_BRIDGE)
         source/bridge/bridge_main_glue_sdl3.cpp
     )
     target_compile_definitions(AltirraSDL PRIVATE ALTIRRA_BRIDGE_ENABLED=1)
+endif()
+
+# ---------------------------------------------------------------------------
+# Netplay
+# ---------------------------------------------------------------------------
+# Lockstep UDP netplay — see NETPLAY_DESIGN_PLAN.md.  Currently the wire
+# protocol only; transport, coordinator, lobby client, and UI land in
+# subsequent phases.  Default ON; disable with -DALTIRRA_NETPLAY=OFF.
+option(ALTIRRA_NETPLAY "Build the AltirraSDL netplay module" ON)
+if(ALTIRRA_NETPLAY)
+    target_sources(AltirraSDL PRIVATE
+        source/netplay/protocol.cpp
+        source/netplay/transport.cpp
+        source/netplay/snapshot_channel.cpp
+        source/netplay/lockstep.cpp
+        source/netplay/coordinator.cpp
+        source/netplay/netplay_glue.cpp
+        source/netplay/netplay_input.cpp
+        source/netplay/netplay_savestate.cpp
+        source/netplay/netplay_simhash.cpp
+        source/netplay/http_minimal.cpp
+        source/netplay/lobby_client.cpp
+        source/netplay/lobby_config.cpp
+        source/netplay/lan_discovery.cpp
+        source/netplay/platform_notify.cpp
+
+        # Online Play UI — Phase 11
+        source/ui/netplay/ui_netplay_state.cpp
+        source/ui/netplay/ui_netplay_widgets.cpp
+        source/ui/netplay/ui_netplay_lobby_worker.cpp
+        source/ui/netplay/ui_netplay_screens.cpp
+        source/ui/netplay/ui_netplay_desktop.cpp
+        source/ui/netplay/ui_netplay_actions.cpp
+        source/ui/netplay/ui_netplay_activity.cpp
+        source/ui/netplay/ui_netplay.cpp
+    )
+    if(WIN32)
+        target_sources(AltirraSDL PRIVATE
+            source/netplay/platform_notify_win32.cpp)
+        target_compile_definitions(AltirraSDL PRIVATE
+            ALTIRRA_NETPLAY_HAS_NOTIFY_BACKEND=1)
+    elseif(APPLE)
+        target_sources(AltirraSDL PRIVATE
+            source/netplay/platform_notify_macos.mm)
+        target_link_libraries(AltirraSDL PRIVATE
+            "-framework UserNotifications"
+            "-framework Foundation")
+        target_compile_definitions(AltirraSDL PRIVATE
+            ALTIRRA_NETPLAY_HAS_NOTIFY_BACKEND=1)
+    elseif(UNIX)
+        target_sources(AltirraSDL PRIVATE
+            source/netplay/platform_notify_linux.cpp)
+        target_link_libraries(AltirraSDL PRIVATE dl)
+        target_compile_definitions(AltirraSDL PRIVATE
+            ALTIRRA_NETPLAY_HAS_NOTIFY_BACKEND=1)
+    endif()
+    target_compile_definitions(AltirraSDL PRIVATE ALTIRRA_NETPLAY_ENABLED=1)
 endif()
 
 # ---------------------------------------------------------------------------

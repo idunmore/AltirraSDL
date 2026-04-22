@@ -160,6 +160,13 @@ bool ATMobileUI_HandleEvent(const SDL_Event &ev, ATMobileUIState &mobileState);
 // Open the hamburger menu (pauses emulation)
 void ATMobileUI_OpenMenu(ATSimulator &sim, ATMobileUIState &mobileState);
 
+// Navigate the global Gaming-Mode screen stack to the Game Library
+// browser.  Exposed so external flows — netplay "Pick from Library",
+// share-sheet handlers, etc. — can hand control to the browser
+// without touching `g_mobileState` directly.  Does nothing if not in
+// Gaming Mode.
+void ATMobileUI_SwitchToGameBrowser();
+
 // Close the hamburger menu (resumes emulation if not explicitly paused)
 void ATMobileUI_CloseMenu(ATSimulator &sim, ATMobileUIState &mobileState);
 
@@ -168,6 +175,12 @@ void ATMobileUI_OpenFileBrowser(ATMobileUIState &mobileState);
 
 // Open settings
 void ATMobileUI_OpenSettings(ATMobileUIState &mobileState);
+
+// Open Settings directly on the Online Play preferences page with
+// Back wired to return to the Online Play hub overlay.  Called by
+// the Online Play hub's "Preferences" shortcut so the gaming-mode
+// config tree stays the single place for every settings category.
+void ATMobileUI_OpenOnlinePlaySettings();
 
 // Public entry points to the mobile-style info and confirm sheet.
 // Any non-mobile code path that would normally open a desktop modal

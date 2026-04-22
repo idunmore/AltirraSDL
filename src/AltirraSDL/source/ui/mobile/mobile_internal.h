@@ -109,9 +109,16 @@ enum class ATMobileSettingsPage {
 	SaveState,
 	Firmware,
 	GameLibrary,
+	OnlinePlay,
 };
 extern ATMobileSettingsPage s_settingsPage;
 extern ATMobileUIScreen s_settingsReturnScreen;
+// Set by the Online Play hub when the user taps the Preferences
+// shortcut, so that pressing Back on the Settings home page not only
+// restores `s_settingsReturnScreen` but also reopens the Online Play
+// hub overlay the user came from.  Cleared by the Settings back
+// handlers once consumed.
+extern bool s_settingsReturnToNetplayHub;
 extern ATFirmwareType s_fwPicker;
 
 // -------------------------------------------------------------------------
@@ -197,6 +204,13 @@ void GameBrowser_OnBootedGame(const VDStringW &variantPath);
 class ATGameLibrary;
 ATGameLibrary *GetGameLibrary();
 
+// Art cache accessor — shared between the Gaming-Mode Game Browser
+// and the Online Play screens (so netplay rows can reuse textures
+// already loaded for the library grid instead of double-caching).
+// Returns nullptr before GameBrowser_Init().
+class GameArtCache;
+GameArtCache *GetGameArtCache();
+
 // Lookup helpers used by the Disk Drives screen to surface a
 // "Select" button that re-opens the variant picker for multi-disk
 // entries.  Return -1 / 0 when the path / index isn't in the library.
@@ -214,6 +228,32 @@ void GameBrowser_ShowVariantPickerForSwap(int entryIdx,
 // even when the user isn't on the Game Browser screen.
 void GameBrowser_RenderOverlays(ATSimulator &sim,
 	ATMobileUIState &mobileState);
+
+// Put the Game Browser into "picker mode" — the full Game Library UI
+// (grid/list toggle, A-Z letter pill, search, cover-art grid) is
+// reused, but tapping a game does not boot it.  Instead `onPick` is
+// invoked with the chosen variant path + library indices + display
+// name + variant label, and the caller decides what to do (netplay
+// Add-Game, attach-to-multicart, etc.).
+//
+//   onPick     - called once on commit; picker then clears itself.
+//   onCancel   - called if the user backs out (Cancel button / ESC /
+//                Gamepad-B); nullable.
+//   bannerText - small label rendered in place of the Boot Game /
+//                Boot Empty toolbar so the user knows they're in
+//                a picker, not the normal browse flow.  Nullable.
+//
+// Use `GameBrowser_IsPickerActive()` to query and
+// `GameBrowser_ClosePicker()` to dismiss without firing callbacks
+// (e.g. when the owner screen closes while the picker is still up).
+using GameBrowserPickFn = std::function<void(
+	const VDStringW& path, int entryIdx, int variantIdx,
+	const VDStringW& displayName, const VDStringW& variantLabel)>;
+
+void GameBrowser_OpenPicker(GameBrowserPickFn onPick,
+	std::function<void()> onCancel, const char *bannerText);
+bool GameBrowser_IsPickerActive();
+void GameBrowser_ClosePicker();
 
 // Settings sub-page functions split into their own TUs
 void RenderSettingsPage_Firmware(ATMobileUIState &mobileState);

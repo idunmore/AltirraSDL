@@ -15,6 +15,10 @@
 #include "accel_sdl3.h"
 #include "settings.h"
 
+#ifdef ALTIRRA_NETPLAY_ENABLED
+#include "netplay/netplay_glue.h"
+#endif
+
 extern ATSimulator g_sim;
 extern ATUIKeyboardOptions g_kbdOpts;
 
@@ -105,12 +109,38 @@ void ATUIRenderSystemMenu(ATSimulator &sim, ATUIState &state) {
 	ImGui::Separator();
 
 	bool turbo = ATUIGetTurbo();
-	if (ImGui::MenuItem("Warp Speed", nullptr, turbo))
+#ifdef ALTIRRA_NETPLAY_ENABLED
+	const bool netplayActive = ATNetplayGlue::IsActive();
+#else
+	const bool netplayActive = false;
+#endif
+	if (netplayActive) {
+		// Warp is forced off during online play (would run this peer
+		// faster than the other and blow up lockstep).  Show disabled.
+		ImGui::BeginDisabled();
+		bool off = false;
+		ImGui::MenuItem("Warp Speed (disabled: Playing Online)",
+			nullptr, &off);
+		ImGui::EndDisabled();
+	} else if (ImGui::MenuItem("Warp Speed", nullptr, turbo)) {
 		ATUISetTurbo(!turbo);
+	}
 
 	bool pauseInactive = ATUIGetPauseWhenInactive();
-	if (ImGui::MenuItem("Pause When Inactive", nullptr, pauseInactive))
+	if (netplayActive) {
+		// Force-disabled during netplay: stalling the sim would stall
+		// the lockstep pipeline on the other peer.  Grey the checkbox
+		// and show the effective state ("off"), but keep the user's
+		// saved preference untouched so it restores when the session
+		// ends.
+		ImGui::BeginDisabled();
+		bool off = false;
+		ImGui::MenuItem("Pause When Inactive (disabled: Playing Online)",
+			nullptr, &off);
+		ImGui::EndDisabled();
+	} else if (ImGui::MenuItem("Pause When Inactive", nullptr, pauseInactive)) {
 		ATUISetPauseWhenInactive(!pauseInactive);
+	}
 
 	// Rewind submenu
 	if (ImGui::BeginMenu("Rewind")) {

@@ -21,6 +21,7 @@ void ATUIMenuShortcutContextMenu(const char *command);
 void ATUIRenderViewMenu(ATSimulator &sim, ATUIState &state, SDL_Window *window, IDisplayBackend *backend);
 void ATUIRenderSystemMenu(ATSimulator &sim, ATUIState &state);
 void ATUIRenderDebugMenu(ATSimulator &sim);
+void ATUIRenderOnlineMenu();
 
 // Process deferred file dialog results (source file open, SAP/tape save
 // dialogs).  Must run on the main thread every frame.  Called from

@@ -676,3 +676,13 @@ static inline void *_librashader_dlopen_macos(void) {
 endif()
 
 add_subdirectory(src)
+
+###############################################################################
+# Reference lobby server (C++).
+#
+# AltirraSDL ships the source of its matchmaking lobby at server/lobby/
+# so anyone can run their own — see server/lobby/README.md.  Built by
+# default as a normal C++ target: no external toolchain required
+# (cpp-httplib is vendored in the tree).
+###############################################################################
+add_subdirectory(server/lobby)

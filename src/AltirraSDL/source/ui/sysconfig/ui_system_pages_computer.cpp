@@ -13,6 +13,10 @@
 #include "ui_main.h"
 #include "ui_system_internal.h"
 #include "simulator.h"
+
+#ifdef ALTIRRA_NETPLAY_ENABLED
+#include "netplay/netplay_glue.h"
+#endif
 #include "constants.h"
 #include "cpu.h"
 #include "firmwaremanager.h"
@@ -820,14 +824,22 @@ void RenderAccelerationCategory(ATSimulator &sim) {
 void RenderSpeedCategory(ATSimulator &sim) {
 	ImGui::SeparatorText("Speed control");
 
+	const bool netplayLocksSpeed = ATNetplayGlue::IsActive();
+
 	bool warp = ATUIGetTurbo();
+	ImGui::BeginDisabled(netplayLocksSpeed);
 	if (ImGui::Checkbox("Run as fast as possible (warp)", &warp))
 		ATUISetTurbo(warp);
-	ImGui::SetItemTooltip("Disable the speed limiter and run the emulation as fast as possible.");
+	ImGui::EndDisabled();
+	ImGui::SetItemTooltip(netplayLocksSpeed
+		? "Disabled while Playing Online — both peers must run at 1x."
+		: "Disable the speed limiter and run the emulation as fast as possible.");
 
 	bool slowmo = ATUIGetSlowMotion();
+	ImGui::BeginDisabled(netplayLocksSpeed);
 	if (ImGui::Checkbox("Slow Motion", &slowmo))
 		ATUISetSlowMotion(slowmo);
+	ImGui::EndDisabled();
 
 	ImGui::SeparatorText("Speed adjustment");
 
@@ -837,9 +849,13 @@ void RenderSpeedCategory(ATSimulator &sim) {
 	int spdIdx = 0;
 	for (int i = 0; i < 4; ++i)
 		if (kSpdValues[i] == spd) { spdIdx = i; break; }
+	ImGui::BeginDisabled(netplayLocksSpeed);
 	if (ImGui::Combo("Speed", &spdIdx, kSpdLabels, 4))
 		ATUISetSpeedModifier(kSpdValues[spdIdx]);
-	ImGui::SetItemTooltip("Scale the baseline rate to run the emulation faster or slower.");
+	ImGui::EndDisabled();
+	ImGui::SetItemTooltip(netplayLocksSpeed
+		? "Disabled while Playing Online — both peers must run at 1x."
+		: "Scale the baseline rate to run the emulation faster or slower.");
 
 	ImGui::SeparatorText("Frame rate");
 
@@ -859,9 +875,18 @@ void RenderSpeedCategory(ATSimulator &sim) {
 	ImGui::Separator();
 
 	bool pauseInactive = ATUIGetPauseWhenInactive();
+#ifdef ALTIRRA_NETPLAY_ENABLED
+	const bool netplayLocksPause = ATNetplayGlue::IsActive();
+#else
+	const bool netplayLocksPause = false;
+#endif
+	if (netplayLocksPause) ImGui::BeginDisabled();
 	if (ImGui::Checkbox("Pause when emulator window is inactive", &pauseInactive))
 		ATUISetPauseWhenInactive(pauseInactive);
-	ImGui::SetItemTooltip("Automatically pause the emulation when the emulator window is inactive.");
+	ImGui::SetItemTooltip(netplayLocksPause
+		? "Disabled while Playing Online — stalling the sim would freeze the peer."
+		: "Automatically pause the emulation when the emulator window is inactive.");
+	if (netplayLocksPause) ImGui::EndDisabled();
 
 	ImGui::SeparatorText("Rewind");
 

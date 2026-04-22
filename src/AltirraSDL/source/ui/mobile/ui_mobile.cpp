@@ -49,6 +49,11 @@
 extern ATSimulator g_sim;
 extern ATUIState g_uiState;
 extern VDStringA ATGetConfigDir();
+
+#ifdef ALTIRRA_NETPLAY_ENABLED
+#include "../netplay/ui_netplay.h"
+#include "../netplay/ui_netplay_widgets.h"
+#endif
 extern void ATRegistryFlushToDisk();
 extern IDisplayBackend *ATUIGetDisplayBackend();
 
@@ -273,6 +278,7 @@ void ATMobileUI_ShowConfirmDialog(const char *title, const char *body,
 // Hierarchical settings — definition lives in mobile_internal.h.
 ATMobileSettingsPage s_settingsPage = ATMobileSettingsPage::Home;
 ATMobileUIScreen s_settingsReturnScreen = ATMobileUIScreen::GameBrowser;
+bool s_settingsReturnToNetplayHub = false;
 
 // Firmware slot currently being picked within the Firmware sub-page.
 // File scope so the header back button can close the picker.
@@ -545,6 +551,15 @@ void ATMobileUI_CloseMenu(ATSimulator &sim, ATMobileUIState &mobileState) {
 		sim.Resume();
 }
 
+extern ATMobileUIState g_mobileState;
+
+void ATMobileUI_SwitchToGameBrowser() {
+	// Safe to set unconditionally — outside Gaming Mode the mobile
+	// render path isn't invoked so currentScreen is inert.  Callers
+	// that need the gating use ATUIIsGamingMode() themselves.
+	g_mobileState.currentScreen = ATMobileUIScreen::GameBrowser;
+}
+
 
 // -------------------------------------------------------------------------
 // File browser
@@ -640,10 +655,40 @@ void ATMobileUI_Render(ATSimulator &sim, ATUIState &uiState,
 	// Tell the joystick layer whether the gamepad belongs to the UI
 	// this frame.  Also factors in the modal sheet so dialogs that
 	// pop up over the emulator (e.g. confirm/error) capture the gamepad.
-	const bool uiOwns = (mobileState.currentScreen != ATMobileUIScreen::None)
+	bool uiOwns = (mobileState.currentScreen != ATMobileUIScreen::None)
 		|| s_infoModalOpen || s_confirmActive
 		|| ATUIIsEmuErrorDialogOpen();
+#ifdef ALTIRRA_NETPLAY_ENABLED
+	if (ATNetplayUI_IsActive()) uiOwns = true;
+#endif
 	ATMobileGamepad_SetUIOwning(uiOwns);
+
+#ifdef ALTIRRA_NETPLAY_ENABLED
+	// Netplay overlay renders on top of any mobile screen when active.
+	// We set the SDL3 safe-area insets so the sheet body respects
+	// display cutouts / gesture nav on Android.
+	//
+	// Exception: when the main Game Browser is running in picker mode
+	// (netplay's "Pick from Library" handoff), we still render netplay
+	// for its toasts + HUD, but fall through to the mobile screen
+	// switch so the browser is visible underneath.  Without this the
+	// early-return below would skip the switch(currentScreen) block
+	// entirely and the user would see the bare emulator canvas instead
+	// of the library picker.
+	if (ATNetplayUI_IsActive()) {
+		ATNetplayUI::ATNetplayUI_SetSafeAreaInsets(
+			insets.top, insets.bottom, insets.left, insets.right);
+		ATNetplayUI_RenderMobile(sim, uiState, mobileState, window);
+		if (!GameBrowser_IsPickerActive()) return;
+	}
+	// Even when the Online Play overlay is closed, the in-session
+	// HUD ("LIVE / Frame / Peer / Disconnect") needs to render during
+	// Lockstepping so the user can see connection health and end the
+	// session.  RenderMobile early-returns on Closed for the dispatch
+	// half, and the HUD is cheap to call every frame (internal no-op
+	// when not Lockstepping).
+	ATNetplayUI_RenderMobile(sim, uiState, mobileState, window);
+#endif
 
 	switch (mobileState.currentScreen) {
 	case ATMobileUIScreen::None:
@@ -827,4 +872,14 @@ void ATMobileUI_OpenFileBrowser(ATMobileUIState &mobileState) {
 
 void ATMobileUI_OpenSettings(ATMobileUIState &mobileState) {
 	mobileState.currentScreen = ATMobileUIScreen::Settings;
+}
+
+void ATMobileUI_OpenOnlinePlaySettings() {
+	// Remember whichever mobile screen the user was on before the
+	// netplay overlay opened, so back from Settings returns them to
+	// it (usually None = emulator, HamburgerMenu, or GameBrowser).
+	s_settingsReturnScreen = g_mobileState.currentScreen;
+	s_settingsReturnToNetplayHub = true;
+	s_settingsPage = ATMobileSettingsPage::OnlinePlay;
+	g_mobileState.currentScreen = ATMobileUIScreen::Settings;
 }

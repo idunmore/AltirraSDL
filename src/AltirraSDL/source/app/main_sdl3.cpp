@@ -48,6 +48,11 @@
 #include "ui_testmode.h"
 #ifdef ALTIRRA_BRIDGE_ENABLED
 #include "bridge_server.h"
+
+#ifdef ALTIRRA_NETPLAY_ENABLED
+#include "netplay/netplay_glue.h"
+#include "ui/netplay/ui_netplay.h"
+#endif
 #endif
 #include "ui_textselection.h"
 #include "ui_progress.h"
@@ -79,6 +84,7 @@
 #include <algorithm>
 #include <cmath>
 #include "logging.h"
+#include <at/atcore/logging.h>
 #include "app_internal.h"
 #include "macos_menubar.h"
 
@@ -1217,6 +1223,21 @@ int main(int argc, char *argv[]) {
 		return 1;
 	}
 
+	// Route ATLogChannel output (atcore/logging.h) to stderr so netplay
+	// and other subsystem traces are visible in the terminal.  The core
+	// library defaults to no-op sinks — without wiring these, channels
+	// that users explicitly enable (via menus or toggled on by default,
+	// like NETPLAY) emit nothing.
+	ATLogSetWriteCallbacks(
+		[](ATLogChannel *ch, const char *s) {
+			std::fprintf(stderr, "[%s] %s\n", ch->GetName(), s);
+		},
+		[](ATLogChannel *ch, const char *fmt, va_list ap) {
+			std::fprintf(stderr, "[%s] ", ch->GetName());
+			std::vfprintf(stderr, fmt, ap);
+			std::fputc('\n', stderr);
+		});
+
 	// On Android, always keep the screen on.  On desktop, this is handled
 	// by ATUIApplyModeStyle() when entering Gaming Mode.
 #ifdef __ANDROID__
@@ -1999,17 +2020,7 @@ int main(int argc, char *argv[]) {
 	// Without this sleep, the emulator runs Advance() as fast as the
 	// CPU allows, producing frames far faster than 60 Hz.
 
-	// --- Hiccup detector state.  Catches individual main-loop iterations
-	// that exceed the frame budget and emits a per-phase breakdown so we
-	// can tell whether the stall came from event processing, emulation,
-	// frame preparation, rendering, or the pacer itself.  Rate-limited to
-	// one log line per second to avoid flooding under sustained overload. ---
-	const uint64_t hiccupPerfFreq = SDL_GetPerformanceFrequency();
-	uint64_t hiccupLastLogMs = 0;
-
 	while (g_running) {
-		const uint64_t phaseT0 = SDL_GetPerformanceCounter();
-
 		HandleEvents();
 		if (!g_running) break;
 
@@ -2028,6 +2039,17 @@ int main(int argc, char *argv[]) {
 		ATBridge::Poll(g_sim, g_uiState);
 #endif
 
+#ifdef ALTIRRA_NETPLAY_ENABLED
+		// Drive the netplay coordinator (no-op when no session exists).
+		// Drains the UDP socket, runs the handshake / snapshot transfer
+		// state machine, and emits outgoing input packets.  Must run
+		// BEFORE the pause-inactive check and the Advance() call so
+		// that CanAdvanceThisTick() reflects the freshly-drained peer
+		// input state for this tick.
+		ATNetplayGlue::Poll(SDL_GetTicks());
+		ATNetplayUI_Poll(SDL_GetTicks());
+#endif
+
 		// Process deferred file dialog results on main thread
 		ATUIPollDeferredActions();
 
@@ -2041,8 +2063,6 @@ int main(int argc, char *argv[]) {
 		// Tick the debugger engine (process queued commands)
 		ATUIDebuggerTick();
 
-		const uint64_t phaseT1 = SDL_GetPerformanceCounter();
-
 		// Android/mobile: while backgrounded, do not advance emulation
 		// and do not render.  Just keep pumping events so we receive the
 		// resume notification.  Longer sleep to stay off the CPU.  Must
@@ -2054,7 +2074,16 @@ int main(int argc, char *argv[]) {
 		}
 
 		// Pause emulation when window loses focus (if enabled).
-		const bool pauseInactive = ATUIGetPauseWhenInactive() && !g_winActive;
+		// Suppressed during an active netplay session: if the joiner
+		// stops advancing because their window is in the background
+		// the host stalls on peer-silence, desyncs, and the joiner
+		// sees a frozen black screen (no GTIA frames completed since
+		// the snapshot apply).  Netplay MUST keep ticking while both
+		// peers are connected.
+		bool pauseInactive = ATUIGetPauseWhenInactive() && !g_winActive;
+#ifdef ALTIRRA_NETPLAY_ENABLED
+		if (ATNetplayGlue::IsActive()) pauseInactive = false;
+#endif
 
 		if (pauseInactive) {
 			// Window inactive — render for UI responsiveness, sleep.
@@ -2076,15 +2105,85 @@ int main(int argc, char *argv[]) {
 			std::clamp<uint32>((uint32)(sint32)g_ATCVEngineTurboFPSDivisor, 1u, 100u);
 		const bool dropFrame = turbo && ((++s_turboFrameCounter) % turboDivisor) != 0;
 
-		ATSimulator::AdvanceResult result = g_sim.Advance(dropFrame);
+#ifdef ALTIRRA_NETPLAY_ENABLED
+		if (ATNetplayGlue::IsLockstepping()) {
+			// Capture local SDL input state and push to the
+			// coordinator (keyed D frames ahead per the lockstep
+			// invariant).
+			ATNetplayGlue::SubmitLocalInput();
 
-		const uint64_t phaseT2 = SDL_GetPerformanceCounter();
+			// If the peer hasn't delivered their input for the
+			// current emu frame yet, do a bounded fast-poll
+			// instead of going through the full RenderAndPresent
+			// (which blocks on vsync for up to ~16.7 ms).  On
+			// localhost the peer's packet arrives sub-ms; a
+			// vsync block here would turn a 0.5 ms wait into a
+			// 16.7 ms wait and halve aggregate throughput to
+			// ~30 fps (both peers block symmetrically each
+			// frame).  See NETPLAY_DESIGN_PLAN.md §6.
+			if (!ATNetplayGlue::CanAdvanceThisTick()) {
+				const uint64_t stallStartMs = SDL_GetTicks();
+				const uint64_t stallBudgetMs = 12;  // < 1 frame
+				while (!ATNetplayGlue::CanAdvanceThisTick()
+				       && SDL_GetTicks() - stallStartMs < stallBudgetMs) {
+					SDL_Delay(0);  // yield to OS, no block
+					ATNetplayGlue::Poll(SDL_GetTicks());
+				}
+				// Still closed after the budget — fall back to
+				// render + vsync so the UI stays responsive and
+				// the user can see the "Peer: N ms ago" HUD go
+				// red.  Retry next iteration.
+				if (!ATNetplayGlue::CanAdvanceThisTick()) {
+					RenderAndPresent();
+					if (!turbo) g_pacer.WaitForNextFrame();
+					continue;
+				}
+				// Gate opened inside the fast-poll budget —
+				// resubmit local input (currentFrame may have
+				// shifted) and fall through to Advance.
+				ATNetplayGlue::SubmitLocalInput();
+			}
+
+			// Both peers' inputs for the upcoming frame are
+			// available — drive the netplay-owned controller
+			// ports with them so the sim's joystick reads
+			// reflect (host, joiner) in lockstep.
+			ATNetplayGlue::ApplyFrameInputsToSim();
+		}
+#endif
+
+		ATSimulator::AdvanceResult result = g_sim.Advance(dropFrame);
 
 		// Check if a new frame arrived (GTIA called PostBuffer).
 		bool hadFrame = g_pDisplay->IsFramePending();
 		g_pDisplay->PrepareFrame();
 
-		const uint64_t phaseT3 = SDL_GetPerformanceCounter();
+#ifdef ALTIRRA_NETPLAY_ENABLED
+		// CRITICAL for lockstep determinism: advance the lockstep
+		// frame counter ONLY when a full emulated frame completed
+		// (GTIA produced output).
+		//
+		// ATSimulator::Advance runs up to g_ATSimScanlinesPerAdvance
+		// (32) scanlines per call — so a full 262-line NTSC frame
+		// takes ~9 Advance calls.  And Advance can return
+		// kAdvanceResult_WaitingForFrame with ZERO work done when
+		// GTIA::BeginFrame can't start (display-consumer busy).  If
+		// we call OnFrameAdvanced per Advance call, peer A's extra
+		// no-op due to a transient display block bumps its lockstep
+		// counter but not its sim state, while peer B's counter bumps
+		// WITH sim progress — both counters match, but sim states
+		// diverge.  The input-hash check can't catch it (inputs are
+		// still identical), so the desync detector stays silent while
+		// the games drift apart on screen.
+		//
+		// Tying OnFrameAdvanced to hadFrame means one lockstep tick =
+		// one emu frame on both peers, regardless of how Advance is
+		// internally chunked or how many no-op WaitingForFrame calls
+		// occurred.
+		if (hadFrame) {
+			ATNetplayGlue::OnFrameAdvanced();
+		}
+#endif
 
 		// (turbo is declared above for the dropFrame computation.)
 
@@ -2151,33 +2250,6 @@ int main(int argc, char *argv[]) {
 			SDL_Delay(16);
 		}
 		// kAdvanceResult_Running with no frame: loop immediately.
-
-		// --- Hiccup detection.  Measure total work (events + advance +
-		// prepare + render) excluding the pacer sleep, and compare against
-		// the frame budget.  If work exceeds budget + 8ms slack, emit a
-		// per-phase breakdown so we can identify what stalled.  Rate-limited
-		// to 1 line / sec so a sustained overload won't flood stderr.
-		//
-		// NOTE: "render" includes SDL_GL_SwapWindow which blocks on vsync
-		// and can legitimately take up to one display refresh (~16.6ms on
-		// 60Hz) — this is normal and accounted for in the threshold.
-		const uint64_t phaseT4 = SDL_GetPerformanceCounter();
-		const double totalWorkMs  = (double)(phaseT4 - phaseT0) * 1000.0 / (double)hiccupPerfFreq;
-		const double targetMs     = g_pacer.targetSecsPerFrame * 1000.0;
-		const double hiccupThresh = targetMs + 8.0;
-		if (didRender && totalWorkMs > hiccupThresh) {
-			const uint64_t nowMs = SDL_GetTicks();
-			if (nowMs - hiccupLastLogMs >= 1000) {
-				hiccupLastLogMs = nowMs;
-				const double evMs  = (double)(phaseT1 - phaseT0) * 1000.0 / (double)hiccupPerfFreq;
-				const double adMs  = (double)(phaseT2 - phaseT1) * 1000.0 / (double)hiccupPerfFreq;
-				const double prMs  = (double)(phaseT3 - phaseT2) * 1000.0 / (double)hiccupPerfFreq;
-				const double rdMs  = (double)(phaseT4 - phaseT3) * 1000.0 / (double)hiccupPerfFreq;
-				LOG_INFO("Hiccup",
-					"total=%.1fms (target=%.1f) events=%.1f advance=%.1f prepare=%.1f render+present=%.1f",
-					totalWorkMs, targetMs, evMs, adMs, prMs, rdMs);
-			}
-		}
 	}
 
 #ifdef ALTIRRA_BRIDGE_ENABLED
@@ -2242,6 +2314,12 @@ int main(int argc, char *argv[]) {
 
 	ATUIShutdownProgressSDL3();
 	ATTouchControls_Shutdown();
+
+#ifdef ALTIRRA_NETPLAY_ENABLED
+	// Best-effort: send a clean Bye to the peer and free the
+	// coordinator.  Safe to call with no active session.
+	ATNetplayGlue::Shutdown();
+#endif
 
 	GameBrowser_Shutdown();
 	ATTestModeShutdown();

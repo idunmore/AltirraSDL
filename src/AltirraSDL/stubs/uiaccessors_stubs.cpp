@@ -31,6 +31,13 @@
 extern ATSimulator g_sim;
 #include <at/atui/uimanager.h>
 
+#ifdef ALTIRRA_NETPLAY_ENABLED
+#include "netplay/netplay_glue.h"
+namespace { bool ATUINetplayBlocksWarp() { return ATNetplayGlue::IsActive(); } }
+#else
+namespace { bool ATUINetplayBlocksWarp() { return false; } }
+#endif
+
 // Forward declarations for types used in stub signatures
 class ATInputManager;
 class IATAsyncDispatcher;
@@ -178,7 +185,13 @@ void ATUISetShowFPS(bool v) { s_showFPS = v; }
 
 static float s_speedModifier = 0.0f;
 float ATUIGetSpeedModifier() { return s_speedModifier; }
-void ATUISetSpeedModifier(float v) { s_speedModifier = v; }
+void ATUISetSpeedModifier(float v) {
+	// Netplay: clamp to the canonical 1x (modifier==0.0 in Altirra's
+	// convention) so one peer can't run faster than the other and desync
+	// the lockstep ring.
+	if (ATUINetplayBlocksWarp()) v = 0.0f;
+	s_speedModifier = v;
+}
 
 static ATFrameRateMode s_frameRateMode = kATFrameRateMode_Hardware;
 ATFrameRateMode ATUIGetFrameRateMode() { return s_frameRateMode; }
@@ -199,19 +212,28 @@ static bool s_turboPulse = false;
 
 bool ATUIGetTurbo() { return s_turbo; }
 void ATUISetTurbo(bool v) {
+	// Refuse to enable warp during an online session — it would run the
+	// simulator faster than real time on one peer and instantly diverge
+	// the lockstep hash.  Disable requests always go through so the
+	// force-clear at session entry still works.
+	if (v && ATUINetplayBlocksWarp()) v = false;
 	s_turbo = v;
 	g_sim.SetTurboModeEnabled(v || s_turboPulse);
 }
 
 bool ATUIGetTurboPulse() { return s_turboPulse; }
 void ATUISetTurboPulse(bool v) {
+	if (v && ATUINetplayBlocksWarp()) v = false;
 	s_turboPulse = v;
 	g_sim.SetTurboModeEnabled(s_turbo || v);
 }
 
 static bool s_slowMotion = false;
 bool ATUIGetSlowMotion() { return s_slowMotion; }
-void ATUISetSlowMotion(bool v) { s_slowMotion = v; }
+void ATUISetSlowMotion(bool v) {
+	if (v && ATUINetplayBlocksWarp()) v = false;
+	s_slowMotion = v;
+}
 
 // =========================================================================
 // Fullscreen
