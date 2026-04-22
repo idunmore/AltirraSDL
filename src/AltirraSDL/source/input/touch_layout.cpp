@@ -122,12 +122,17 @@ void ATTouchLayout_Update(ATTouchLayout &layout, int screenW, int screenH,
 			(float)screenW - insetR - dp(16.0f) - menuBtnSize * 0.5f,
 			topCenterY, menuBtnSize, menuBtnSize);
 
-		// Emote button (sits to the left of the hamburger) — only rendered
-		// during an active netplay session, but we compute the rect
-		// unconditionally so the hit-test layout stays stable.
+		// Emote button — stacked directly below the hamburger, same
+		// column, same width, ~8dp vertical gap.  Only rendered during
+		// an active netplay session, but we compute the rect every
+		// layout pass so the hit-test layout stays stable.  Below the
+		// top bar this area is empty in both orientations (above the
+		// fire zone in landscape, above the bottom controls in
+		// portrait), so no collision with gameplay thumbs.
 		layout.btnEmote = MakeButton(
-			(float)screenW - insetR - dp(16.0f) - menuBtnSize * 1.5f - dp(8.0f),
-			topCenterY, menuBtnSize, menuBtnSize);
+			(float)screenW - insetR - dp(16.0f) - menuBtnSize * 0.5f,
+			topCenterY + menuBtnSize + dp(8.0f),
+			menuBtnSize, menuBtnSize);
 
 		// Fire buttons (right side, stacked vertically)
 		float fireCenterX = (float)screenW - insetR - fireASize * 0.5f - dp(24.0f);

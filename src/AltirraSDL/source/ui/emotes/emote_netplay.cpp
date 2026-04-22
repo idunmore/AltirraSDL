@@ -104,7 +104,17 @@ bool Send(int iconId) {
 	if (!PassesRateLimit(nowMs, gLastSentMs, gLastSentIconId, iconId))
 		return false;
 
-	return ATNetplayGlue::SendEmote((uint8_t)iconId);
+	bool sent = ATNetplayGlue::SendEmote((uint8_t)iconId);
+
+	// Visual confirmation: play the bottom-right "outbound" overlay so
+	// the sender sees what they just sent even if the peer's reply
+	// doesn't arrive (or their receive toggle is off).  Tied to the
+	// actual socket handoff — if the packet couldn't leave the machine
+	// at all we don't lie to the user about having sent it.
+	if (sent)
+		ATEmoteOverlay::ShowOutbound(iconId, nowMs);
+
+	return sent;
 }
 
 void Process(uint64_t nowMs) {

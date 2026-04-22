@@ -1,8 +1,17 @@
-//	AltirraSDL - Online Play emote fade overlay.
+//	AltirraSDL - Online Play emote overlays.
 //
-//	Single-slot overlay (2-player netplay) that fades in, holds, and
-//	fades out the last-received emote over 4.0 seconds.  A new Show()
-//	replaces the current emote and restarts the animation.
+//	Two independent single-slot overlays share the same 4.0 s entry /
+//	hold / exit animation (slide + scale + fade):
+//
+//	   * Inbound  — received from peer — anchored top-left,
+//	                slides in from offscreen LEFT.
+//	   * Outbound — confirmation of what we just sent —
+//	                anchored bottom-right, slides in from offscreen RIGHT.
+//
+//	A new Show() on the same side replaces the current emote and
+//	restarts the animation for that side; the two sides never block
+//	each other, so seeing the peer's reply doesn't hide our own send
+//	confirmation and vice versa.
 
 #pragma once
 
@@ -10,14 +19,17 @@
 
 namespace ATEmoteOverlay {
 
-// Trigger the overlay with icon [0..15].  Starts fade-in at nowMs.
+// Inbound (received from peer) — top-left, slide from left.
 void Show(int iconId, uint64_t nowMs);
 
-// Immediately hide without animating out.  Called on netplay teardown.
+// Outbound (local send confirmation) — bottom-right, slide from right.
+void ShowOutbound(int iconId, uint64_t nowMs);
+
+// Immediately hide both sides without animating out.  Called on
+// netplay teardown.
 void Clear();
 
-// Render the overlay if active.  Safe to call every frame.  Positions
-// the icon in the top-right of the main viewport.
+// Render both overlays if active.  Safe to call every frame.
 void Render(uint64_t nowMs);
 
 } // namespace ATEmoteOverlay
