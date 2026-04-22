@@ -33,6 +33,8 @@
 #include "netplay/platform_notify.h"
 
 #include "ui/gamelibrary/game_library.h"
+#include "ui/gamelibrary/game_library_art.h"
+#include "ui/mobile/mobile_internal.h"  // GetGameArtCache
 #include "ui_file_dialog_sdl3.h"
 #include <SDL3/SDL_dialog.h>
 
@@ -969,9 +971,26 @@ const SDL_DialogFileFilter kMobileAddOfferFilters[] = {
 
 void RenderAddOffer() {
 	State& st = GetState();
-	(void)st;
 	if (!s_mobileAddConfigSeeded) {
-		s_mobileAddConfig = CaptureCurrentMachineConfig();
+		// Remember the last-used config across Add-Game opens so a
+		// serial host doesn't have to re-pick hardware every time.
+		// Prefer the first existing hosted game's config; fall back to
+		// `prefs.lastAddConfig`; final fallback is the live sim.  The
+		// user can always click "Copy from current emulator" inside
+		// RenderMachineConfigSection to re-snapshot.
+		if (!st.hostedGames.empty()) {
+			s_mobileAddConfig = st.hostedGames.front().config;
+		} else {
+			s_mobileAddConfig = st.prefs.lastAddConfig;
+			// If prefs.lastAddConfig is default-constructed (first ever
+			// Add-Game), synchronise with the live emulator so joiner
+			// firmware CRCs line up out of the box.
+			if (s_mobileAddConfig.kernelCRC32 == 0
+			    && s_mobileAddConfig.basicCRC32 == 0)
+			{
+				s_mobileAddConfig = CaptureCurrentMachineConfig();
+			}
+		}
 		s_mobileAddConfigSeeded = true;
 	}
 	bool open = true;
@@ -1039,17 +1058,11 @@ void RenderAddOffer() {
 
 	// ── MACHINE CONFIGURATION ───────────────────────────────────
 	// Applied only during a session; never touches the user's saved
-	// Altirra configuration.  Gaming Mode uses touch widgets that
-	// mirror the Desktop dialog.
+	// Altirra configuration.  Shared with the Desktop Add-Game dialog
+	// so both modes expose an identical set of knobs (hardware, video,
+	// BASIC, SIO, firmware CRCs) from one implementation.
 	ATTouchSection("Machine configuration");
-	ATTouchMutedText(MachineConfigSummary(s_mobileAddConfig));
-	if (ATTouchButton("Copy from current emulator",
-	                  ImVec2(Dp(260), Dp(40)),
-	                  ATTouchButtonStyle::Neutral)) {
-		s_mobileAddConfig = CaptureCurrentMachineConfig();
-	}
-	ATTouchToggle("BASIC enabled", &s_mobileAddConfig.basicEnabled);
-	ATTouchToggle("SIO full-speed", &s_mobileAddConfig.sioPatchEnabled);
+	RenderMachineConfigSection(s_mobileAddConfig);
 
 	ImGui::Spacing();
 	// ── PRIVACY ─────────────────────────────────────────────────
@@ -1453,8 +1466,11 @@ bool RenderLibPickDesktopTable(ATGameLibrary& lib,
 	return committed;
 }
 
-// Render the Gaming-Mode grid view.  Mirrors the main Game Browser's
-// 4-column grid with cover art.  Returns true on single-variant tap
+// Render the Gaming-Mode grid view — matches the main Game Browser:
+// one row of cover-art tiles per chunk of entries, art loaded on
+// demand from the shared GameArtCache via `e.mArtPath` (a direct
+// path-keyed lookup — O(1) per tile, unlike the O(N²) basename
+// matcher used by joiner rows).  Returns true on single-variant tap
 // commit.
 bool RenderLibPickMobileGrid(ATGameLibrary& lib,
 	int& outEntryIdx, int& outVariantIdx,
@@ -1467,13 +1483,10 @@ bool RenderLibPickMobileGrid(ATGameLibrary& lib,
 	for (char *c = searchLower; *c; ++c)
 		if (*c >= 'A' && *c <= 'Z') *c = (char)(*c + 32);
 
-	// Build filtered index list.
-	std::vector<size_t> filtered;
-	filtered.reserve(entries.size());
-	for (size_t i = 0; i < entries.size(); ++i) {
-		if (LibPickEntryMatches(entries[i], searchLower, s_libPickLetter))
-			filtered.push_back(i);
-	}
+	// Pump the art cache so freshly-visible tiles decode in the
+	// background.  Safe no-op when the cache isn't initialised.
+	PumpArtCache();
+	GameArtCache *cache = GetGameArtCache();
 
 	const float availW = ImGui::GetContentRegionAvail().x;
 	const float tileMin = Dp(140.0f);
@@ -1491,9 +1504,10 @@ bool RenderLibPickMobileGrid(ATGameLibrary& lib,
 	ATTouchDragScroll();
 
 	int drawn = 0;
-	for (size_t fi = 0; fi < filtered.size(); ++fi) {
-		size_t idx = filtered[fi];
-		const GameEntry& e = entries[idx];
+	for (size_t i = 0; i < entries.size(); ++i) {
+		const GameEntry& e = entries[i];
+		if (!LibPickEntryMatches(e, searchLower, s_libPickLetter))
+			continue;
 
 		if (drawn % cols != 0) ImGui::SameLine(0, gap);
 
@@ -1501,9 +1515,9 @@ bool RenderLibPickMobileGrid(ATGameLibrary& lib,
 		ImDrawList *dl = ImGui::GetWindowDrawList();
 
 		char id[32];
-		std::snprintf(id, sizeof id, "##ltile_%zu", idx);
+		std::snprintf(id, sizeof id, "##ltile_%zu", i);
 
-		ImGui::PushID((int)idx);
+		ImGui::PushID((int)i);
 		ImGui::PushStyleColor(ImGuiCol_Header,        ImVec4(0,0,0,0));
 		ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0,0,0,0));
 		ImGui::PushStyleColor(ImGuiCol_HeaderActive,  ImVec4(0,0,0,0));
@@ -1513,27 +1527,17 @@ bool RenderLibPickMobileGrid(ATGameLibrary& lib,
 		bool hovered = ImGui::IsItemHovered() || ImGui::IsItemFocused();
 		ImGui::PopID();
 
-		// Image area.
 		ImVec2 imgTL(cursor.x, cursor.y);
 		ImVec2 imgBR(cursor.x + tileW, cursor.y + imageH);
 		dl->AddRectFilled(imgTL, imgBR, IM_COL32(20, 20, 25, 255),
 			Dp(4.0f));
 
 		int artW = 0, artH = 0;
-		VDStringA nameU8 = VDTextWToU8(e.mDisplayName);
-		uintptr_t tex = 0;
-		if (!e.mVariants.empty()) {
-			// Use basename of the first variant's path — same key the
-			// netplay rows already use.
-			const wchar_t *p = e.mVariants[0].mPath.c_str();
-			const wchar_t *slash = nullptr;
-			for (const wchar_t *q = p; *q; ++q)
-				if (*q == L'/' || *q == L'\\') slash = q;
-			const wchar_t *base = slash ? slash + 1 : p;
-			VDStringA bu = VDTextWToU8(base, -1);
-			tex = LookupArtByGameName(bu.c_str(), &artW, &artH);
-		}
-		if (tex && artW > 0 && artH > 0) {
+		ImTextureID artTex = (ImTextureID)0;
+		if (cache && !e.mArtPath.empty())
+			artTex = cache->GetTexture(e.mArtPath, &artW, &artH);
+
+		if (artTex && artW > 0 && artH > 0) {
 			float srcA = (float)artW / (float)artH;
 			float tileA = tileW / imageH;
 			float dW, dH;
@@ -1541,7 +1545,7 @@ bool RenderLibPickMobileGrid(ATGameLibrary& lib,
 			else              { dH = imageH; dW = imageH * srcA; }
 			float ox = (tileW - dW) * 0.5f;
 			float oy = (imageH - dH) * 0.5f;
-			dl->AddImage((ImTextureID)tex,
+			dl->AddImage(artTex,
 				ImVec2(imgTL.x + ox, imgTL.y + oy),
 				ImVec2(imgTL.x + ox + dW, imgTL.y + oy + dH));
 		} else {
@@ -1553,7 +1557,7 @@ bool RenderLibPickMobileGrid(ATGameLibrary& lib,
 				IM_COL32(180, 180, 190, 200), glyph);
 		}
 
-		// Variant count pill.
+		// Variant-count pill.
 		if (e.mVariants.size() > 1) {
 			char cnt[16];
 			std::snprintf(cnt, sizeof cnt, "x%zu", e.mVariants.size());
@@ -1568,40 +1572,39 @@ bool RenderLibPickMobileGrid(ATGameLibrary& lib,
 				IM_COL32(255, 255, 255, 220), cnt);
 		}
 
+		const ATMobilePalette &pal = ATMobileGetPalette();
 		if (hovered) {
-			const ATMobilePalette &pal = ATMobileGetPalette();
 			dl->AddRect(imgTL, imgBR, pal.rowFocus, Dp(4.0f),
 				0, Dp(2.0f));
 		}
 
-		// Name below tile (clipped).
+		// Name below tile (clipped to the tile width).
+		VDStringA nameU8 = VDTextWToU8(e.mDisplayName);
 		float nameY = cursor.y + imageH + Dp(4.0f);
 		ImGui::PushClipRect(ImVec2(cursor.x, nameY),
 			ImVec2(cursor.x + tileW, cursor.y + tileH), true);
 		ImVec2 ns = ImGui::CalcTextSize(nameU8.c_str());
 		float nx = cursor.x + (tileW - ns.x) * 0.5f;
 		if (nx < cursor.x) nx = cursor.x;
-		const ATMobilePalette &pal = ATMobileGetPalette();
 		dl->AddText(ImVec2(nx, nameY), pal.text, nameU8.c_str());
 		ImGui::PopClipRect();
 
 		if (clicked && !ATTouchIsDraggingBeyondSlop()) {
 			if (e.mVariants.size() == 1) {
-				outEntryIdx   = (int)idx;
+				outEntryIdx   = (int)i;
 				outVariantIdx = 0;
 				outPath       = e.mVariants[0].mPath;
 				outDisplay    = e.mDisplayName;
 				outLabel      = e.mVariants[0].mLabel;
 				committed = true;
 			} else if (e.mVariants.size() > 1) {
-				s_libPickVariantEntry = (int)idx;
+				s_libPickVariantEntry = (int)i;
 			}
 		}
-
 		++drawn;
 	}
 
-	if (filtered.empty()) {
+	if (drawn == 0) {
 		ImGui::Spacing();
 		if (entries.empty()) {
 			ATTouchMutedText("Game Library is empty — add sources in "

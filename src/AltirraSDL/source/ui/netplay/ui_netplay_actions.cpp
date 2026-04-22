@@ -16,6 +16,7 @@
 
 #include "ui/gamelibrary/game_library.h"
 #include "ui/core/ui_main.h"
+#include "ui/mobile/mobile_internal.h"   // GetGameLibrary, GameBrowser_Init
 
 #include "simulator.h"
 #include "firmwaremanager.h"
@@ -57,16 +58,38 @@ namespace ATNetplayUI {
 LobbyWorker& GetWorker();
 
 // Shared Game Library singleton for Add-Offer pickers.
+//
+// Prefer the mobile Game Browser's instance (created by
+// GameBrowser_Init) — it's the one that's been populated by a
+// background scan and is the authoritative source for cover art,
+// variants, and play history.  If the mobile browser hasn't been
+// initialised yet (e.g. Desktop mode at first launch; the Online Play
+// picker is opened before the user ever visits the Game Library),
+// kick GameBrowser_Init so the library scans and seeds the shared
+// instance.  Only fall back to a local LoadCache-only singleton if
+// that initialisation fails — this fallback exists purely as a
+// belt-and-braces safety net; in practice GameBrowser_Init is
+// reliable.
 ATGameLibrary& LibrarySingleton() {
-	static ATGameLibrary lib;
+	if (ATGameLibrary *existing = GetGameLibrary())
+		return *existing;
+	GameBrowser_Init();
+	if (ATGameLibrary *lib = GetGameLibrary())
+		return *lib;
+
+	// Fallback — cache-only, no background scan.  Reached only when
+	// GameBrowser_Init refused to allocate (OOM on a very constrained
+	// device); keeps the UI from crashing even when the library is
+	// degenerate.
+	static ATGameLibrary fallback;
 	static bool initialised = false;
 	if (!initialised) {
-		lib.SetConfigDir(ATGetConfigDir());
-		lib.LoadSettingsFromRegistry();
-		lib.LoadCache();
+		fallback.SetConfigDir(ATGetConfigDir());
+		fallback.LoadSettingsFromRegistry();
+		fallback.LoadCache();
 		initialised = true;
 	}
-	return lib;
+	return fallback;
 }
 
 namespace {

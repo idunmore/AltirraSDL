@@ -37,6 +37,19 @@ namespace ATNetplay { struct LobbySession; }
 
 namespace ATNetplayUI {
 
+struct MachineConfig;  // defined in ui_netplay_state.h
+
+// Machine Configuration form — hardware / video / BASIC / SIO +
+// firmware combos + "Copy from current emulator".  Identical layout
+// in Desktop and Gaming Mode so both Add-Game flows expose the same
+// set of knobs through one DRY implementation.
+void RenderMachineConfigSection(MachineConfig& cfg);
+
+// Re-scan the installed firmware list.  Called after the user
+// installs/removes firmware via Settings → Firmware so the Add-Game
+// dropdowns reflect the fresh state without restart.
+void ReloadMachineConfigFirmwareList();
+
 // -----------------------------------------------------------------------
 // Mode-aware container helpers.  Both must be followed by
 // EndSheet()/EndScreenGrid() exactly once.

@@ -17,6 +17,14 @@
 #include "../gamelibrary/game_library_art.h"
 
 #include <vd2/system/text.h>
+#include <vd2/system/file.h>
+#include <vd2/system/filesys.h>
+
+#include "simulator.h"
+#include "firmwaremanager.h"
+#include "constants.h"
+
+extern ATSimulator g_sim;
 
 #include <cctype>
 #include <cwctype>
@@ -777,6 +785,382 @@ void PeerChip(const char *handle, const char *region, bool isPrivate) {
 		ImGui::TextUnformatted("[private]");
 		ImGui::PopStyleColor();
 	}
+}
+
+// -------------------------------------------------------------------
+// Machine Configuration section — shared between Gaming Mode and
+// Desktop so the host form has identical options on both paths.
+//
+// Renders into the current ImGui window: hardware-mode combo, video-
+// standard combo, BASIC + SIO-patch toggles, firmware chooser combos,
+// and a "Copy from current emulator" convenience button.  The widgets
+// are deliberately plain ImGui combos so firmware lists, hardware
+// types, and video standards all look identical in both modes.  On
+// Gaming Mode the combos inherit the larger touch-friendly padding
+// from the mode style.
+// -------------------------------------------------------------------
+
+namespace {
+
+struct FwChoice {
+	uint64_t    id;
+	uint32_t    crc32;
+	std::string label;   // "Name (filename) [CRC32]"
+};
+
+std::vector<FwChoice> s_mcKernelChoices;
+std::vector<FwChoice> s_mcBasicChoices;
+bool                  s_mcFwChoicesLoaded = false;
+
+void ReloadMachineConfigFirmwareChoices() {
+	s_mcKernelChoices.clear();
+	s_mcBasicChoices.clear();
+	s_mcKernelChoices.push_back({
+		0, 0, std::string("(Altirra default for hardware)")});
+	s_mcBasicChoices.push_back({
+		0, 0, std::string("(None)")});
+
+	ATFirmwareManager *fwm = g_sim.GetFirmwareManager();
+	if (!fwm) { s_mcFwChoicesLoaded = true; return; }
+
+	vdvector<ATFirmwareInfo> fwList;
+	fwm->GetFirmwareList(fwList);
+	for (const auto& fw : fwList) {
+		if (!fw.mbVisible) continue;
+
+		const uint32_t crc = ComputeFirmwareCRC32(fw.mId);
+		VDStringA nameU8 = VDTextWToU8(fw.mName);
+
+		char buf[384];
+		if (!fw.mPath.empty()) {
+			VDStringA fnU8 = VDTextWToU8(
+				VDStringW(VDFileSplitPath(fw.mPath.c_str())));
+			std::snprintf(buf, sizeof buf, "%s (%s) [%08X]",
+				nameU8.c_str(), fnU8.c_str(), crc);
+		} else {
+			std::snprintf(buf, sizeof buf, "%s (internal) [%08X]",
+				nameU8.c_str(), crc);
+		}
+
+		FwChoice c;
+		c.id    = fw.mId;
+		c.crc32 = crc;
+		c.label = buf;
+
+		if (ATIsKernelFirmwareType(fw.mType))
+			s_mcKernelChoices.push_back(std::move(c));
+		else if (fw.mType == kATFirmwareType_Basic)
+			s_mcBasicChoices.push_back(std::move(c));
+	}
+	s_mcFwChoicesLoaded = true;
+}
+
+void FwCombo(const char *label,
+	const std::vector<FwChoice>& choices, uint32_t *crcOut)
+{
+	char synth[64];
+	const char *selectedLabel = choices.empty()
+		? "(no firmware manager)" : choices[0].label.c_str();
+
+	int matchIdx = -1;
+	for (size_t i = 0; i < choices.size(); ++i) {
+		if (choices[i].crc32 == *crcOut) {
+			matchIdx = (int)i;
+			selectedLabel = choices[i].label.c_str();
+			break;
+		}
+	}
+	if (matchIdx < 0 && *crcOut != 0) {
+		std::snprintf(synth, sizeof synth,
+			"(not installed: [%08X])", *crcOut);
+		selectedLabel = synth;
+	} else if (matchIdx < 0) {
+		matchIdx = 0;
+	}
+
+	ImGui::PushItemWidth(440.0f);
+	if (ImGui::BeginCombo(label, selectedLabel)) {
+		for (size_t i = 0; i < choices.size(); ++i) {
+			bool sel = ((int)i == matchIdx);
+			if (ImGui::Selectable(choices[i].label.c_str(), sel))
+				*crcOut = choices[i].crc32;
+			if (sel) ImGui::SetItemDefaultFocus();
+		}
+		ImGui::EndCombo();
+	}
+	ImGui::PopItemWidth();
+}
+
+// -------------------------------------------------------------------
+// Gaming-Mode touch-friendly pickers.  Instead of tiny combos that
+// are hard to hit on a phone, each setting gets a full-width
+// ATTouchListItem card.  Tapping a card opens a full-screen option
+// list — same pattern as Settings → Firmware.  Input flow: Setting
+// card → popup modal → tap an option → modal closes.  Works
+// identically with mouse, touch, keyboard, and gamepad.
+// -------------------------------------------------------------------
+
+// Shared picker state.  At most one picker is active at a time; the
+// kind enum identifies which machine-config field is being picked.
+enum class MCPickerKind : uint8_t {
+	None, Hardware, Video, OSFw, BasicFw,
+};
+MCPickerKind s_mcPicker = MCPickerKind::None;
+// Target config for the picker's commit.  Retained across frames so
+// the popup body can update the right struct on selection.
+MachineConfig *s_mcPickerCfg = nullptr;
+
+// Generic full-screen touch picker.  Opens as an ImGui popup modal
+// centred on the safe area with a card for each option.  Returns
+// true on the frame the user confirms a choice (via `*outIdx`);
+// otherwise returns false.
+//
+// `items[count]` are the visible option labels.  `initialIdx` is the
+// currently-selected option so it can be given default focus for
+// keyboard/gamepad nav.  The popup auto-closes on confirm or on
+// Escape / gamepad-B / its own Cancel card.
+bool TouchOptionPicker(const char *title,
+	const char * const *items, int count,
+	int initialIdx, int *outIdx)
+{
+	ImGuiIO& io = ImGui::GetIO();
+	ImGui::SetNextWindowPos(
+		ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
+		ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+	ImGui::SetNextWindowSize(
+		ImVec2(std::min(io.DisplaySize.x * 0.9f, Dp(520.0f)),
+		       std::min(io.DisplaySize.y * 0.9f, Dp(620.0f))),
+		ImGuiCond_Appearing);
+
+	bool chosen = false;
+	if (ImGui::BeginPopupModal(title, nullptr,
+		ImGuiWindowFlags_NoSavedSettings
+		| ImGuiWindowFlags_NoCollapse
+		| ImGuiWindowFlags_NoResize))
+	{
+		// Scroll the option list so long firmware lists work on small
+		// screens without clipping.
+		ImGui::BeginChild("##mcopt_list",
+			ImVec2(0, -Dp(56)),
+			ImGuiChildFlags_None, 0);
+		for (int i = 0; i < count; ++i) {
+			bool selected = (i == initialIdx);
+			if (i == 0 && selected) ImGui::SetItemDefaultFocus();
+			ImGui::PushID(i);
+			if (ATTouchListItem(items[i], nullptr, selected, false)) {
+				*outIdx = i;
+				chosen = true;
+			}
+			ImGui::PopID();
+			ImGui::Dummy(ImVec2(0, Dp(4)));
+		}
+		ImGui::EndChild();
+
+		ImGui::Spacing();
+		if (ATTouchButton("Cancel", ImVec2(-FLT_MIN, Dp(48)),
+			ATTouchButtonStyle::Subtle))
+		{
+			ImGui::CloseCurrentPopup();
+		}
+
+		if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)
+		    || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false))
+		{
+			ImGui::CloseCurrentPopup();
+		}
+
+		if (chosen) ImGui::CloseCurrentPopup();
+		ImGui::EndPopup();
+	}
+	return chosen;
+}
+
+// Render a touch card that displays the current value and opens a
+// picker when tapped.  Used for Hardware and Video rows.
+//
+// `title` is the row's top line (e.g. "Hardware").  `values[count]`
+// maps `selectedIdx` to a display label via `valueLabels[count]`.
+// `disabled` greys the row out (e.g. Video is disabled on 5200).
+// Returns the index the user picked (via popup) or -1 if unchanged.
+int TouchCardPicker(const char *title, const char * const *valueLabels,
+	int count, int currentIdx, bool disabled,
+	MCPickerKind myKind)
+{
+	char buf[128];
+	const char *current = (currentIdx >= 0 && currentIdx < count)
+		? valueLabels[currentIdx] : "(unset)";
+	std::snprintf(buf, sizeof buf, "%s:  %s", title, current);
+
+	if (disabled) ImGui::BeginDisabled();
+	bool tapped = ATTouchListItem(buf, nullptr, false, true);
+	if (disabled) ImGui::EndDisabled();
+
+	if (tapped && !disabled) {
+		s_mcPicker = myKind;
+		ImGui::OpenPopup(title);
+	}
+	ImGui::Dummy(ImVec2(0, Dp(4)));
+
+	int picked = -1;
+	if (s_mcPicker == myKind) {
+		if (TouchOptionPicker(title, valueLabels, count,
+			currentIdx, &picked))
+		{
+			s_mcPicker = MCPickerKind::None;
+			return picked;
+		}
+		// Detect popup being dismissed without a pick so we reset the
+		// latch.  ImGui closes the popup when the user clicks
+		// outside / hits Escape; when it's no longer open, clear.
+		if (!ImGui::IsPopupOpen(title)) {
+			s_mcPicker = MCPickerKind::None;
+		}
+	}
+	return -1;
+}
+
+// Firmware card picker — same pattern as TouchCardPicker but pulls
+// labels from a FwChoice vector.
+void TouchFwCard(const char *title,
+	const std::vector<FwChoice>& choices, uint32_t *crcOut,
+	MCPickerKind myKind)
+{
+	int idx = 0;
+	for (size_t i = 0; i < choices.size(); ++i) {
+		if (choices[i].crc32 == *crcOut) { idx = (int)i; break; }
+	}
+
+	std::vector<const char *> labels;
+	labels.reserve(choices.size());
+	for (const auto& c : choices) labels.push_back(c.label.c_str());
+
+	int picked = TouchCardPicker(title, labels.data(),
+		(int)labels.size(), idx, false, myKind);
+	if (picked >= 0 && picked < (int)choices.size()) {
+		*crcOut = choices[picked].crc32;
+	}
+}
+
+} // anonymous
+
+void ReloadMachineConfigFirmwareList() {
+	ReloadMachineConfigFirmwareChoices();
+}
+
+void RenderMachineConfigSection(MachineConfig& cfg) {
+	if (!s_mcFwChoicesLoaded) ReloadMachineConfigFirmwareChoices();
+	s_mcPickerCfg = &cfg;  // for the popup callbacks
+
+	static const ATHardwareMode kHWVals[] = {
+		kATHardwareMode_800, kATHardwareMode_800XL,
+		kATHardwareMode_1200XL, kATHardwareMode_130XE,
+		kATHardwareMode_1400XL, kATHardwareMode_XEGS,
+		kATHardwareMode_5200,
+	};
+	static const char *kHWLabels[] = {
+		"Atari 800", "Atari 800XL", "Atari 1200XL",
+		"Atari 130XE", "Atari 1400XL", "Atari XEGS",
+		"Atari 5200",
+	};
+
+	static const ATVideoStandard kVSVals[] = {
+		kATVideoStandard_NTSC, kATVideoStandard_PAL,
+		kATVideoStandard_SECAM, kATVideoStandard_NTSC50,
+		kATVideoStandard_PAL60,
+	};
+	static const char *kVSLabels[] = {
+		"NTSC", "PAL", "SECAM", "NTSC50", "PAL60",
+	};
+
+	int hwIdx = 1;
+	for (int i = 0; i < 7; ++i)
+		if (kHWVals[i] == cfg.hardwareMode) { hwIdx = i; break; }
+
+	const bool is5200 = (cfg.hardwareMode == kATHardwareMode_5200);
+	int vsIdx = 0;
+	for (int i = 0; i < 5; ++i)
+		if (kVSVals[i] == cfg.videoStandard) { vsIdx = i; break; }
+
+	if (ATUIIsGamingMode()) {
+		// ── Touch-friendly cards (Gaming Mode) ─────────────────
+		// Each row is a 56dp-tall card that opens a full-screen
+		// option picker on tap — same pattern as Settings →
+		// Firmware so muscle memory carries over.
+		int picked = TouchCardPicker("Hardware", kHWLabels, 7, hwIdx,
+			false, MCPickerKind::Hardware);
+		if (picked >= 0) cfg.hardwareMode = kHWVals[picked];
+
+		picked = TouchCardPicker("Video standard", kVSLabels, 5, vsIdx,
+			is5200, MCPickerKind::Video);
+		if (picked >= 0) cfg.videoStandard = kVSVals[picked];
+
+		if (is5200) ImGui::BeginDisabled();
+		ATTouchToggle("BASIC enabled", &cfg.basicEnabled);
+		if (is5200) ImGui::EndDisabled();
+
+		ATTouchToggle("SIO full-speed acceleration",
+			&cfg.sioPatchEnabled);
+
+		ImGui::Spacing();
+		ATTouchMutedText("Firmware (CRC32 — joiner must have a "
+			"matching entry)");
+		TouchFwCard("Firmware: OS kernel", s_mcKernelChoices,
+			&cfg.kernelCRC32, MCPickerKind::OSFw);
+		TouchFwCard("Firmware: BASIC", s_mcBasicChoices,
+			&cfg.basicCRC32, MCPickerKind::BasicFw);
+
+		ImGui::Spacing();
+		if (ATTouchButton("Copy from current emulator",
+			ImVec2(-FLT_MIN, Dp(48)),
+			ATTouchButtonStyle::Neutral))
+		{
+			cfg = CaptureCurrentMachineConfig();
+		}
+		if (ATTouchButton("Refresh firmware list",
+			ImVec2(-FLT_MIN, Dp(44)),
+			ATTouchButtonStyle::Subtle))
+		{
+			ReloadMachineConfigFirmwareChoices();
+		}
+		ATTouchMutedText(MachineConfigSummary(cfg));
+		return;
+	}
+
+	// ── Desktop ─────────────────────────────────────────────
+	ImGui::PushItemWidth(220.0f);
+	if (ImGui::Combo("Hardware", &hwIdx, kHWLabels, 7))
+		cfg.hardwareMode = kHWVals[hwIdx];
+	ImGui::PopItemWidth();
+
+	ImGui::BeginDisabled(is5200);
+	ImGui::PushItemWidth(220.0f);
+	if (ImGui::Combo("Video standard", &vsIdx, kVSLabels, 5))
+		cfg.videoStandard = kVSVals[vsIdx];
+	ImGui::PopItemWidth();
+	ImGui::EndDisabled();
+
+	ImGui::BeginDisabled(is5200);
+	ImGui::Checkbox("BASIC enabled", &cfg.basicEnabled);
+	ImGui::EndDisabled();
+
+	ImGui::Checkbox("SIO full-speed acceleration",
+		&cfg.sioPatchEnabled);
+
+	ImGui::Spacing();
+	ImGui::TextDisabled("Firmware (shipped by CRC32 — joiner must have "
+		"a matching entry)");
+	FwCombo("OS kernel", s_mcKernelChoices, &cfg.kernelCRC32);
+	FwCombo("BASIC",     s_mcBasicChoices,  &cfg.basicCRC32);
+
+	if (ImGui::Button("Copy from current emulator")) {
+		cfg = CaptureCurrentMachineConfig();
+	}
+	ImGui::SameLine();
+	if (ImGui::Button("Refresh firmware list")) {
+		ReloadMachineConfigFirmwareChoices();
+	}
+	ImGui::SameLine();
+	ImGui::TextDisabled("  %s", MachineConfigSummary(cfg));
 }
 
 } // namespace ATNetplayUI
