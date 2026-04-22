@@ -109,15 +109,24 @@ void ATUIRenderSystemMenu(ATSimulator &sim, ATUIState &state) {
 	ImGui::Separator();
 
 	bool turbo = ATUIGetTurbo();
-	if (ImGui::MenuItem("Warp Speed", nullptr, turbo))
-		ATUISetTurbo(!turbo);
-
-	bool pauseInactive = ATUIGetPauseWhenInactive();
 #ifdef ALTIRRA_NETPLAY_ENABLED
 	const bool netplayActive = ATNetplayGlue::IsActive();
 #else
 	const bool netplayActive = false;
 #endif
+	if (netplayActive) {
+		// Warp is forced off during online play (would run this peer
+		// faster than the other and blow up lockstep).  Show disabled.
+		ImGui::BeginDisabled();
+		bool off = false;
+		ImGui::MenuItem("Warp Speed (disabled: Playing Online)",
+			nullptr, &off);
+		ImGui::EndDisabled();
+	} else if (ImGui::MenuItem("Warp Speed", nullptr, turbo)) {
+		ATUISetTurbo(!turbo);
+	}
+
+	bool pauseInactive = ATUIGetPauseWhenInactive();
 	if (netplayActive) {
 		// Force-disabled during netplay: stalling the sim would stall
 		// the lockstep pipeline on the other peer.  Grey the checkbox

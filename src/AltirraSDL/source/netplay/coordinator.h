@@ -60,8 +60,9 @@ public:
 		ReceivingSnapshot,      // joiner, snapshot download in flight
 		SnapshotReady,          // joiner, waiting for app to apply & ack
 		Lockstepping,           // normal play
+		Resyncing,              // mid-session state transfer to recover from a hash mismatch
 		Ended,                  // clean Bye or app-initiated End
-		Desynced,               // hash mismatch
+		Desynced,               // hash mismatch — unrecoverable (flap limit hit)
 		Failed,                 // transport / handshake / snapshot failure
 	};
 
@@ -133,6 +134,31 @@ public:
 	// deserialises via ATSimulator::ApplySnapshot and then calls
 	// AcknowledgeSnapshotApplied() to move to Lockstepping.
 	const std::vector<uint8_t>& GetReceivedSnapshot() const { return mSnapRx.Data(); }
+
+	// ---- resync I/O boundary --------------------------------------------
+	// True iff the host just transitioned into Phase::Resyncing and is
+	// awaiting a captured savestate buffer from the application layer.
+	// The app should call ATNetplay::CaptureSavestate() and pass the
+	// bytes to SubmitResyncCapture().  Clears after SubmitResyncCapture.
+	bool NeedsResyncCapture() const { return mNeedsResyncCapture; }
+
+	// Host: hand over the captured savestate bytes.  Triggers the
+	// ResyncStart + chunk stream.  No-op if called outside Resyncing.
+	void SubmitResyncCapture(const uint8_t* data, size_t len);
+
+	// True iff the joiner has fully received the resync payload and is
+	// awaiting the application layer to apply it to the live simulator.
+	bool NeedsResyncApply() const { return mNeedsResyncApply; }
+
+	// Joiner: the received resync payload.  Valid once NeedsResyncApply
+	// returns true.
+	const std::vector<uint8_t>& GetReceivedResyncData() const { return mSnapRx.Data(); }
+
+	// Joiner: signal that the savestate was applied cleanly.  Sends
+	// NetResyncDone, re-seeds LockstepLoop at the agreed resume frame,
+	// and returns to Phase::Lockstepping.  Call after ApplySavestate
+	// succeeds; if it fails, the app should End() the session.
+	void AcknowledgeResyncApplied();
 	// Joiner: BootConfig parsed from the last NetWelcome.  Valid once
 	// Phase >= ReceivingSnapshot.  Host-side returns the config we
 	// will ship.
@@ -225,6 +251,20 @@ private:
 	void HandleSnapChunk(const NetSnapChunk& c, uint64_t nowMs);
 	void HandleSnapAck(const NetSnapAck& a);
 	void HandleBye(const NetBye& b, const Endpoint& from);
+	void HandleResyncStart(const NetResyncStart& s, uint64_t nowMs);
+	void HandleResyncDone(const NetResyncDone& d, uint64_t nowMs);
+
+	// Resync: begin a host-initiated mid-session savestate transfer.
+	// Called from Poll() when the host detects a local desync or when
+	// the host receives a (future) ResyncRequest from a joiner that
+	// detected first.  If the flap limit is reached, transitions to
+	// Phase::Desynced (terminal) instead.
+	void BeginHostResync(uint64_t nowMs);
+
+	// Resync: joiner-side response to a ResyncStart.  Halts lockstep,
+	// re-arms the existing SnapshotReceiver for the new epoch, and
+	// waits for chunks to arrive.
+	void BeginJoinerResync(const NetResyncStart& s, uint64_t nowMs);
 
 	void SendHello();
 	void SendWelcome();
@@ -295,8 +335,52 @@ private:
 	// that's the rate the peer expects.
 	bool mWantsOutgoingInput = false;
 
+	// ---- Resync state ----------------------------------------------------
+	//
+	// Host captures its sim state at mResyncFrame-1 (the last frame it
+	// applied before the desync) and ships it so the joiner can jump to
+	// mResyncFrame with matching state.  The SnapshotSender / Receiver
+	// carry the bytes; the NetResyncStart header disambiguates "session
+	// start" chunks (which are cleared out long before Lockstepping
+	// begins) from mid-session resync chunks via the epoch counter.
+	uint32_t mResyncEpoch = 0;             // incremented per resync
+	uint32_t mResyncResumeFrame = 0;       // frame both peers jump to
+	uint32_t mResyncSeedHash = 0;          // post-apply hash for ack slot
+	std::vector<uint8_t> mResyncTxBuffer;  // host: capture destination
+	bool     mNeedsResyncCapture = false;  // host: app must call SubmitResyncCapture
+	bool     mNeedsResyncApply   = false;  // joiner: app must call AcknowledgeResyncApplied
+
+	// Flap limiter: if the session keeps resyncing we're looking at a
+	// deterministic bug that resyncing won't fix.  Give up after kMaxResyncsPerWindow
+	// starts within kResyncFlapWindowMs.
+	static constexpr int      kMaxResyncsPerWindow = 3;
+	static constexpr uint64_t kResyncFlapWindowMs = 60000;
+	int      mResyncCountInWindow = 0;
+	uint64_t mResyncWindowStartMs = 0;
+
+	// ResyncStart retransmit.  If the initial start packet is lost, the
+	// joiner stays in Lockstepping and drops every chunk we send, so
+	// SnapTx eventually burns its retry budget.  Re-emit the start
+	// every kResyncStartRetryMs until the joiner acks at least one
+	// chunk (from which point we know they have the header).
+	static constexpr uint64_t kResyncStartRetryMs = 500;
+	uint64_t mResyncStartLastSentMs = 0;
+
+	// One-shot guard so the DESYNC-detected log only fires once per
+	// lockstep session rather than every tick until the resync handler
+	// clears the flag.
+	bool mDesyncLogged = false;
+
 	// Diagnostics.
 	const char* mLastError = "";
+
+public:
+	// Queries for the UI banner.
+	uint32_t ResyncTotalChunks() const { return mSnapTx.TotalChunks(); }
+	uint32_t ResyncAckedChunks() const { return mSnapTx.AcknowledgedChunks(); }
+	uint32_t ResyncReceivedChunks() const { return mSnapRx.ReceivedChunks(); }
+	uint32_t ResyncExpectedChunks() const { return mSnapRx.ExpectedChunks(); }
+	uint32_t ResyncEpoch() const { return mResyncEpoch; }
 };
 
 } // namespace ATNetplay

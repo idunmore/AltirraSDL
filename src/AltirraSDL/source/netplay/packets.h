@@ -21,13 +21,19 @@
 namespace ATNetplay {
 
 // Magic numbers.  Bytes on the wire: 41 4E 50 XX ('A' 'N' 'P' role).
-constexpr uint32_t kMagicHello   = 0x4C504E41u; // 'ANPL'
-constexpr uint32_t kMagicWelcome = 0x57504E41u; // 'ANPW'
-constexpr uint32_t kMagicReject  = 0x52504E41u; // 'ANPR'
-constexpr uint32_t kMagicInput   = 0x49504E41u; // 'ANPI'
-constexpr uint32_t kMagicBye     = 0x42504E41u; // 'ANPB'
-constexpr uint32_t kMagicChunk   = 0x43504E41u; // 'ANPC'
-constexpr uint32_t kMagicAck     = 0x41504E41u; // 'ANPA'
+constexpr uint32_t kMagicHello        = 0x4C504E41u; // 'ANPL'
+constexpr uint32_t kMagicWelcome      = 0x57504E41u; // 'ANPW'
+constexpr uint32_t kMagicReject       = 0x52504E41u; // 'ANPR'
+constexpr uint32_t kMagicInput        = 0x49504E41u; // 'ANPI'
+constexpr uint32_t kMagicBye          = 0x42504E41u; // 'ANPB'
+constexpr uint32_t kMagicChunk        = 0x43504E41u; // 'ANPC'
+constexpr uint32_t kMagicAck          = 0x41504E41u; // 'ANPA'
+// v3.1: mid-session resync.  ResyncStart (host→joiner) announces the
+// incoming savestate and the frame at which both peers will resume;
+// the payload then streams through the existing SnapChunk/SnapAck
+// channel.  ResyncDone (joiner→host) confirms apply + requests resume.
+constexpr uint32_t kMagicResyncStart  = 0x53504E41u; // 'ANPS'
+constexpr uint32_t kMagicResyncDone   = 0x44504E41u; // 'ANPD'
 
 // Protocol constants.
 // v1 = Go PoC, v2 adds entryCodeHash, v3 replaces savestate transfer
@@ -162,6 +168,35 @@ struct NetSnapAck {
 	uint32_t chunkIdx = 0;
 };
 
+// NetResyncStart — host → joiner.  Announces a mid-session state
+// transfer triggered by a lockstep hash mismatch.  After this the host
+// streams the serialized savestate through the existing SnapChunk /
+// SnapAck path; joiner reassembles, applies, and returns NetResyncDone
+// at which point both peers resume at `resumeFrame`.
+//
+// `epoch` lets both sides distinguish chunks / acks belonging to this
+// resync from any stale ones still in flight from a prior resync in
+// the same session.  Incremented by the host on every ResyncStart.
+//
+// 24 bytes on the wire.
+struct NetResyncStart {
+	uint32_t magic = kMagicResyncStart;
+	uint32_t epoch = 0;           // monotonic per session
+	uint32_t stateBytes = 0;      // size of the savestate payload
+	uint32_t stateChunks = 0;     // ceil(stateBytes / kSnapshotChunkSize)
+	uint32_t resumeFrame = 0;     // frame at which both peers continue
+	uint32_t seedHash = 0;        // post-apply sim hash (sanity check only)
+};
+
+// NetResyncDone — joiner → host.  Confirms the savestate applied
+// cleanly; host then exits Resyncing and both peers resume lockstep.
+// 12 bytes.
+struct NetResyncDone {
+	uint32_t magic = kMagicResyncDone;
+	uint32_t epoch = 0;
+	uint32_t resumeFrame = 0;     // echo of host's resumeFrame
+};
+
 // Wire sizes.  Must match protocol.cpp.
 constexpr size_t kWireHelloSize     = 4 + 2 + 2 + kSessionNonceLen + 8 + 8 + kHandleLen + 2 + kEntryCodeHashLen;   // 90
 constexpr size_t kWireBootCfgSize   = 1 + 1 + 1 + 1 + 1 + 1 + 2 + 4 + 4 + 4 + 2 + 2 + 4 + 8 + 4;                   // 40
@@ -172,6 +207,8 @@ constexpr size_t kWireInputPktSize  = 4 + 4 + 2 + 2 + 4 + kRedundancyR * kWireIn
 constexpr size_t kWireByeSize       = 8;
 constexpr size_t kWireChunkHdrSize  = 16;                              // + payloadLen bytes
 constexpr size_t kWireAckSize       = 8;
+constexpr size_t kWireResyncStartSize = 24;
+constexpr size_t kWireResyncDoneSize  = 12;
 
 // Maximum UDP datagram we need to send at once; chunks are the biggest.
 constexpr size_t kMaxDatagramSize = kWireChunkHdrSize + kSnapshotChunkSize;
@@ -182,5 +219,11 @@ constexpr size_t kMaxDatagramSize = kWireChunkHdrSize + kSnapshotChunkSize;
 // EncodeWelcome/DecodeWelcome in protocol.cpp.
 static_assert(kWireBootCfgSize == 40, "NetBootConfig wire layout drift");
 static_assert(kWireWelcomeSize == 128, "NetWelcome wire layout drift");
+
+// Resync messages: 6 × uint32 and 3 × uint32 respectively.  Guarding
+// against silent drift if someone reorders or adds fields to the
+// structs above.
+static_assert(kWireResyncStartSize == 4 * 6, "NetResyncStart wire drift");
+static_assert(kWireResyncDoneSize  == 4 * 3, "NetResyncDone wire drift");
 
 } // namespace ATNetplay

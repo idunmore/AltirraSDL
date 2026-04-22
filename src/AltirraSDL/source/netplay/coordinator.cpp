@@ -200,6 +200,18 @@ void Coordinator::Poll(uint64_t nowMs) {
 				HandleBye(b, from);
 				break;
 			}
+			case kMagicResyncStart: {
+				NetResyncStart s;
+				if (DecodeResyncStart(mRxBuf, n, s) != DecodeResult::Ok) continue;
+				HandleResyncStart(s, nowMs);
+				break;
+			}
+			case kMagicResyncDone: {
+				NetResyncDone d;
+				if (DecodeResyncDone(mRxBuf, n, d) != DecodeResult::Ok) continue;
+				HandleResyncDone(d, nowMs);
+				break;
+			}
 			default:
 				// Unknown magic — silently ignore (could be from a
 				// different version or a stray packet).
@@ -207,22 +219,57 @@ void Coordinator::Poll(uint64_t nowMs) {
 		}
 	}
 
-	// Outgoing pumps.
-	if (mPhase == Phase::SendingSnapshot) {
+	// Outgoing pumps.  Snapshot sender is shared between the session-
+	// start upload (Phase::SendingSnapshot) and the mid-session resync
+	// (Phase::Resyncing) — it doesn't care which phase it's serving.
+	if (mPhase == Phase::SendingSnapshot || mPhase == Phase::Resyncing) {
 		PumpSnapshotSender(nowMs);
 	}
 	if (mPhase == Phase::Lockstepping && mWantsOutgoingInput) {
 		PumpLockstepSend();
 		mWantsOutgoingInput = false;
 	}
-	// Lockstep: detect desync transition.
+	// Lockstep: detect desync transition.  Host: initiate a resync by
+	// capturing its sim state and streaming it to the joiner.  Joiner:
+	// stay in Lockstepping with mLoop.IsDesynced() gating CanAdvance —
+	// the sim naturally pauses, and the host will detect within ~1 RTT
+	// (via retro-check on the next peer input packet) and drive the
+	// resync from its side.
 	if (mPhase == Phase::Lockstepping && mLoop.IsDesynced()) {
-		g_ATLCNetplay("DESYNC detected at frame %lld (role=%s, delay=%u)",
-			(long long)mLoop.DesyncFrame(),
-			mRole == Role::Host ? "host" : "joiner",
-			(unsigned)mInputDelay);
-		SendBye(kByeDesyncDetected);
-		mPhase = Phase::Desynced;
+		if (!mDesyncLogged) {
+			g_ATLCNetplay("DESYNC detected at frame %lld (role=%s, delay=%u)",
+				(long long)mLoop.DesyncFrame(),
+				mRole == Role::Host ? "host" : "joiner",
+				(unsigned)mInputDelay);
+			mDesyncLogged = true;
+		}
+		if (mRole == Role::Host) {
+			BeginHostResync(nowMs);
+		}
+		// joiner: nothing to do here; wait for NetResyncStart.
+	}
+
+	// Host resync: retransmit NetResyncStart until the joiner acks at
+	// least one chunk.  Absorbs a one-packet loss of the initial start
+	// without blowing the SnapTx retry budget trying to push chunks the
+	// joiner is dropping.
+	if (mPhase == Phase::Resyncing && mRole == Role::Host &&
+	    mSnapTx.AcknowledgedChunks() == 0 && mPeerKnown &&
+	    nowMs - mResyncStartLastSentMs >= kResyncStartRetryMs) {
+		NetResyncStart s;
+		s.magic        = kMagicResyncStart;
+		s.epoch        = mResyncEpoch;
+		s.stateBytes   = (uint32_t)mResyncTxBuffer.size();
+		s.stateChunks  = mSnapTx.TotalChunks();
+		s.resumeFrame  = mResyncResumeFrame;
+		s.seedHash     = mResyncSeedHash;
+		size_t nn = EncodeResyncStart(s, mTxBuf, sizeof mTxBuf);
+		if (nn) {
+			mTransport.SendTo(mTxBuf, nn, mPeer);
+			mResyncStartLastSentMs = nowMs;
+			g_ATLCNetplay("host: re-sent ResyncStart (epoch %u, no chunks acked yet)",
+				(unsigned)mResyncEpoch);
+		}
 	}
 
 	// Lockstep: peer-silence timeout.  With the lockstep design the
@@ -485,7 +532,9 @@ void Coordinator::HandleRejectFromHost(const NetReject& r) {
 // ---------------------------------------------------------------------------
 
 void Coordinator::HandleSnapChunk(const NetSnapChunk& c, uint64_t /*nowMs*/) {
-	if (mPhase != Phase::ReceivingSnapshot) return;
+	const bool sessionStart = (mPhase == Phase::ReceivingSnapshot);
+	const bool midResync    = (mPhase == Phase::Resyncing && mRole == Role::Joiner);
+	if (!sessionStart && !midResync) return;
 
 	if (mSnapRx.OnChunk(c)) {
 		NetSnapAck ack { kMagicAck, c.chunkIdx };
@@ -494,23 +543,51 @@ void Coordinator::HandleSnapChunk(const NetSnapChunk& c, uint64_t /*nowMs*/) {
 	}
 
 	if (mSnapRx.IsComplete()) {
-		mPhase = Phase::SnapshotReady;
-		g_ATLCNetplay("joiner: snapshot download complete, applying…");
+		if (sessionStart) {
+			mPhase = Phase::SnapshotReady;
+			g_ATLCNetplay("joiner: snapshot download complete, applying…");
+		} else {
+			// Mid-session resync: flag the app to call ApplySavestate +
+			// AcknowledgeResyncApplied.  Phase stays Resyncing until
+			// the app acks.
+			mNeedsResyncApply = true;
+			g_ATLCNetplay("joiner: resync payload complete (epoch %u), awaiting apply",
+				(unsigned)mResyncEpoch);
+		}
 	}
 }
 
 void Coordinator::HandleSnapAck(const NetSnapAck& a) {
-	if (mPhase != Phase::SendingSnapshot) return;
+	const bool sessionStart = (mPhase == Phase::SendingSnapshot);
+	const bool midResync    = (mPhase == Phase::Resyncing && mRole == Role::Host);
+	if (!sessionStart && !midResync) return;
+
 	mSnapTx.OnAckReceived(a.chunkIdx);
 	if (mSnapTx.GetStatus() == SnapshotSender::Status::Done) {
-		// Host is ready for lockstep immediately; joiner transitions
-		// to Lockstepping when it calls AcknowledgeSnapshotApplied.
-		mLoop.Begin(Slot::Host, mInputDelay);
-		mPhase = Phase::Lockstepping;
-		g_ATLCNetplay("host: snapshot delivered, entering Lockstepping (delay=%u frames)",
-			(unsigned)mInputDelay);
+		if (sessionStart) {
+			// Host is ready for lockstep immediately; joiner transitions
+			// to Lockstepping when it calls AcknowledgeSnapshotApplied.
+			mLoop.Begin(Slot::Host, mInputDelay);
+			mPhase = Phase::Lockstepping;
+			g_ATLCNetplay("host: snapshot delivered, entering Lockstepping (delay=%u frames)",
+				(unsigned)mInputDelay);
+		} else {
+			// Resync: all chunks acknowledged.  Now wait for ResyncDone
+			// from the joiner confirming successful apply — only then
+			// does the host resume lockstep.
+			g_ATLCNetplay("host: resync payload delivered (epoch %u), awaiting ResyncDone",
+				(unsigned)mResyncEpoch);
+		}
 	} else if (mSnapTx.GetStatus() == SnapshotSender::Status::Failed) {
-		FailWith("snapshot upload failed (retry budget exhausted)");
+		if (sessionStart) {
+			FailWith("snapshot upload failed (retry budget exhausted)");
+		} else {
+			// Resync transfer exhausted retries — treat as unrecoverable.
+			SendBye(kByeDesyncDetected);
+			mPhase = Phase::Desynced;
+			mLastError = "resync payload upload failed";
+			g_ATLCNetplay("host: resync transfer failed — terminating session");
+		}
 	}
 }
 
@@ -612,7 +689,13 @@ void Coordinator::HandleBye(const NetBye& b, const Endpoint& from) {
 	}
 	g_ATLCNetplay("%s: peer said Bye (%s)",
 		mRole == Role::Host ? "host" : "joiner", reasonStr);
-	if (b.reason == kByeDesyncDetected && mPhase == Phase::Lockstepping) {
+	// A desync Bye from the peer is terminal regardless of our current
+	// phase — Lockstepping (their apply-time check fired before ours)
+	// or Resyncing (they hit their flap limit / apply error mid-
+	// recovery).  Without handling the Resyncing case, the UI would
+	// show "clean exit" for an unrecoverable desync.
+	if (b.reason == kByeDesyncDetected &&
+	    (mPhase == Phase::Lockstepping || mPhase == Phase::Resyncing)) {
 		mPhase = Phase::Desynced;
 		mLastError = "peer reported desync";
 	} else {
@@ -690,6 +773,197 @@ void Coordinator::SendReject(uint32_t reason, const Endpoint& to) {
 // ---------------------------------------------------------------------------
 // Misc
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Resync
+// ---------------------------------------------------------------------------
+
+void Coordinator::BeginHostResync(uint64_t nowMs) {
+	if (mRole != Role::Host) return;
+	if (mPhase != Phase::Lockstepping) return;
+
+	// Flap limiter.  A resync that itself leads to another immediate
+	// desync signals a deterministic bug no amount of state-copying
+	// will fix; fall back to the legacy "Bye + Desynced" behaviour.
+	if (mResyncCountInWindow == 0 ||
+	    nowMs - mResyncWindowStartMs > kResyncFlapWindowMs) {
+		mResyncWindowStartMs = nowMs;
+		mResyncCountInWindow = 1;
+	} else {
+		++mResyncCountInWindow;
+	}
+	if (mResyncCountInWindow > kMaxResyncsPerWindow) {
+		g_ATLCNetplay("host: resync flap limit reached (%d in %llu ms) — "
+			"declaring unrecoverable desync",
+			mResyncCountInWindow,
+			(unsigned long long)(nowMs - mResyncWindowStartMs));
+		SendBye(kByeDesyncDetected);
+		mPhase = Phase::Desynced;
+		mLastError = "repeated desync — session unrecoverable";
+		return;
+	}
+
+	// resumeFrame = next-frame-to-apply.  The savestate the glue layer
+	// is about to capture represents the state AFTER applying
+	// (resumeFrame - 1) and BEFORE frame resumeFrame.  The seed hash
+	// we seed into the joiner's lockstep is our local hash at
+	// (resumeFrame - 1) — that's the hash the app layer computed on
+	// the very state it's about to serialise.
+	++mResyncEpoch;
+	mResyncResumeFrame = mLoop.CurrentFrame();
+	// Seed hash = our local hash of the last-applied frame, which is
+	// exactly the hash the joiner will compute post-apply if the
+	// savestate round-tripped cleanly.  Falls back to 0 if the slot
+	// has already been recycled (shouldn't happen in practice — ring
+	// is 256 frames, the last-applied slot is always fresh).  A zero
+	// seed is treated as "no hash yet" by OnPeerInputPacket, which
+	// just suppresses the retro-check for one frame — safe either way.
+	mResyncSeedHash = 0;
+	if (mResyncResumeFrame > 0) {
+		mLoop.GetLocalHashAt(mResyncResumeFrame - 1, mResyncSeedHash);
+	}
+
+	// Clear the lockstep desync flag so CanAdvance() unblocks once we
+	// transition back to Lockstepping.  The ResumeAt() call on resume
+	// will wipe rings; we could clear it there, but clearing here is
+	// harmless and keeps the invariant "mPhase != Lockstepping implies
+	// CanAdvance is irrelevant".
+	mLoop.ClearDesync();
+
+	mSnapTxBuffer.clear();
+	mResyncTxBuffer.clear();
+	mNeedsResyncCapture = true;
+	mPhase = Phase::Resyncing;
+
+	g_ATLCNetplay("host: initiating resync epoch=%u resumeFrame=%u",
+		(unsigned)mResyncEpoch, (unsigned)mResyncResumeFrame);
+}
+
+void Coordinator::SubmitResyncCapture(const uint8_t* data, size_t len) {
+	if (mPhase != Phase::Resyncing) return;
+	if (mRole != Role::Host) return;
+	if (!mNeedsResyncCapture) return;
+	mNeedsResyncCapture = false;
+
+	if (!data || len == 0) {
+		SendBye(kByeDesyncDetected);
+		mPhase = Phase::Desynced;
+		mLastError = "host failed to capture savestate";
+		g_ATLCNetplay("host: SubmitResyncCapture got empty payload");
+		return;
+	}
+
+	// Keep host's copy alive for the duration of the SnapTx transfer.
+	mResyncTxBuffer.assign(data, data + len);
+
+	const uint32_t chunks = (uint32_t)((mResyncTxBuffer.size() +
+		kSnapshotChunkSize - 1) / kSnapshotChunkSize);
+
+	// Send NetResyncStart — the joiner needs this BEFORE chunks so it
+	// can arm its receiver for this epoch's chunk count.
+	NetResyncStart s;
+	s.magic        = kMagicResyncStart;
+	s.epoch        = mResyncEpoch;
+	s.stateBytes   = (uint32_t)mResyncTxBuffer.size();
+	s.stateChunks  = chunks;
+	s.resumeFrame  = mResyncResumeFrame;
+	s.seedHash     = mResyncSeedHash;
+	size_t n = EncodeResyncStart(s, mTxBuf, sizeof mTxBuf);
+	if (n && mPeerKnown) {
+		mTransport.SendTo(mTxBuf, n, mPeer);
+		// Record the send so the retransmit watchdog in Poll() doesn't
+		// fire for the next kResyncStartRetryMs.
+		// (nowMs would be cleaner but SubmitResyncCapture isn't given
+		// a clock; leave it at 0 — the watchdog treats that as "long
+		// ago" and will issue one extra retransmit on the next tick,
+		// which is harmless.)
+	}
+
+	// Kick off chunk transfer (uses existing SnapTx machinery).
+	mSnapTx.Begin(mResyncTxBuffer.data(), mResyncTxBuffer.size());
+	g_ATLCNetplay("host: resync upload starting (%u bytes / %u chunks, epoch=%u)",
+		(unsigned)mResyncTxBuffer.size(), (unsigned)chunks, (unsigned)mResyncEpoch);
+}
+
+void Coordinator::HandleResyncStart(const NetResyncStart& s, uint64_t nowMs) {
+	if (mRole != Role::Joiner) return;
+	// Accept from Lockstepping (normal trigger) or a duplicate while
+	// already Resyncing (host retransmit before we ACKed first chunk).
+	if (mPhase != Phase::Lockstepping && mPhase != Phase::Resyncing) return;
+
+	if (mPhase == Phase::Resyncing && s.epoch == mResyncEpoch) {
+		// Retransmit of the same start — nothing to do, receiver is
+		// already armed.
+		return;
+	}
+
+	BeginJoinerResync(s, nowMs);
+}
+
+void Coordinator::BeginJoinerResync(const NetResyncStart& s, uint64_t /*nowMs*/) {
+	mResyncEpoch       = s.epoch;
+	mResyncResumeFrame = s.resumeFrame;
+	mResyncSeedHash    = s.seedHash;
+
+	// Clear pre-resync lockstep state so the (now meaningless) input
+	// queue can't race with the new timeline.
+	mLoop.ClearDesync();
+
+	mSnapRx.Begin(s.stateChunks, s.stateBytes);
+	mNeedsResyncApply = false;
+	mPhase = Phase::Resyncing;
+
+	g_ATLCNetplay("joiner: resync incoming (epoch=%u, %u bytes / %u chunks, "
+		"resumeFrame=%u)",
+		(unsigned)s.epoch, (unsigned)s.stateBytes,
+		(unsigned)s.stateChunks, (unsigned)s.resumeFrame);
+
+	// Edge case: zero-byte payload (host captured nothing) — treat as
+	// immediate apply-ready so the app can fast-fail the session.
+	if (s.stateChunks == 0) mNeedsResyncApply = true;
+}
+
+void Coordinator::AcknowledgeResyncApplied() {
+	if (mPhase != Phase::Resyncing) return;
+	if (mRole != Role::Joiner) return;
+	if (!mNeedsResyncApply) return;
+	mNeedsResyncApply = false;
+
+	// Resume LockstepLoop at the agreed frame with ring state wiped.
+	// Host will do the same on its side when ResyncDone arrives.
+	mLoop.ResumeAt(mResyncResumeFrame, mResyncSeedHash);
+	mDesyncLogged = false;
+
+	NetResyncDone d;
+	d.magic       = kMagicResyncDone;
+	d.epoch       = mResyncEpoch;
+	d.resumeFrame = mResyncResumeFrame;
+	size_t n = EncodeResyncDone(d, mTxBuf, sizeof mTxBuf);
+	if (n && mPeerKnown) mTransport.SendTo(mTxBuf, n, mPeer);
+
+	mPhase = Phase::Lockstepping;
+	g_ATLCNetplay("joiner: resync applied, resumed at frame %u (epoch %u)",
+		(unsigned)mResyncResumeFrame, (unsigned)mResyncEpoch);
+}
+
+void Coordinator::HandleResyncDone(const NetResyncDone& d, uint64_t /*nowMs*/) {
+	if (mRole != Role::Host) return;
+	if (mPhase != Phase::Resyncing) return;
+	if (d.epoch != mResyncEpoch) {
+		// Stale ack for a previous resync — ignore.
+		return;
+	}
+
+	// Host now resumes its own lockstep at the same frame the joiner
+	// jumped to.  Ring state wiped; hash ring re-seeded from our local
+	// post-capture hash.
+	mLoop.ResumeAt(mResyncResumeFrame, mResyncSeedHash);
+	mDesyncLogged = false;
+	mPhase = Phase::Lockstepping;
+	mResyncTxBuffer.clear();    // free memory
+	g_ATLCNetplay("host: resync complete, resumed at frame %u (epoch %u)",
+		(unsigned)mResyncResumeFrame, (unsigned)mResyncEpoch);
+}
 
 void Coordinator::FailWith(const char* msg) {
 	mLastError = msg;

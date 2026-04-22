@@ -120,6 +120,14 @@ public:
 	bool    IsDesynced()  const { return mDesyncFrame >= 0; }
 	int64_t DesyncFrame() const { return mDesyncFrame; }
 
+	// Lookup our own computed hash for `frame`.  Returns false if the
+	// slot is unpopulated or has been recycled for a different frame.
+	// Used by the resync initiator to seed the peer's post-apply ack
+	// slot with a matching value.
+	bool GetLocalHashAt(uint32_t frame, uint32_t& out) const {
+		return GetLocalHash(frame, out);
+	}
+
 	// Has a peer packet arrived within the watchdog window ending
 	// at `nowMs`?  Returns true (timed out) when the last-packet
 	// timestamp is older than timeoutMs.  If no packet has ever
@@ -137,6 +145,24 @@ public:
 	// touching the wire bytes.  Used by the selftest to confirm
 	// desync detection.  Pass a negative value to disable.
 	void SetDesyncInjectFrame(int64_t frame) { mDesyncInjectFrame = frame; }
+
+	// Resync support.  ClearDesync() lets the coordinator drop the
+	// desync flag after it has committed to running a resync — Keeps
+	// CanAdvance() gated externally (by the coordinator phase) while
+	// the savestate transfer is in flight, then unblocks normal advance
+	// once ResumeAt() has re-seeded the rings.
+	void ClearDesync() { mDesyncFrame = -1; }
+
+	// Reset ring state and jump both peers to frame `resumeFrame` after
+	// a mid-session savestate transfer.  All cached inputs and hashes
+	// are discarded — they described the pre-resync timeline and would
+	// collide with the post-apply frame numbering.  The ring is re-
+	// warmed with inputDelay zeroed input frames starting at
+	// resumeFrame so the first post-resync Advance() does not stall
+	// waiting for pre-captured inputs that no longer exist.  `seedHash`
+	// is stored for the (resumeFrame-1) slot so the first outgoing
+	// InputPacket carries a valid ackedFrame/hash pair.
+	void ResumeAt(uint32_t resumeFrame, uint32_t seedHash);
 
 private:
 	struct InputSlot {

@@ -50,6 +50,7 @@ enum class Phase : uint8_t {
 	Ended,
 	Desynced,
 	Failed,
+	Resyncing,
 };
 
 // True iff any coordinator (host or joiner) is in a non-terminal phase.
@@ -213,6 +214,22 @@ bool IsDesynced(int64_t* outFrame);
 // lockstepping coordinator.  Returns a large number (UINT64_MAX/2) if
 // no coordinator is lockstepping or no packet has arrived yet.
 uint64_t MsSinceLastPeerPacket(uint64_t nowMs);
+
+// True iff any coordinator is currently running a mid-session state
+// transfer (Phase::Resyncing).  When this returns true, the HUD
+// should render a "Resynchronizing…" overlay and swallow user input
+// to the sim — the simulator is paused for the duration and a held
+// key would mis-land on the first post-resume frame.
+// Out params: populated with chunk progress when non-null.
+//   *outReceivedChunks  — joiner side: chunks received so far
+//   *outExpectedChunks  — joiner side: total chunks
+//   *outAckedChunks     — host side: chunks acknowledged so far
+//   *outTotalChunks     — host side: total chunks
+// Missing-side counters are left at zero.
+bool IsResyncing(uint32_t* outReceivedChunks = nullptr,
+                 uint32_t* outExpectedChunks = nullptr,
+                 uint32_t* outAckedChunks    = nullptr,
+                 uint32_t* outTotalChunks    = nullptr);
 
 // Tear down every active host coord + any joiner coord.  Used by the
 // in-session HUD's Disconnect button.  Safe to call when nothing is

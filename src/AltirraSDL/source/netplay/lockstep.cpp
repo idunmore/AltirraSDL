@@ -268,6 +268,39 @@ void LockstepLoop::BuildOutgoingInputPacket(NetInputPacket& out) const {
 	}
 }
 
+void LockstepLoop::ResumeAt(uint32_t resumeFrame, uint32_t seedHash) {
+	// Wipe every ring — the pre-resync timeline no longer describes the
+	// state we are about to run from.
+	for (uint32_t i = 0; i < kRingSize; ++i) {
+		mLocalInputs[i] = InputSlot{};
+		mPeerInputs[i]  = InputSlot{};
+		mLocalHashes[i] = HashSlot{};
+		mPeerHashes[i]  = HashSlot{};
+	}
+
+	mCurrentFrame = resumeFrame;
+	mDesyncFrame = -1;
+	// Keep peer-silence watchdog state — packet flow continued during
+	// the resync (host sent ResyncStart/chunks, joiner sent ResyncDone)
+	// so LastPeerRecvMs is still meaningful.
+
+	// Warmup: seed `inputDelay` frames of zeroed inputs so the first
+	// Advance() can run without stalling.  Mirrors Begin() semantics.
+	NetInput zero {};
+	for (uint32_t k = 0; k < mInputDelay && k < kRingSize; ++k) {
+		PutLocalInput(resumeFrame + k, zero);
+		PutPeerInput(resumeFrame + k, zero);
+	}
+
+	// Seed the hash at (resumeFrame - 1) so BuildOutgoingInputPacket
+	// has a valid ackedFrame/hash pair for its first post-resync emit.
+	// If resumeFrame is 0 (pathological — we'd never resync that early)
+	// skip the seed.
+	if (resumeFrame > 0) {
+		PutLocalHash(resumeFrame - 1, seedHash);
+	}
+}
+
 bool LockstepLoop::PeerTimedOut(uint64_t nowMs, uint64_t timeoutMs) const {
 	if (!mAnyPeerPacketSeen) return false;
 	return nowMs > mLastPeerRecvMs && (nowMs - mLastPeerRecvMs) > timeoutMs;

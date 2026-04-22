@@ -58,6 +58,13 @@ DecodeResult DecodeSnapChunk(const uint8_t* buf, size_t len, NetSnapChunk& out);
 size_t EncodeSnapAck(const NetSnapAck& a, uint8_t* buf, size_t bufSize);
 DecodeResult DecodeSnapAck(const uint8_t* buf, size_t len, NetSnapAck& out);
 
+// --- NetResyncStart / NetResyncDone ---------------------------------------
+size_t EncodeResyncStart(const NetResyncStart& s, uint8_t* buf, size_t bufSize);
+DecodeResult DecodeResyncStart(const uint8_t* buf, size_t len, NetResyncStart& out);
+
+size_t EncodeResyncDone(const NetResyncDone& d, uint8_t* buf, size_t bufSize);
+DecodeResult DecodeResyncDone(const uint8_t* buf, size_t len, NetResyncDone& out);
+
 // --- handle/cart string helpers (null-terminated UTF-8) --------------------
 // Truncates or zero-pads to fit the fixed-size wire field.
 void HandleFromString(const char* s, uint8_t out[kHandleLen]);

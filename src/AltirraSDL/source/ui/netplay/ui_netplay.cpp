@@ -436,25 +436,22 @@ namespace ATNetplayUI {
 // desync status, and a Disconnect button.  No window chrome, no
 // saved settings — just a small translucent panel pinned to the
 // viewport's top-right corner.
-// Theme-aware status palette.  Dark theme can use high-value pastel
-// tones but they wash out on light backgrounds; light theme wants
-// deeper/saturated ones to stay readable.  Kept local so it matches
-// the existing OfferStateColour palette choices in ui_netplay_desktop.
-static ImVec4 StatusColorGood() {
-	return ATUIIsDarkTheme()
-		? ImVec4(0.55f, 0.95f, 0.55f, 1.0f)
-		: ImVec4(0.10f, 0.55f, 0.15f, 1.0f);
-}
-static ImVec4 StatusColorBad() {
-	return ATUIIsDarkTheme()
-		? ImVec4(1.00f, 0.45f, 0.45f, 1.0f)
-		: ImVec4(0.80f, 0.10f, 0.10f, 1.0f);
-}
-static ImVec4 StatusColorWarn() {
-	return ATUIIsDarkTheme()
-		? ImVec4(1.00f, 0.70f, 0.30f, 1.0f)
-		: ImVec4(0.75f, 0.45f, 0.05f, 1.0f);
-}
+// The in-session HUD uses a fixed dark overlay background (like a
+// broadcast/streaming overlay) rather than following the theme window
+// background.  This keeps the colored status dot, the DESYNC/Waiting
+// inline text, and the dimmed metrics row legible in both light and
+// dark themes — a translucent window that tracks the theme makes the
+// metrics unreadable when the underlying game frame is bright.
+static ImVec4 HudPanelBg()     { return ImVec4(0.08f, 0.09f, 0.12f, 0.82f); }
+static ImVec4 HudPanelBorder() { return ImVec4(1.00f, 1.00f, 1.00f, 0.18f); }
+static ImVec4 HudTextPrimary() { return ImVec4(0.96f, 0.96f, 0.98f, 1.00f); }
+static ImVec4 HudTextMuted()   { return ImVec4(0.72f, 0.74f, 0.80f, 1.00f); }
+
+// Status colors tuned to read well on the dark HUD panel.  Consistent
+// across themes so a glance at the dot always means the same thing.
+static ImVec4 StatusColorGood() { return ImVec4(0.40f, 0.92f, 0.45f, 1.0f); }
+static ImVec4 StatusColorBad()  { return ImVec4(1.00f, 0.42f, 0.42f, 1.0f); }
+static ImVec4 StatusColorWarn() { return ImVec4(1.00f, 0.78f, 0.30f, 1.0f); }
 
 void RenderInSessionHUD() {
 	// One-shot "you are live" toast on lockstep entry so both host
@@ -467,6 +464,61 @@ void RenderInSessionHUD() {
 		s_liveToastShown = true;
 	}
 	if (!ATNetplayGlue::IsLockstepping()) s_liveToastShown = false;
+
+	// Resync banner.  While a mid-session state transfer is in flight,
+	// both peers' sims are paused — show a modal overlay so the user
+	// understands the freeze.  Positioned as a top-bar banner rather
+	// than a full-screen dim so the game view underneath is still
+	// visible (helpful for "did my input land?" intuition).
+	static bool s_resyncToastArmed = true;   // re-armed when not resyncing
+	{
+		uint32_t recv = 0, expected = 0, acked = 0, total = 0;
+		if (ATNetplayGlue::IsResyncing(&recv, &expected, &acked, &total)) {
+			if (s_resyncToastArmed) {
+				PushToast("Resynchronizing with peer…",
+					ToastSeverity::Info, 2500);
+				s_resyncToastArmed = false;
+			}
+			const uint32_t num = expected ? recv  : acked;
+			const uint32_t den = expected ? expected : total;
+			char line[80];
+			if (den > 0) {
+				std::snprintf(line, sizeof line,
+					"Resynchronizing with peer… (%u / %u)",
+					(unsigned)num, (unsigned)den);
+			} else {
+				std::snprintf(line, sizeof line,
+					"Resynchronizing with peer…");
+			}
+
+			const ImGuiViewport* vp = ImGui::GetMainViewport();
+			const float w = 420.0f;
+			ImGui::SetNextWindowPos(
+				ImVec2(vp->Pos.x + vp->Size.x * 0.5f, vp->Pos.y + 24.0f),
+				ImGuiCond_Always, ImVec2(0.5f, 0.0f));
+			ImGui::SetNextWindowSize(ImVec2(w, 0), ImGuiCond_Always);
+			ImGui::PushStyleColor(ImGuiCol_WindowBg,
+				ImVec4(0.08f, 0.08f, 0.12f, 0.92f));
+			ImGui::Begin("##NetplayResyncBanner", nullptr,
+				ImGuiWindowFlags_NoTitleBar |
+				ImGuiWindowFlags_NoResize |
+				ImGuiWindowFlags_NoMove |
+				ImGuiWindowFlags_NoSavedSettings |
+				ImGuiWindowFlags_NoFocusOnAppearing |
+				ImGuiWindowFlags_NoNav |
+				ImGuiWindowFlags_AlwaysAutoResize);
+			ImGui::TextUnformatted(line);
+			if (den > 0) {
+				ImGui::ProgressBar((float)num / (float)den,
+					ImVec2(-1, 0), "");
+			}
+			ImGui::End();
+			ImGui::PopStyleColor();
+		} else {
+			// Re-arm the toast for the next resync event.
+			s_resyncToastArmed = true;
+		}
+	}
 
 	// Always poll desync state even when the HUD is hidden — we want
 	// the one-shot toast regardless of the user's HUD preference so
@@ -581,7 +633,6 @@ void RenderInSessionHUD() {
 	ImVec2 pos(vp->WorkPos.x + vp->WorkSize.x - pad,
 	           vp->WorkPos.y + pad);
 	ImGui::SetNextWindowPos(pos, ImGuiCond_Always, ImVec2(1.0f, 0.0f));
-	ImGui::SetNextWindowBgAlpha(0.70f);
 
 	ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration
 	                       | ImGuiWindowFlags_AlwaysAutoResize
@@ -589,6 +640,14 @@ void RenderInSessionHUD() {
 	                       | ImGuiWindowFlags_NoFocusOnAppearing
 	                       | ImGuiWindowFlags_NoNav
 	                       | ImGuiWindowFlags_NoMove;
+
+	// Pin the HUD to the fixed dark overlay palette regardless of the
+	// active ImGui theme so readability is identical in dark/light.
+	ImGui::PushStyleColor(ImGuiCol_WindowBg,  HudPanelBg());
+	ImGui::PushStyleColor(ImGuiCol_Border,    HudPanelBorder());
+	ImGui::PushStyleColor(ImGuiCol_Text,      HudTextPrimary());
+	ImGui::PushStyleVar  (ImGuiStyleVar_WindowBorderSize, 1.0f);
+	ImGui::PushStyleVar  (ImGuiStyleVar_WindowRounding,   6.0f);
 
 	// Shared status dot — drawn via ImDrawList rather than a glyph so
 	// we don't depend on the bundled font covering U+25CF.  Reserves a
@@ -613,7 +672,7 @@ void RenderInSessionHUD() {
 		// game is expensive on a phone).  Two states:
 		//   ● 35ms  — peer packets arriving normally
 		//   ● Off   — peer silent or desynced
-		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 4));
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 5));
 		if (ImGui::Begin("##netplay_hud", nullptr,
 		                 flags | ImGuiWindowFlags_NoInputs)) {
 			drawDot(dotColor);
@@ -627,6 +686,8 @@ void RenderInSessionHUD() {
 		}
 		ImGui::End();
 		ImGui::PopStyleVar();
+		ImGui::PopStyleVar(2);
+		ImGui::PopStyleColor(3);
 		return;
 	}
 
@@ -634,6 +695,8 @@ void RenderInSessionHUD() {
 	// line and a small Disconnect button.  Frame counter is intentionally
 	// omitted on the happy path — it's not actionable and dominates the
 	// readout.  DESYNC surfaces the frame inline because it is.
+	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 8));
+	ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,   ImVec2(8, 4));
 	if (ImGui::Begin("##netplay_hud", nullptr, flags)) {
 		drawDot(dotColor);
 		ImGui::SameLine(0, 6);
@@ -655,31 +718,61 @@ void RenderInSessionHUD() {
 			break;
 		}
 
-		// Metrics row: peer packet age + input delay frames.  Dimmed
-		// so the status line reads first.  ASCII only — the bundled
-		// font atlas doesn't cover non-Latin-1 glyphs.
-		ImGui::PushStyleColor(ImGuiCol_Text,
-			ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+		// Metrics row: peer packet age + input delay frames.  Use
+		// explicit labels ("Peer" / "Delay") so the numbers are not
+		// ambiguous; the labels are muted and the numbers are bright
+		// so the readout reads as "<label> <value>" at a glance.
+		// ASCII only — the bundled font atlas doesn't cover
+		// non-Latin-1 glyphs.
+		auto labelValue = [](const char* label, const char* value) {
+			ImGui::PushStyleColor(ImGuiCol_Text, HudTextMuted());
+			ImGui::TextUnformatted(label);
+			ImGui::PopStyleColor();
+			ImGui::SameLine(0, 4);
+			ImGui::PushStyleColor(ImGuiCol_Text, HudTextPrimary());
+			ImGui::TextUnformatted(value);
+			ImGui::PopStyleColor();
+		};
+		char peerBuf[32];
+		char delayBuf[32];
 		if (!peerKnown) {
-			ImGui::Text("peer --   %uf", (unsigned)delay);
+			std::snprintf(peerBuf, sizeof peerBuf, "--");
 		} else {
-			ImGui::Text("%llu ms   %uf",
-				(unsigned long long)peerAgeMs, (unsigned)delay);
+			std::snprintf(peerBuf, sizeof peerBuf, "%llu ms",
+				(unsigned long long)peerAgeMs);
 		}
-		ImGui::PopStyleColor();
+		std::snprintf(delayBuf, sizeof delayBuf, "%u %s",
+			(unsigned)delay, delay == 1 ? "frame" : "frames");
+
+		labelValue("Peer", peerBuf);
+		ImGui::SameLine(0, 12);
+		labelValue("Delay", delayBuf);
 
 		// Compact Disconnect — no longer full-width, just enough to
-		// read the label.  Sits on the metrics row's right edge.
+		// read the label.  Sits on the metrics row's right edge with
+		// a subtle, theme-independent tint so it doesn't disappear
+		// against the dark HUD background in light mode.
 		ImGui::SameLine();
 		const float btnW = ImGui::CalcTextSize("Disconnect").x
 		                 + ImGui::GetStyle().FramePadding.x * 2.0f;
 		const float avail = ImGui::GetContentRegionAvail().x;
 		if (avail > btnW) ImGui::SameLine(0, avail - btnW);
+		ImGui::PushStyleColor(ImGuiCol_Button,
+			ImVec4(0.30f, 0.10f, 0.10f, 0.85f));
+		ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+			ImVec4(0.55f, 0.15f, 0.15f, 1.00f));
+		ImGui::PushStyleColor(ImGuiCol_ButtonActive,
+			ImVec4(0.70f, 0.20f, 0.20f, 1.00f));
+		ImGui::PushStyleColor(ImGuiCol_Text, HudTextPrimary());
 		if (ImGui::SmallButton("Disconnect##netplay_hud")) {
 			ATNetplayGlue::DisconnectActive();
 		}
+		ImGui::PopStyleColor(4);
 	}
 	ImGui::End();
+	ImGui::PopStyleVar(2);
+	ImGui::PopStyleVar(2);
+	ImGui::PopStyleColor(3);
 }
 
 } // namespace ATNetplayUI

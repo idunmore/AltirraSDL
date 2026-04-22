@@ -7,6 +7,7 @@
 #include "coordinator.h"
 #include "packets.h"
 #include "netplay_input.h"
+#include "netplay_savestate.h"
 #include "netplay_simhash.h"
 
 #include "simulator.h"
@@ -15,6 +16,17 @@
 
 extern ATLogChannel g_ATLCNetplay;
 extern ATSimulator g_sim;
+
+// Speed-control accessors.  When a lockstep session goes live we force
+// all warp-related state off so a held F1 at session start can't carry
+// through into the session.  (The accessors themselves also refuse new
+// "enable warp" requests while IsActive()==true — see
+// stubs/uiaccessors_stubs.cpp — so once the session is up, no UI path
+// can re-engage it.)
+void ATUISetTurbo(bool);
+void ATUISetTurboPulse(bool);
+void ATUISetSlowMotion(bool);
+void ATUISetSpeedModifier(float);
 
 #include <algorithm>
 #include <cstring>
@@ -41,6 +53,7 @@ Phase ToGluePhase(CoordPhase p) {
 		case P::Ended:             return Phase::Ended;
 		case P::Desynced:          return Phase::Desynced;
 		case P::Failed:            return Phase::Failed;
+		case P::Resyncing:         return Phase::Resyncing;
 	}
 	return Phase::None;
 }
@@ -82,11 +95,64 @@ HostSlot* FindHost(const char* gameId) {
 
 // Poll one coordinator and apply the two-tick terminal-phase teardown.
 // Returns true if the slot should be removed from its container.
+// Drive the resync I/O boundary for the given coordinator.  This is
+// where the netplay module reaches into g_sim: host side captures its
+// running state when the coordinator flags NeedsResyncCapture, joiner
+// side applies the received payload when NeedsResyncApply flips.
+// Both operations pause the sim first so the capture / apply sees a
+// stable frame — the simulator's Pause is idempotent and the resume
+// happens at the Lockstepping edge in the main Poll() body below.
+// True iff WE (DriveResyncIO) own the current pause state.  Tracked so
+// our backstop resume doesn't accidentally clear a user-initiated
+// pre-session pause that happens to be lingering when a Bye arrives.
+bool g_resyncOwnsPause = false;
+
+void DriveResyncIO(ATNetplay::Coordinator& coord) {
+	if (coord.GetPhase() != ATNetplay::Coordinator::Phase::Resyncing)
+		return;
+
+	// Unconditionally pause the sim for as long as any coord is in
+	// Resyncing.  We exit Lockstepping on the phase transition, which
+	// means CanAdvanceThisTick() stops gating advance and the main loop
+	// would otherwise keep calling g_sim.Advance() with stale state for
+	// every tick until the chunks finish arriving.  On the joiner that
+	// means hundreds of ms of garbage frames between BeginJoinerResync
+	// and the last chunk.  Pause() is idempotent; Resume() happens on
+	// the phase transition back to Lockstepping (see below).
+	if (!g_sim.IsPaused()) {
+		g_sim.Pause();
+		g_resyncOwnsPause = true;
+	}
+
+	if (coord.NeedsResyncCapture()) {
+		std::vector<uint8_t> buf;
+		if (ATNetplay::CaptureSavestate(buf)) {
+			coord.SubmitResyncCapture(buf.data(), buf.size());
+		} else {
+			// Capture failed — submit empty payload so coordinator
+			// transitions to Desynced rather than stalling forever.
+			coord.SubmitResyncCapture(nullptr, 0);
+		}
+	}
+	if (coord.NeedsResyncApply()) {
+		const auto& data = coord.GetReceivedResyncData();
+		if (!data.empty() &&
+		    ATNetplay::ApplySavestate(data.data(), data.size())) {
+			coord.AcknowledgeResyncApplied();
+		} else {
+			// Apply failed — end the session; a half-applied state is
+			// worse than a clean drop.
+			coord.End(ATNetplay::kByeDesyncDetected);
+		}
+	}
+}
+
 bool PollCoord(std::unique_ptr<ATNetplay::Coordinator>& coord,
                int& terminalTicks,
                uint64_t nowMs) {
 	if (!coord) return false;
 	coord->Poll(nowMs);
+	DriveResyncIO(*coord);
 	if (IsTerminal(coord->GetPhase())) {
 		if (++terminalTicks >= 2) {
 			coord.reset();
@@ -216,9 +282,46 @@ void Poll(uint64_t nowMs) {
 		ATNetplayInput::BeginSession();
 		g_ATLCNetplay("input: BeginSession (sim running=%d paused=%d)",
 			g_sim.IsRunning() ? 1 : 0, g_sim.IsPaused() ? 1 : 0);
+
+		// Force-clear any warp/slow-motion/speed-modifier state that
+		// survived into the session (e.g. user held F1 as handshake
+		// completed).  The accessors allow "off" requests
+		// unconditionally so these calls are always effective.
+		ATUISetTurbo(false);
+		ATUISetTurboPulse(false);
+		ATUISetSlowMotion(false);
+		ATUISetSpeedModifier(0.0f);
+		g_ATLCNetplay("lockstep entry: cleared warp/slow/speed-mod");
 	} else if (!lock && ATNetplayInput::IsActive()) {
 		ATNetplayInput::EndSession();
 		g_ATLCNetplay("input: EndSession");
+	}
+
+	// Post-resync resume: the sim was paused inside DriveResyncIO() so
+	// CaptureSavestate / ApplySavestate saw a frozen frame.  When the
+	// coordinator transitions back to Lockstepping, resume here — the
+	// lockstep-entry edge above doesn't fire because
+	// ATNetplayInput::IsActive() stayed true across the resync.
+	// If someone else resumed the sim out from under us (initial
+	// lockstep-entry block above, user action, etc.), drop ownership —
+	// the flag should never claim to own a non-paused sim.
+	if (!g_sim.IsPaused()) g_resyncOwnsPause = false;
+
+	if (lock && g_sim.IsPaused() && g_resyncOwnsPause) {
+		g_ATLCNetplay("post-resync: sim was paused, resuming");
+		g_sim.Resume();
+		g_resyncOwnsPause = false;
+	}
+
+	// Session-end resume backstop: if a resync was in flight and the
+	// session then hit a terminal phase (user Disconnect, peer Bye,
+	// resync transfer failed, flap limit tripped), nobody would
+	// otherwise clear the Pause() we set in DriveResyncIO.  The
+	// ownership flag means we never touch a pause we didn't set.
+	if (!IsActive() && g_sim.IsPaused() && g_resyncOwnsPause) {
+		g_ATLCNetplay("session ended with sim paused (resync interrupted), resuming");
+		g_sim.Resume();
+		g_resyncOwnsPause = false;
 	}
 
 	// (Lockstep heartbeat log removed — too noisy for normal runs.)
@@ -572,6 +675,29 @@ bool IsDesynced(int64_t* outFrame) {
 	const auto& loop = c->Loop();
 	if (outFrame) *outFrame = loop.DesyncFrame();
 	return loop.IsDesynced();
+}
+
+bool IsResyncing(uint32_t* outReceived, uint32_t* outExpected,
+                 uint32_t* outAcked,    uint32_t* outTotal) {
+	if (outReceived) *outReceived = 0;
+	if (outExpected) *outExpected = 0;
+	if (outAcked)    *outAcked = 0;
+	if (outTotal)    *outTotal = 0;
+
+	auto collect = [&](ATNetplay::Coordinator* c) {
+		if (!c) return false;
+		if (c->GetPhase() != ATNetplay::Coordinator::Phase::Resyncing)
+			return false;
+		if (outReceived) *outReceived = c->ResyncReceivedChunks();
+		if (outExpected) *outExpected = c->ResyncExpectedChunks();
+		if (outAcked)    *outAcked    = c->ResyncAckedChunks();
+		if (outTotal)    *outTotal    = c->ResyncTotalChunks();
+		return true;
+	};
+
+	if (collect(g_joiner.get())) return true;
+	for (auto& s : g_hosts) if (collect(s.coord.get())) return true;
+	return false;
 }
 
 uint64_t MsSinceLastPeerPacket(uint64_t nowMs) {

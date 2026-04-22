@@ -294,6 +294,54 @@ DecodeResult DecodeSnapAck(const uint8_t* buf, size_t len, NetSnapAck& out) {
 }
 
 // ---------------------------------------------------------------------------
+// NetResyncStart (24 bytes)
+// ---------------------------------------------------------------------------
+
+size_t EncodeResyncStart(const NetResyncStart& s, uint8_t* buf, size_t bufSize) {
+	if (bufSize < kWireResyncStartSize) return 0;
+	put_u32(buf + 0,  kMagicResyncStart);
+	put_u32(buf + 4,  s.epoch);
+	put_u32(buf + 8,  s.stateBytes);
+	put_u32(buf + 12, s.stateChunks);
+	put_u32(buf + 16, s.resumeFrame);
+	put_u32(buf + 20, s.seedHash);
+	return kWireResyncStartSize;
+}
+
+DecodeResult DecodeResyncStart(const uint8_t* buf, size_t len, NetResyncStart& out) {
+	if (len < kWireResyncStartSize) return DecodeResult::TooShort;
+	out.magic = get_u32(buf);
+	if (out.magic != kMagicResyncStart) return DecodeResult::BadMagic;
+	out.epoch       = get_u32(buf + 4);
+	out.stateBytes  = get_u32(buf + 8);
+	out.stateChunks = get_u32(buf + 12);
+	out.resumeFrame = get_u32(buf + 16);
+	out.seedHash    = get_u32(buf + 20);
+	return DecodeResult::Ok;
+}
+
+// ---------------------------------------------------------------------------
+// NetResyncDone (12 bytes)
+// ---------------------------------------------------------------------------
+
+size_t EncodeResyncDone(const NetResyncDone& d, uint8_t* buf, size_t bufSize) {
+	if (bufSize < kWireResyncDoneSize) return 0;
+	put_u32(buf + 0, kMagicResyncDone);
+	put_u32(buf + 4, d.epoch);
+	put_u32(buf + 8, d.resumeFrame);
+	return kWireResyncDoneSize;
+}
+
+DecodeResult DecodeResyncDone(const uint8_t* buf, size_t len, NetResyncDone& out) {
+	if (len < kWireResyncDoneSize) return DecodeResult::TooShort;
+	out.magic = get_u32(buf);
+	if (out.magic != kMagicResyncDone) return DecodeResult::BadMagic;
+	out.epoch       = get_u32(buf + 4);
+	out.resumeFrame = get_u32(buf + 8);
+	return DecodeResult::Ok;
+}
+
+// ---------------------------------------------------------------------------
 // String helpers
 // ---------------------------------------------------------------------------
 

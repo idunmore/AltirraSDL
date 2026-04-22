@@ -785,14 +785,22 @@ void RenderAccelerationCategory(ATSimulator &sim) {
 void RenderSpeedCategory(ATSimulator &sim) {
 	ImGui::SeparatorText("Speed control");
 
+	const bool netplayLocksSpeed = ATNetplayGlue::IsActive();
+
 	bool warp = ATUIGetTurbo();
+	ImGui::BeginDisabled(netplayLocksSpeed);
 	if (ImGui::Checkbox("Run as fast as possible (warp)", &warp))
 		ATUISetTurbo(warp);
-	ImGui::SetItemTooltip("Disable the speed limiter and run the emulation as fast as possible.");
+	ImGui::EndDisabled();
+	ImGui::SetItemTooltip(netplayLocksSpeed
+		? "Disabled while Playing Online — both peers must run at 1x."
+		: "Disable the speed limiter and run the emulation as fast as possible.");
 
 	bool slowmo = ATUIGetSlowMotion();
+	ImGui::BeginDisabled(netplayLocksSpeed);
 	if (ImGui::Checkbox("Slow Motion", &slowmo))
 		ATUISetSlowMotion(slowmo);
+	ImGui::EndDisabled();
 
 	ImGui::SeparatorText("Speed adjustment");
 
@@ -802,9 +810,13 @@ void RenderSpeedCategory(ATSimulator &sim) {
 	int spdIdx = 0;
 	for (int i = 0; i < 4; ++i)
 		if (kSpdValues[i] == spd) { spdIdx = i; break; }
+	ImGui::BeginDisabled(netplayLocksSpeed);
 	if (ImGui::Combo("Speed", &spdIdx, kSpdLabels, 4))
 		ATUISetSpeedModifier(kSpdValues[spdIdx]);
-	ImGui::SetItemTooltip("Scale the baseline rate to run the emulation faster or slower.");
+	ImGui::EndDisabled();
+	ImGui::SetItemTooltip(netplayLocksSpeed
+		? "Disabled while Playing Online — both peers must run at 1x."
+		: "Scale the baseline rate to run the emulation faster or slower.");
 
 	ImGui::SeparatorText("Frame rate");
 
