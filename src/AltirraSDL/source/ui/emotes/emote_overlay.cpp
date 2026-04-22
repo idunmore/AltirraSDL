@@ -1,4 +1,22 @@
 //	AltirraSDL - Online Play emote fade overlay.
+//
+//	Anchored top-left of the work area (below the menu bar if it's
+//	visible, inside the viewport otherwise, never over the top-right
+//	Session HUD).  Animated entry/exit combine three effects driven by
+//	a single "visibility" parameter p in [0, 1]:
+//
+//	    * horizontal slide: x = lerp(offscreen_left, final_x, p)
+//	    * scale:            s = 0.25 + 0.75 * p   (25% -> 100%)
+//	    * fade:             a = p                  (transparent -> opaque)
+//
+//	Timeline (total 4.0 s):
+//	    0.00 - 0.40 s   entry  (p: 0 -> 1, smoothstep)
+//	    0.40 - 3.60 s   hold   (p = 1)
+//	    3.60 - 4.00 s   exit   (p: 1 -> 0, smoothstep)
+//
+//	The icon reappearing during an active display replaces the current
+//	one and restarts the state machine at entry, which feels more
+//	responsive than queueing.
 
 #include <stdafx.h>
 #include <imgui.h>
@@ -10,22 +28,34 @@ namespace ATEmoteOverlay {
 
 namespace {
 
-constexpr uint64_t kFadeInMs  = 300;
-constexpr uint64_t kHoldMs    = 3400;
-constexpr uint64_t kFadeOutMs = 300;
-constexpr uint64_t kTotalMs   = kFadeInMs + kHoldMs + kFadeOutMs; // 4000
+constexpr uint64_t kEntryMs = 400;
+constexpr uint64_t kHoldMs  = 3200;
+constexpr uint64_t kExitMs  = 400;
+constexpr uint64_t kTotalMs = kEntryMs + kHoldMs + kExitMs; // 4000
 
-int      gIconId   = -1;
-uint64_t gStartMs  = 0;
+int      gIconId  = -1;
+uint64_t gStartMs = 0;
 
-float ComputeAlpha(uint64_t elapsed) {
-	if (elapsed < kFadeInMs)
-		return (float)elapsed / (float)kFadeInMs;
-	if (elapsed < kFadeInMs + kHoldMs)
+// Cubic Hermite smoothstep: 3t^2 - 2t^3.  Smooth velocity at 0 and 1,
+// non-zero acceleration in the middle — gives a nicer feel than a
+// linear ramp for both the slide and the scale.
+float Smoothstep(float t) {
+	if (t <= 0.0f) return 0.0f;
+	if (t >= 1.0f) return 1.0f;
+	return t * t * (3.0f - 2.0f * t);
+}
+
+// Visibility progress p: 0 (hidden) ... 1 (fully on-screen, full size).
+float ComputeP(uint64_t elapsed) {
+	if (elapsed < kEntryMs) {
+		return Smoothstep((float)elapsed / (float)kEntryMs);
+	}
+	if (elapsed < kEntryMs + kHoldMs) {
 		return 1.0f;
+	}
 	if (elapsed < kTotalMs) {
-		uint64_t t = elapsed - (kFadeInMs + kHoldMs);
-		return 1.0f - (float)t / (float)kFadeOutMs;
+		float t = (float)(elapsed - kEntryMs - kHoldMs) / (float)kExitMs;
+		return 1.0f - Smoothstep(t);
 	}
 	return 0.0f;
 }
@@ -56,39 +86,65 @@ void Render(uint64_t nowMs) {
 	if (!tex || srcW <= 0 || srcH <= 0)
 		return;
 
-	ImGuiViewport *vp = ImGui::GetMainViewport();
-	float scale = ImGui::GetIO().FontGlobalScale;
-	if (scale <= 0.0f) scale = 1.0f;
+	const ImGuiViewport *vp = ImGui::GetMainViewport();
 
-	// Target draw size: keep aspect, cap display height at ~15% of
-	// viewport height so it doesn't dominate the emulated screen.
-	float displayH = vp->Size.y * 0.15f;
+	// WorkPos/WorkSize exclude the menu bar — so when the desktop menu
+	// is visible, the overlay sits just below it; when the menu is
+	// auto-hidden (gaming mode, fullscreen), it sits at the viewport
+	// top.  Either way it never clips into the Session HUD's top-right
+	// area.
+	const ImVec2 workPos  = vp->WorkPos;
+	const ImVec2 workSize = vp->WorkSize;
+
+	// Display height: ~15% of work area, bounded for phone & 4K.
+	float displayH = workSize.y * 0.15f;
 	if (displayH < 96.0f) displayH = 96.0f;
 	if (displayH > 192.0f) displayH = 192.0f;
 	float displayW = displayH * ((float)srcW / (float)srcH);
 
-	float margin = 16.0f;
-	ImVec2 pos(
-		vp->Pos.x + vp->Size.x - displayW - margin,
-		vp->Pos.y + margin);
+	const float margin = 16.0f;
+	const float finalX = workPos.x + margin;
+	const float finalY = workPos.y + margin;
 
-	float alpha = ComputeAlpha(elapsed);
-	if (alpha < 0.0f) alpha = 0.0f;
-	if (alpha > 1.0f) alpha = 1.0f;
+	// Offscreen-left: fully past the viewport's left edge (vp->Pos.x,
+	// NOT WorkPos.x — the emote should slide in from beyond the actual
+	// window edge, not from below the menu bar boundary).  Add a small
+	// gutter so anti-aliasing can't clip back into view.
+	const float offscreenX = vp->Pos.x - displayW - 8.0f;
 
-	ImU32 tint = IM_COL32(255, 255, 255, (int)(alpha * 255.0f));
+	const float p = ComputeP(elapsed);
 
-	ImDrawList *dl = ImGui::GetForegroundDrawList(vp);
-	// Soft shadow disc behind the icon for legibility against busy
-	// emulated backgrounds.
-	ImU32 shadow = IM_COL32(0, 0, 0, (int)(alpha * 120.0f));
-	ImVec2 center(pos.x + displayW * 0.5f, pos.y + displayH * 0.5f);
-	float radius = (displayW > displayH ? displayW : displayH) * 0.55f;
+	// Slide: lerp offscreen -> final as p: 0 -> 1.
+	const float x = offscreenX + (finalX - offscreenX) * p;
+	const float y = finalY;
+
+	// Scale: 25% -> 100%.  Anchor the scale box to the top-left of the
+	// final rect so the icon grows to the right / downward from the
+	// screen edge rather than shrinking into the middle of empty space.
+	const float scale = 0.25f + 0.75f * p;
+	const float scaledW = displayW * scale;
+	const float scaledH = displayH * scale;
+
+	// Alpha.
+	const float alpha = p;
+
+	ImDrawList *dl = ImGui::GetForegroundDrawList(
+		const_cast<ImGuiViewport *>(vp));
+
+	// Soft shadow disc behind the icon for legibility on busy
+	// emulated backgrounds.  Dimmer than the icon so it fades faster
+	// on exit.
+	const ImVec2 center(x + scaledW * 0.5f, y + scaledH * 0.5f);
+	const float  radius = (scaledW > scaledH ? scaledW : scaledH) * 0.55f;
+	const ImU32  shadow = IM_COL32(0, 0, 0, (int)(alpha * 110.0f));
 	dl->AddCircleFilled(center, radius, shadow, 32);
 
-	dl->AddImage(tex, pos, ImVec2(pos.x + displayW, pos.y + displayH),
-		ImVec2(0, 0), ImVec2(1, 1), tint);
-	(void)scale;
+	const ImU32 tint = IM_COL32(255, 255, 255, (int)(alpha * 255.0f));
+	dl->AddImage(tex,
+		ImVec2(x, y),
+		ImVec2(x + scaledW, y + scaledH),
+		ImVec2(0, 0), ImVec2(1, 1),
+		tint);
 }
 
 } // namespace ATEmoteOverlay

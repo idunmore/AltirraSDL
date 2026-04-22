@@ -145,10 +145,10 @@ uint32_t DiscoverDefaultGateway() {
 	int mib[7] = { CTL_NET, PF_ROUTE, 0, AF_INET, NET_RT_FLAGS,
 	               RTF_GATEWAY, 0 };
 	size_t len = 0;
-	if (::sysctl(mib, 6, nullptr, &len, nullptr, 0) < 0) return 0;
+	if (sysctl(mib, 6, nullptr, &len, nullptr, 0) < 0) return 0;
 	if (len == 0) return 0;
 	std::vector<char> tbl(len);
-	if (::sysctl(mib, 6, tbl.data(), &len, nullptr, 0) < 0) return 0;
+	if (sysctl(mib, 6, tbl.data(), &len, nullptr, 0) < 0) return 0;
 
 	for (char* p = tbl.data(); p < tbl.data() + len; ) {
 		rt_msghdr* rtm = reinterpret_cast<rt_msghdr*>(p);
