@@ -154,6 +154,31 @@ void ATNetplayUI_Poll(uint64_t nowMs) {
 					// any success; the next Heartbeat batch will resurface
 					// per-lobby issues if they persist.
 					o->lastError.clear();
+
+					// Stash the NAT-PMP mapping (if any) so the
+					// session-delete path can release it politely
+					// rather than leaving it parked on the router
+					// until the lease expires.  Multiple lobbies may
+					// report mappings; we keep the first non-empty
+					// one — they should all be identical since the
+					// mapping is per-game-port, not per-lobby.
+					if (!r.natPmpProtocol.empty() &&
+					    o->natPmpProtocol.empty()) {
+						o->natPmpProtocol     = r.natPmpProtocol;
+						o->natPmpExternalIp   = r.natPmpExternalIp;
+						o->natPmpExternalPort = r.natPmpExternalPort;
+						o->natPmpInternalPort = r.natPmpInternalPort;
+						o->natPmpLifetimeSec  = r.natPmpLifetimeSec;
+						o->natPmpAcquiredMs   = nowMs;
+						g_ATLCNetplay("NAT-PMP: stored mapping %s "
+							"%u→%s:%u lease=%us for later release",
+							r.natPmpProtocol.c_str(),
+							(unsigned)r.natPmpInternalPort,
+							r.natPmpExternalIp.c_str(),
+							(unsigned)r.natPmpExternalPort,
+							(unsigned)r.natPmpLifetimeSec);
+					}
+
 					g_ATLCNetplay("lobby Create OK for \"%s\" "
 						"(section \"%s\") sessionId=%s",
 						o->gameName.c_str(),

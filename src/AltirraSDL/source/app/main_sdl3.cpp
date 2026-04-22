@@ -52,6 +52,10 @@
 #ifdef ALTIRRA_NETPLAY_ENABLED
 #include "netplay/netplay_glue.h"
 #include "ui/netplay/ui_netplay.h"
+#include "ui/emotes/emote_picker.h"
+#include "ui/emotes/emote_assets.h"
+#include "ui/emotes/emote_netplay.h"
+#include "ui/emotes/emote_overlay.h"
 #endif
 #endif
 #include "ui_textselection.h"
@@ -330,6 +334,16 @@ static void HandleEvents() {
 
 	SDL_Event ev;
 	while (SDL_PollEvent(&ev)) {
+		// Emote picker open-shortcut: R3 (right stick click) while a
+		// netplay lockstep session is live.  Runs before any other
+		// gamepad dispatch so the UI opens even in Gaming Mode.
+		if (ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN
+			&& ev.gbutton.button == SDL_GAMEPAD_BUTTON_RIGHT_STICK
+			&& ATNetplayGlue::IsLockstepping())
+		{
+			ATEmotePicker::Open();
+			continue;
+		}
 		// Route touch/gamepad events to Gaming Mode UI before ImGui
 		if (ATUIIsGamingMode()) {
 			if (ATMobileGamepad_HandleEvent(ev, g_sim, g_mobileState))
@@ -1438,6 +1452,9 @@ int main(int argc, char *argv[]) {
 #endif
 
 	phase = "ImGui init";
+	// Register the emote-preferences callbacks BEFORE settings load so
+	// the "Netplay: Send emotes" / "Receive emotes" bools persist.
+	ATEmoteNetplay::Initialize();
 	if (!ATUIInit(g_pWindow, g_pBackend)) {
 		delete g_pBackend; g_pBackend = nullptr;
 		if (g_pRenderer) SDL_DestroyRenderer(g_pRenderer);
@@ -1448,6 +1465,11 @@ int main(int argc, char *argv[]) {
 
 	// Register ImGui progress handler (replaces Windows ATUIInitProgressDialog)
 	ATUIInitProgressSDL3();
+
+	// Decode + upload the 16 baked emote PNGs now that the display
+	// backend (GL or SDL renderer) is ready.  Textures live for the
+	// entire process lifetime.
+	ATEmotes::Initialize();
 
 	// Initialize test mode automation (no-op if --test-mode not passed).
 	// Skipped on Android: test mode binds a Unix socket under /tmp which

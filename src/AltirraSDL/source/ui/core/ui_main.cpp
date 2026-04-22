@@ -31,6 +31,9 @@
 #include <at/atcore/serializable.h>
 
 #include "ui_main.h"
+#include "ui/emotes/emote_netplay.h"
+#include "ui/emotes/emote_overlay.h"
+#include "ui/emotes/emote_picker.h"
 #ifdef ALTIRRA_NETPLAY_ENABLED
 #include "../netplay/ui_netplay.h"
 #include "../netplay/ui_netplay_state.h"
@@ -1490,6 +1493,16 @@ void ATUIRenderFrame(ATSimulator &sim, VDVideoDisplaySDL3 &display,
 	if (ATUIRenderVirtualKeyboard(sim, state.showVirtualKeyboard, state.oskPlacement)) {
 		ATUIVirtualKeyboard_ReleaseAll(sim);
 		state.showVirtualKeyboard = false;
+	}
+
+	// Online Play emote pipeline: drain pending received emotes, render
+	// the receive overlay, then the picker popup (popup last so it
+	// draws on top of the overlay and the HUD).
+	{
+		uint64_t nowMs = SDL_GetTicks();
+		ATEmoteNetplay::Process(nowMs);
+		ATEmoteOverlay::Render(nowMs);
+		ATEmotePicker::Render();
 	}
 
 	// HUD overlay (drive LEDs, status, FPS, pause, errors)

@@ -141,6 +141,21 @@ struct HostedGame {
 	uint64_t    lastHeartbeatMs = 0;
 	std::string lastError;
 
+	// NAT-PMP / PCP router-assisted port mapping acquired at Create
+	// time.  Stored so the session-Delete path can release the
+	// mapping politely instead of waiting for the router's lease
+	// (up to 1 hour) to expire.  Empty protocol string = no
+	// mapping was acquired (router didn't speak NAT-PMP or the
+	// request timed out).  The fields mirror ATNetplay::PortMapping
+	// one-for-one — we store them flat to avoid pulling the header
+	// into this TU for a couple of fields.
+	std::string natPmpProtocol;      // "NAT-PMP" | "PCP" | ""
+	std::string natPmpExternalIp;
+	uint16_t    natPmpExternalPort = 0;
+	uint16_t    natPmpInternalPort = 0;
+	uint32_t    natPmpLifetimeSec  = 0;
+	uint64_t    natPmpAcquiredMs   = 0;
+
 	// Snapshot queuing — set once per session to avoid re-queueing the
 	// boot+serialize work on every ReconcileHostedGames tick.  Cleared when
 	// the coordinator goes terminal.

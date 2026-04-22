@@ -21,6 +21,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
+#include <vector>
 
 namespace ATNetplay {
 
@@ -71,6 +73,29 @@ public:
 	// parse/resolution failure.  Blocking — call from the handshake
 	// setup path, not the hot loop.
 	static bool Resolve(const char* hostPort, Endpoint& out);
+
+	// Discover the primary local IPv4 address the host would use to
+	// reach the public internet.  Implementation is the portable
+	// "UDP connect + getsockname" trick: no packet is actually sent,
+	// the kernel just picks the outbound interface based on its route
+	// table.  On success, writes a dotted-quad into outIp (buffer must
+	// be at least INET_ADDRSTRLEN=16 bytes) and returns true.  On
+	// failure (no network, all loopback, etc.) returns false — the
+	// caller should fall back to 127.0.0.1.  Synchronous but fast
+	// (<1 ms in practice).
+	static bool DiscoverLocalIPv4(char* outIp, size_t outCap);
+
+	// Enumerate ALL up-and-running IPv4 interface addresses on this
+	// host.  The caller should publish every result as a candidate
+	// endpoint — the kernel's primary (default-route) interface may
+	// not be the one that reaches a specific peer when a VPN, tether,
+	// or secondary NIC is active.  Excludes loopback (127/8) and
+	// link-local APIPA (169.254/16).  The result vector is cleared
+	// first.  Non-empty return on at least one usable interface.
+	//
+	// Portable impl uses getifaddrs() on POSIX (Linux, macOS, BSD,
+	// Android) and GetAdaptersAddresses() on Windows.
+	static bool EnumerateLocalIPv4s(std::vector<std::string>& out);
 
 	// Non-blocking send.  Returns true if the datagram was queued to
 	// the kernel; false on EWOULDBLOCK or any other error.  UDP

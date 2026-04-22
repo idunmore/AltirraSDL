@@ -82,6 +82,12 @@ inline constexpr const char *kPathHeartbeatSuffix = "/heartbeat";
 // Header name carrying the session's delete token.
 inline constexpr const char *kHeaderSessionToken = "X-Session-Token";
 
+// UDP reflector (STUN-lite).  Co-located with the HTTP lobby — a
+// single UDP socket on this port echoes the observed source
+// endpoint back to the sender.  Stateless; see nat_discovery.h for
+// the 8-byte request / 24-byte response wire format.
+inline constexpr uint16_t kReflectorPortDefault = 8081;
+
 // -------------------------------------------------------------------
 // JSON field names — kept as constants so a server-side typo can't
 // silently break the client-side parser (and vice versa).
@@ -117,6 +123,17 @@ namespace Field {
     inline constexpr const char *kWaitingCount    = "waiting";
     inline constexpr const char *kPlayingCount    = "playing";
     inline constexpr const char *kHostCount       = "hosts";
+
+    // v3: NAT traversal.  The host enumerates every endpoint at which
+    // a joiner might be able to reach it and sends them all in
+    // `candidates`, a SEMICOLON-separated "ip:port;ip:port;..." list
+    // ordered "best first" (LAN → public/srflx → loopback).  Old
+    // clients ignore the field and fall back to hostEndpoint (which
+    // is the first entry); new clients spray NetHello to every
+    // endpoint in parallel and let the first responder win.  The
+    // format is a plain JSON string — no array parser needed on
+    // either side.
+    inline constexpr const char *kCandidates      = "candidates";
 
     // Error response.
     inline constexpr const char *kError           = "error";

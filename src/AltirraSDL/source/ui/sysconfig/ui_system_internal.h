@@ -43,6 +43,7 @@ void RenderDebuggerCfgCategory(ATSimulator &sim);
 void RenderUICategory(ATSimulator &sim);
 void RenderDisplay2Category(ATSimulator &sim);
 void RenderSettingsCfgCategory(ATSimulator &sim);
+void RenderOnlinePlayCategory(ATSimulator &sim);
 
 // Firmware page lives in ui_firmware_category.cpp (ui/firmware/).
 void RenderFirmwareCategory(ATSimulator &sim);

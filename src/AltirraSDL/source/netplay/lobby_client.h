@@ -32,7 +32,12 @@ struct LobbySession {
 	std::string sessionId;
 	std::string cartName;
 	std::string hostHandle;
-	std::string hostEndpoint;   // "a.b.c.d:port"
+	std::string hostEndpoint;   // "a.b.c.d:port" — backward-compat single endpoint
+	// v3 NAT traversal: semicolon-separated list of endpoints the
+	// joiner should try (LAN → srflx/public → loopback).  When
+	// non-empty this takes precedence over hostEndpoint.  Empty for
+	// old hosts; the client falls back to hostEndpoint in that case.
+	std::string candidates;
 	std::string region;
 	int         playerCount    = 0;
 	int         maxPlayers     = 0;
@@ -61,7 +66,13 @@ struct LobbySession {
 struct LobbyCreateRequest {
 	std::string cartName;
 	std::string hostHandle;
-	std::string hostEndpoint;   // "public-ip-or-hostname:port"
+	std::string hostEndpoint;   // "public-ip-or-hostname:port" — primary/legacy
+	// v3 candidates — semicolon-separated "ip:port;ip:port;..." list.
+	// The host populates this with every endpoint it thinks a joiner
+	// might reach it at (LAN / srflx / loopback / manual public).  The
+	// first entry SHOULD match hostEndpoint so that old clients that
+	// only understand hostEndpoint still get a reachable address.
+	std::vector<std::string> candidates;
 	std::string region;
 	int         playerCount    = 1;
 	int         maxPlayers     = 2;

@@ -101,6 +101,7 @@ enum {
 	kCat_Fonts,         // Emulator > Fonts
 	kCat_Display2,      // Emulator > Display Effects
 	kCat_SettingsCfg,   // Emulator > Settings
+	kCat_OnlinePlay,    // Emulator > Online Play (SDL3-only: netplay prefs)
 	kCat_Count
 };
 
@@ -158,6 +159,7 @@ static const TreeEntry kTreeEntries[] = {
 	{ "Fonts",          kCat_Fonts,     1 },
 	{ "Display Effects", kCat_Display2, 1 },
 	{ "Settings",       kCat_SettingsCfg, 1 },
+	{ "Online Play",    kCat_OnlinePlay, 1 },
 };
 static const int kNumTreeEntries = sizeof(kTreeEntries) / sizeof(kTreeEntries[0]);
 
@@ -232,6 +234,7 @@ void ATUIRenderSystemConfig(ATSimulator &sim, ATUIState &state) {
 	case kCat_Fonts:          RenderFontsCategory(sim); break;
 	case kCat_Display2:       RenderDisplay2Category(sim); break;
 	case kCat_SettingsCfg:    RenderSettingsCfgCategory(sim); break;
+	case kCat_OnlinePlay:     RenderOnlinePlayCategory(sim); break;
 	}
 	ImGui::EndChild();
 

@@ -14,6 +14,9 @@
 #include "gtia.h"
 #include "simulator.h"
 #include "android_platform.h"
+#include "netplay/netplay_glue.h"
+#include "ui/emotes/emote_picker.h"
+#include "ui/emotes/emote_netplay.h"
 
 extern ATSimulator g_sim;
 
@@ -246,6 +249,14 @@ bool ATTouchControls_HandleEvent(const SDL_Event &ev, const ATTouchLayout &layou
 	const ATTouchLayoutConfig &config,
 	bool showControls, bool showMenu)
 {
+	// When the emote picker is open it captures the whole screen as a
+	// modal popup.  Don't let touch-controls claim taps on the
+	// underlying joystick / fire / hamburger zones — those would trigger
+	// sim input underneath the picker.  Returning false lets ImGui
+	// consume the event normally so the picker's buttons receive taps.
+	if (ATEmotePicker::IsOpen())
+		return false;
+
 	// --- Mouse-click fallback for the hamburger icon ---
 	// Only the menu button has a mouse binding.  Gameplay controls
 	// stay touch-only — desktop users drive the game with keyboard /
@@ -268,6 +279,13 @@ bool ATTouchControls_HandleEvent(const SDL_Event &ev, const ATTouchLayout &layou
 		if (ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
 			if (layout.btnMenu.Contains(mx, my) && !s_menuMouseActive) {
 				s_menuMouseActive = true;
+				return true;
+			}
+			if (ATNetplayGlue::IsLockstepping()
+				&& ATEmoteNetplay::GetSendEnabled()
+				&& layout.btnEmote.Contains(mx, my))
+			{
+				ATEmotePicker::Open();
 				return true;
 			}
 			return false;
@@ -312,6 +330,19 @@ bool ATTouchControls_HandleEvent(const SDL_Event &ev, const ATTouchLayout &layou
 		if (showMenu && layout.btnMenu.Contains(px, py) && !s_menuFingerActive) {
 			s_menuFinger = fid;
 			s_menuFingerActive = true;
+			HapticPulse(10);
+			return true;
+		}
+
+		// --- EMOTE BUTTON ---
+		// Only active during netplay lockstep with Send Emotes enabled.
+		// Opens immediately on DOWN — the picker replaces the button so
+		// there is no scroll-under risk for the release event.
+		if (ATNetplayGlue::IsLockstepping()
+			&& ATEmoteNetplay::GetSendEnabled()
+			&& layout.btnEmote.Contains(px, py))
+		{
+			ATEmotePicker::Open();
 			HapticPulse(10);
 			return true;
 		}
@@ -712,6 +743,34 @@ void ATTouchControls_Render(const ATTouchLayout &layout, const ATTouchLayoutConf
 			float ly = cy + i * lineSpacing;
 			dl->AddLine(ImVec2(cx - hw, ly), ImVec2(cx + hw, ly), menuColor, thickness);
 		}
+	}
+
+	// --- Online Play emote button (only during active netplay + send
+	//     toggle on) ---
+	if (ATNetplayGlue::IsLockstepping() && ATEmoteNetplay::GetSendEnabled()) {
+		const ATTouchRect &e = layout.btnEmote;
+		DrawButton(dl, e, "", btnConsole, textColor, false);
+		// Speech-bubble glyph drawn procedurally so we don't depend on
+		// an emoji font being present.
+		float cx = e.CenterX();
+		float cy = e.CenterY();
+		float w = e.Width() * 0.55f;
+		float h = e.Height() * 0.45f;
+		ImU32 glyph = IM_COL32(255, 255, 255, (int)(220 * alpha));
+		dl->AddRect(ImVec2(cx - w * 0.5f, cy - h * 0.5f),
+			ImVec2(cx + w * 0.5f, cy + h * 0.3f),
+			glyph, 4.0f, 0, 2.0f);
+		// Tail
+		dl->AddTriangleFilled(
+			ImVec2(cx - w * 0.15f, cy + h * 0.3f),
+			ImVec2(cx + w * 0.15f, cy + h * 0.3f),
+			ImVec2(cx - w * 0.05f, cy + h * 0.55f),
+			glyph);
+		// Three dots inside
+		float dr = 1.5f;
+		dl->AddCircleFilled(ImVec2(cx - w * 0.22f, cy - h * 0.1f), dr, glyph);
+		dl->AddCircleFilled(ImVec2(cx,             cy - h * 0.1f), dr, glyph);
+		dl->AddCircleFilled(ImVec2(cx + w * 0.22f, cy - h * 0.1f), dr, glyph);
 	}
 
 	if (!showControls)

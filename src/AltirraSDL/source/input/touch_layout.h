@@ -68,6 +68,7 @@ struct ATTouchLayout {
 	ATTouchRect btnOption;
 	ATTouchRect btnWarp;       // ">>" fast-forward (press-and-hold)
 	ATTouchRect btnMenu;       // Hamburger icon
+	ATTouchRect btnEmote;      // Online Play communication icon picker (visible only during netplay)
 
 	// Fire buttons
 	ATTouchRect btnFireA;
