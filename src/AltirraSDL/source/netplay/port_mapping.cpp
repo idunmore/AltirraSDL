@@ -59,6 +59,13 @@
 #  define PM_INVALID_SOCK   ((intptr_t)-1)
 #endif
 
+#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
+#  include <sys/sysctl.h>
+#  include <net/route.h>
+#  include <net/if.h>
+#  include <net/if_dl.h>
+#endif
+
 namespace ATNetplay {
 
 namespace {
@@ -134,12 +141,7 @@ uint32_t DiscoverDefaultGateway() {
 	return gw;
 }
 
-#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__)
-
-#include <sys/sysctl.h>
-#include <net/route.h>
-#include <net/if.h>
-#include <net/if_dl.h>
+#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
 
 uint32_t DiscoverDefaultGateway() {
 	int mib[7] = { CTL_NET, PF_ROUTE, 0, AF_INET, NET_RT_FLAGS,
