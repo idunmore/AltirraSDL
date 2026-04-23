@@ -62,6 +62,12 @@ namespace {
 		{ "View.NextANTICVisMode",         0, { kATInputCode_KeyF8,  SHIFT } },
 		{ "View.NextGTIAVisMode",          0, { kATInputCode_KeyF8,  CTRL } },
 		{ "System.TogglePause",            0, { kATInputCode_KeyF9,  0 } },
+		// F1 is repurposed here for the emote picker, but only while
+		// netplay is lockstepping — otherwise the F1/PulseWarp bindings
+		// above fire and warp behaves as normal.  The command handler
+		// (CmdPulseWarpOn) routes to the picker when online and to warp
+		// otherwise, so a single key works in both contexts.  No
+		// separate accel entry needed; this one stays off the table.
 		{ "Input.CaptureMouse",            0, { kATInputCode_KeyF12, 0 } },
 		{ "View.ToggleFullScreen",         0, { kATInputCode_KeyReturn, ALT } },
 		{ "System.ToggleSlowMotion",       0, { VK_BACK,             ALT } },

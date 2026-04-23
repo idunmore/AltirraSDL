@@ -34,6 +34,16 @@
 #include <unordered_map>
 #include <vector>
 
+// POSIX socket headers for the UDP reflector thread (Linux/Oracle Cloud
+// deployment).  The rest of the server uses cpp-httplib which already
+// pulls these in; we include explicitly so RunReflector compiles
+// regardless of include order.
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#include <cerrno>
+
 namespace {
 
 using namespace ATLobby;
@@ -124,6 +134,10 @@ struct Session {
 	std::string cartName;
 	std::string hostHandle;
 	std::string hostEndpoint;
+	// v3: semicolon-separated list of "ip:port" endpoints the joiner
+	// should try (LAN, srflx/public, loopback).  Empty for old clients
+	// — they only publish hostEndpoint.  See lobby_protocol.h comment.
+	std::string candidates;
 	std::string region;
 	int         playerCount    = 1;
 	int         maxPlayers     = 2;
@@ -349,6 +363,10 @@ void WriteSessionJson(JsonBuilder& b, const Session& s) {
 	b.key(Field::kCartName);        b.str(s.cartName);     b.raw(',');
 	b.key(Field::kHostHandle);      b.str(s.hostHandle);   b.raw(',');
 	b.key(Field::kHostEndpoint);    b.str(s.hostEndpoint); b.raw(',');
+	// v3 candidates: always emit even when empty — clients distinguish
+	// "server silent" from "host didn't publish" the same way they do
+	// for firmware CRCs.  Old clients ignore the unknown key.
+	b.key(Field::kCandidates);      b.str(s.candidates);   b.raw(',');
 	b.key(Field::kRegion);          b.str(s.region);       b.raw(',');
 	b.key(Field::kPlayerCount);     b.num(s.playerCount);  b.raw(',');
 	b.key(Field::kMaxPlayers);      b.num(s.maxPlayers);   b.raw(',');
@@ -393,6 +411,7 @@ struct CreateReq {
 	std::string cartName;
 	std::string hostHandle;
 	std::string hostEndpoint;
+	std::string candidates;   // v3: semicolon-separated "ip:port;..."
 	std::string region;
 	std::string visibility;
 	std::string cartArtHash;
@@ -431,6 +450,7 @@ bool ParseCreate(const std::string& body, CreateReq& r,
 		if      (key == Field::kCartName)        c.parseString(r.cartName);
 		else if (key == Field::kHostHandle)      c.parseString(r.hostHandle);
 		else if (key == Field::kHostEndpoint)    c.parseString(r.hostEndpoint);
+		else if (key == Field::kCandidates)      c.parseString(r.candidates);
 		else if (key == Field::kRegion)          c.parseString(r.region);
 		else if (key == Field::kVisibility)      c.parseString(r.visibility);
 		else if (key == Field::kCartArtHash)     c.parseString(r.cartArtHash);
@@ -489,6 +509,11 @@ std::string ValidateCreate(CreateReq& r) {
 		return "hostHandle: 1.." + std::to_string(kHostHandleMax) + " chars required";
 	if (!IsEndpoint(r.hostEndpoint))
 		return "hostEndpoint: host:port required";
+	// v3 candidates: cap the length to deter abuse (8 candidates at
+	// ~40 bytes each = 320 bytes).  Content is not parsed here —
+	// joiner-side splitter validates each entry.
+	if (r.candidates.size() > 512)
+		return "candidates: <=512 chars";
 	if (r.maxPlayers < kMinPlayers || r.maxPlayers > kMaxPlayersLimit)
 		return "maxPlayers: 2..8 required";
 	if (r.playerCount < 1 || r.playerCount > r.maxPlayers)
@@ -692,6 +717,7 @@ void Install(httplib::Server& srv, Store& store) {
 			in.cartName     = r.cartName;
 			in.hostHandle   = r.hostHandle;
 			in.hostEndpoint = r.hostEndpoint;
+			in.candidates   = r.candidates;
 			in.region       = r.region;
 			in.playerCount  = r.playerCount;
 			in.maxPlayers   = r.maxPlayers;
@@ -867,6 +893,130 @@ Config LoadConfig() {
 // only the production main() below is skipped.
 #ifndef ALTIRRA_LOBBY_TEST_MAIN
 
+// -----------------------------------------------------------------
+// UDP reflector (STUN-lite)
+// -----------------------------------------------------------------
+//
+// Listens on UDP <reflectorPort> on every interface.  For each
+// request matching the 8-byte magic 'A' 'S' 'D' 'R' + txid, replies
+// with 24 bytes: magic + txid + family(=4) + pad + port(BE) + ipv4(BE)
+// + 8 reserved bytes.
+//
+// Stateless — one thread, one blocking socket, zero per-session
+// state.  Bandwidth cost is negligible: ~30 bytes per probe, each
+// client probes once per session.
+
+void RunReflector(uint16_t port, std::atomic<bool>& stop) {
+	int s = ::socket(AF_INET, SOCK_DGRAM, 0);
+	if (s < 0) {
+		std::fprintf(stderr, "reflector: socket() failed: %s\n",
+			std::strerror(errno));
+		return;
+	}
+
+	int yes = 1;
+	::setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof yes);
+
+	sockaddr_in local {};
+	local.sin_family = AF_INET;
+	local.sin_port = htons(port);
+	local.sin_addr.s_addr = htonl(INADDR_ANY);
+	if (::bind(s, (const sockaddr*)&local, sizeof local) != 0) {
+		std::fprintf(stderr, "reflector: bind(:%u) failed: %s\n",
+			(unsigned)port, std::strerror(errno));
+		::close(s);
+		return;
+	}
+
+	// 1 s poll timeout so we can notice `stop` promptly on shutdown.
+	timeval tv;
+	tv.tv_sec = 1;
+	tv.tv_usec = 0;
+	::setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+
+	std::fprintf(stdout, "reflector listening on UDP :%u\n",
+		(unsigned)port);
+	std::fflush(stdout);
+
+	// Per-source-IP rate limit: simple fixed-window counter.  UDP is
+	// spoofable so this only stops honest heavy use (a reconnect
+	// storm, a buggy client); a malicious peer can still forge
+	// source IPs.  Amplification factor is 3x (8-byte request, 24-
+	// byte response) which is low, but rate-limiting keeps it
+	// negligible.  Window: 1 second; cap: 20 probes/sec per IP.
+	constexpr int      kRateWindowSec      = 1;
+	constexpr int      kRateMaxPerWindow   = 20;
+	constexpr size_t   kRateTableMaxEntries = 4096;
+	struct RateEntry { int64_t windowSec = 0; int count = 0; };
+	std::unordered_map<uint32_t, RateEntry> rateTable;
+
+	uint8_t buf[64];
+	while (!stop.load(std::memory_order_relaxed)) {
+		sockaddr_in from {};
+		socklen_t fromLen = sizeof from;
+		int n = ::recvfrom(s, (char*)buf, (int)sizeof buf, 0,
+			(sockaddr*)&from, &fromLen);
+		if (n < 0) {
+			if (errno == EAGAIN || errno == EWOULDBLOCK) continue;
+			if (errno == EINTR) continue;
+			break;
+		}
+		if (n < 8) continue;
+		if (buf[0] != 'A' || buf[1] != 'S' ||
+		    buf[2] != 'D' || buf[3] != 'R') continue;
+
+		// Per-IP rate check.
+		int64_t nowSec = NowMs() / 1000;
+		uint32_t key   = from.sin_addr.s_addr;
+		auto& re = rateTable[key];
+		if (re.windowSec != nowSec) {
+			re.windowSec = nowSec;
+			re.count = 0;
+		}
+		if (++re.count > kRateMaxPerWindow) {
+			// Silently drop — no response means the sender can't
+			// distinguish "rate-limited" from "no route" and won't
+			// amplify.  Cheapest possible mitigation.
+			continue;
+		}
+
+		// Periodically evict stale entries so the table doesn't
+		// grow without bound under a wide IP sweep.  O(N) but
+		// infrequent (only when the table exceeds the cap).
+		if (rateTable.size() > kRateTableMaxEntries) {
+			for (auto it = rateTable.begin(); it != rateTable.end(); ) {
+				if (it->second.windowSec < nowSec - 60)
+					it = rateTable.erase(it);
+				else ++it;
+			}
+		}
+
+		uint8_t resp[24] = {};
+		resp[0] = 'A'; resp[1] = 'S'; resp[2] = 'D'; resp[3] = 'R';
+		// Echo txid verbatim.
+		resp[4] = buf[4]; resp[5] = buf[5];
+		resp[6] = buf[6]; resp[7] = buf[7];
+		resp[8]  = 4;          // family = IPv4
+		resp[9]  = 0;          // pad
+		// port big-endian
+		uint16_t portBE = ntohs(from.sin_port);
+		resp[10] = (uint8_t)((portBE >> 8) & 0xFF);
+		resp[11] = (uint8_t)(portBE & 0xFF);
+		// ipv4 big-endian
+		uint32_t ipBE = ntohl(from.sin_addr.s_addr);
+		resp[12] = (uint8_t)((ipBE >> 24) & 0xFF);
+		resp[13] = (uint8_t)((ipBE >> 16) & 0xFF);
+		resp[14] = (uint8_t)((ipBE >> 8) & 0xFF);
+		resp[15] = (uint8_t)(ipBE & 0xFF);
+		// resp[16..23] reserved, zero
+
+		::sendto(s, (const char*)resp, (int)sizeof resp, 0,
+			(const sockaddr*)&from, sizeof from);
+	}
+
+	::close(s);
+}
+
 int main(int argc, char **argv) {
 	(void)argc; (void)argv;
 
@@ -874,6 +1024,19 @@ int main(int argc, char **argv) {
 	Store  store(cfg);
 	Sweeper sweeper(store);
 	sweeper.Start();
+
+	// UDP reflector port: default kReflectorPortDefault, env override.
+	uint16_t reflectorPort = kReflectorPortDefault;
+	if (const char* e = std::getenv("UDP_REFLECTOR_PORT")) {
+		int v = std::atoi(e);
+		if (v > 0 && v < 65536) reflectorPort = (uint16_t)v;
+	}
+	std::atomic<bool> reflectorStop{false};
+	std::thread reflectorThread;
+	if (reflectorPort > 0) {
+		reflectorThread = std::thread(
+			[&] { RunReflector(reflectorPort, reflectorStop); });
+	}
 
 	httplib::Server srv;
 	Install(srv, store);
@@ -905,6 +1068,8 @@ int main(int argc, char **argv) {
 
 	bool ok = srv.listen(cfg.bind, cfg.port);
 	sweeper.Stop();
+	reflectorStop.store(true);
+	if (reflectorThread.joinable()) reflectorThread.join();
 	std::fputs("bye\n", stdout);
 	return ok ? 0 : 1;
 }

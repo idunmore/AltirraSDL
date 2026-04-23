@@ -65,6 +65,10 @@ DecodeResult DecodeResyncStart(const uint8_t* buf, size_t len, NetResyncStart& o
 size_t EncodeResyncDone(const NetResyncDone& d, uint8_t* buf, size_t bufSize);
 DecodeResult DecodeResyncDone(const uint8_t* buf, size_t len, NetResyncDone& out);
 
+// --- NetEmote --------------------------------------------------------------
+size_t EncodeEmote(const NetEmote& e, uint8_t* buf, size_t bufSize);
+DecodeResult DecodeEmote(const uint8_t* buf, size_t len, NetEmote& out);
+
 // --- handle/cart string helpers (null-terminated UTF-8) --------------------
 // Truncates or zero-pads to fit the fixed-size wire field.
 void HandleFromString(const char* s, uint8_t out[kHandleLen]);

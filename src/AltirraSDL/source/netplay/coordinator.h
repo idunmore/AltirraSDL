@@ -104,6 +104,21 @@ public:
 	               bool acceptTos,
 	               const uint8_t* entryCodeHash /* 16 bytes or nullptr */);
 
+	// Multi-candidate join (v3 NAT traversal).  Accepts a list of host
+	// endpoints ("host:port;host:port;...").  Binds a UDP socket on
+	// localPort (0 = ephemeral), resolves every candidate, and begins
+	// spraying NetHello to all resolved endpoints every kHelloRetryMs
+	// until one replies with NetWelcome or kHelloTimeoutMs elapses.
+	// Same identity params as BeginJoin; returns false on socket bind
+	// failure or when zero candidates resolved.
+	bool BeginJoinMulti(const char* hostCandidatesSemicolonList,
+	                    uint16_t localPort,
+	                    const char* playerHandle,
+	                    uint64_t osRomHash,
+	                    uint64_t basicRomHash,
+	                    bool acceptTos,
+	                    const uint8_t* entryCodeHash /* 16 bytes or nullptr */);
+
 	// ---- main-loop driver -------------------------------------------------
 
 	// Call once per main-loop iteration with a monotonic ms clock.
@@ -211,6 +226,13 @@ public:
 	void AcceptPendingJoiner(size_t i = 0);
 	void RejectPendingJoiner(size_t i = 0);
 
+	// ---- emote (fire-and-forget UI reactions) -----------------------------
+
+	// Send a NetEmote to the peer.  No-op unless Phase::Lockstepping
+	// (only phase where mPeer is guaranteed live and stable).  Returns
+	// true iff the packet was actually handed to the socket.
+	bool SendEmote(uint8_t iconId);
+
 	// ---- termination ------------------------------------------------------
 
 	// Send a NetBye and transition to Ended.  Idempotent.
@@ -253,6 +275,7 @@ private:
 	void HandleBye(const NetBye& b, const Endpoint& from);
 	void HandleResyncStart(const NetResyncStart& s, uint64_t nowMs);
 	void HandleResyncDone(const NetResyncDone& d, uint64_t nowMs);
+	void HandleEmote(const NetEmote& e);
 
 	// Resync: begin a host-initiated mid-session savestate transfer.
 	// Called from Poll() when the host detects a local desync or when
@@ -277,6 +300,17 @@ private:
 	Transport mTransport;
 	Endpoint  mPeer;                 // set once we learn the peer's addr
 	bool      mPeerKnown = false;
+
+	// Multi-candidate join (v3 NAT traversal).  When the joiner starts
+	// a join the caller may pass several candidate host endpoints; the
+	// coordinator sprays NetHello to all of them at kHelloRetryMs
+	// intervals until one replies with NetWelcome.  On first Welcome
+	// we lock mPeer to the responder and clear this list.
+	std::vector<Endpoint> mHelloCandidates;
+	uint64_t              mLastHelloMs   = 0;
+	uint64_t              mHelloStartMs  = 0;
+	static constexpr uint64_t kHelloRetryMs    = 250;
+	static constexpr uint64_t kHelloTimeoutMs  = 15000;
 
 	// Phase + role.
 	Phase mPhase = Phase::Idle;

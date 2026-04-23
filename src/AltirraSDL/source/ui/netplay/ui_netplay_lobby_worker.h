@@ -68,6 +68,16 @@ struct LobbyResult {
 	ATNetplay::LobbyCreateResponse       create;    // Create
 	ATNetplay::LobbyStats                stats;     // Stats
 	std::string                          sourceLobby;  // section name
+
+	// NAT-PMP / PCP port mapping acquired during a Create op (empty
+	// protocol string when no mapping was granted).  The main thread
+	// stashes these on HostedGame so the delete path can release the
+	// router-forward politely.
+	std::string natPmpProtocol;
+	std::string natPmpExternalIp;
+	uint16_t    natPmpExternalPort = 0;
+	uint16_t    natPmpInternalPort = 0;
+	uint32_t    natPmpLifetimeSec  = 0;
 };
 
 class LobbyWorker {

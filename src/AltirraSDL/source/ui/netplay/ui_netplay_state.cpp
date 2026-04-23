@@ -20,6 +20,7 @@
 
 extern ATSimulator g_sim;
 extern VDStringA ATGetConfigDir();
+extern void ATRegistryFlushToDisk();
 
 #include <cstdio>
 #include <cstdlib>
@@ -678,6 +679,19 @@ void SaveToRegistry() {
 	key.setBool  ("ShowBrowserArt",   g_state.prefs.showBrowserArt);
 
 	SaveOffers(key);
+
+	// Persist immediately.  On mobile the OS frequently kills the app
+	// without a clean shutdown, so relying on the shutdown-time flush
+	// means first-run preferences (nickname, anonymous flag, offers)
+	// are lost.  Flushing here mirrors what mobile_settings.cpp does
+	// for ATOptionsSave and is cheap — the in-memory registry diffs
+	// itself against the on-disk INI.
+	try {
+		ATRegistryFlushToDisk();
+	} catch (...) {
+		// Best-effort: a failed flush still leaves the in-memory
+		// registry correct, and the shutdown pass will retry.
+	}
 }
 
 void Shutdown() {

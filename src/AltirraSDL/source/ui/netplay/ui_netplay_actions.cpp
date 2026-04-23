@@ -13,6 +13,9 @@
 #include "netplay/lobby_protocol.h"
 #include "netplay/netplay_simhash.h"
 #include "netplay/packets.h"
+#include "netplay/nat_discovery.h"
+#include "netplay/port_mapping.h"
+#include "netplay/transport.h"
 
 #include "ui/gamelibrary/game_library.h"
 #include "ui/core/ui_main.h"
@@ -213,9 +216,85 @@ void PostLobbyCreate(HostedGame& o) {
 	ATNetplay::LobbyCreateRequest cr;
 	cr.cartName        = o.gameName;
 	cr.hostHandle      = ResolvedNickname();
-	char epb[48];
-	std::snprintf(epb, sizeof epb, "127.0.0.1:%u", (unsigned)o.boundPort);
-	cr.hostEndpoint    = epb;
+
+	// Build the candidate list: every usable LAN interface + loopback.
+	// Server-reflexive (public) and router-mapped (NAT-PMP) endpoints
+	// are added later by the lobby_worker against the target lobby's
+	// reflector.
+	//
+	// We enumerate EVERY non-loopback, non-link-local IPv4 interface
+	// rather than picking just the default-route one.  This matters
+	// because:
+	//   - A host with a VPN active has the VPN IP as the default
+	//     route, but same-LAN joiners on the real WiFi can only
+	//     reach the WiFi IP.  Publishing both gets everyone.
+	//   - Tethered / dual-NIC setups (e.g. mobile hotspot + ethernet)
+	//     similarly benefit from advertising all interfaces.
+	//   - Android devices often have cellular + WiFi simultaneously;
+	//     publishing both lets the joiner pick whichever is routable.
+	std::vector<std::string> lanIps;
+	ATNetplay::Transport::EnumerateLocalIPv4s(lanIps);
+
+	cr.candidates.clear();
+
+	// First candidate doubles as the legacy `hostEndpoint`.  Prefer
+	// the default-route interface (what DiscoverLocalIPv4 returns)
+	// as the primary — it's the most likely to work for random
+	// internet joiners on the same ISP.
+	char primaryLan[32] = {};
+	bool havePrimary = ATNetplay::Transport::DiscoverLocalIPv4(
+		primaryLan, sizeof primaryLan);
+
+	char epb[64];
+	if (havePrimary) {
+		std::snprintf(epb, sizeof epb, "%s:%u", primaryLan,
+			(unsigned)o.boundPort);
+		cr.candidates.push_back(epb);
+	} else if (!lanIps.empty()) {
+		// Enumeration found something but default-route path didn't
+		// — still publish what we found.
+		std::snprintf(epb, sizeof epb, "%s:%u", lanIps.front().c_str(),
+			(unsigned)o.boundPort);
+		cr.candidates.push_back(epb);
+	} else {
+		// Completely offline — loopback only.  Session is
+		// unreachable from off-box; UI should flag this.
+		std::snprintf(epb, sizeof epb, "127.0.0.1:%u",
+			(unsigned)o.boundPort);
+		cr.candidates.push_back(epb);
+	}
+	cr.hostEndpoint = epb;   // v2 clients see this single best guess
+
+	// Add every OTHER interface we found (skipping the primary
+	// we already published).
+	for (const auto& ip : lanIps) {
+		char cand[64];
+		std::snprintf(cand, sizeof cand, "%s:%u", ip.c_str(),
+			(unsigned)o.boundPort);
+		bool dup = false;
+		for (const auto& existing : cr.candidates) {
+			if (existing == cand) { dup = true; break; }
+		}
+		if (!dup) cr.candidates.push_back(cand);
+	}
+
+	// Loopback as the final fallback for same-box testing.
+	{
+		char loop[32];
+		std::snprintf(loop, sizeof loop, "127.0.0.1:%u",
+			(unsigned)o.boundPort);
+		cr.candidates.push_back(loop);
+	}
+
+	{
+		std::string joined;
+		for (size_t i = 0; i < cr.candidates.size(); ++i) {
+			if (i) joined += ", ";
+			joined += cr.candidates[i];
+		}
+		g_ATLCNetplay("host candidates (pre-srflx / pre-NAT-PMP): [%s]",
+			joined.c_str());
+	}
 	cr.region          = "global";
 	cr.playerCount     = 1;
 	cr.maxPlayers      = 2;
@@ -287,6 +366,34 @@ void PostLobbyDelete(HostedGame& o) {
 		GetWorker().Post(std::move(req), reg.section);
 	}
 	o.lobbyRegistrations.clear();
+
+	// Release the NAT-PMP / PCP mapping we acquired at Create time.
+	// The router would drop it when the lease expires (up to 1 h)
+	// but being polite avoids leaving orphan mappings when the user
+	// cycles sessions quickly — useful both for the router's NAT
+	// table pressure and for re-using the same external port on the
+	// next session.  Release is a fire-and-forget single UDP packet
+	// to the gateway, so we can do it from the main thread without
+	// any latency concern.
+	if (!o.natPmpProtocol.empty() && o.natPmpInternalPort != 0) {
+		ATNetplay::PortMapping m;
+		m.protocol     = o.natPmpProtocol;
+		m.externalIp   = o.natPmpExternalIp;
+		m.externalPort = o.natPmpExternalPort;
+		m.internalPort = o.natPmpInternalPort;
+		m.lifetimeSec  = 0;    // request release
+		ATNetplay::ReleaseUdpPortMapping(m);
+		g_ATLCNetplay("NAT-PMP: released mapping %u -> %s:%u",
+			(unsigned)o.natPmpInternalPort,
+			o.natPmpExternalIp.c_str(),
+			(unsigned)o.natPmpExternalPort);
+		o.natPmpProtocol.clear();
+		o.natPmpExternalIp.clear();
+		o.natPmpExternalPort = 0;
+		o.natPmpInternalPort = 0;
+		o.natPmpLifetimeSec  = 0;
+		o.natPmpAcquiredMs   = 0;
+	}
 }
 
 // Kick off an actual host coordinator for this offer, binding an
@@ -954,8 +1061,21 @@ void StartJoiningAction() {
 		codePtr = codeHash;
 	}
 
+	// v3 NAT traversal: prefer the candidates list (LAN;srflx;loopback)
+	// over the single hostEndpoint when the host published one.  The
+	// coordinator sprays NetHello to each candidate in parallel and
+	// locks onto the first responder.  Fall back to hostEndpoint
+	// when candidates is empty (old hosts / v2 lobby entries).
+	const std::string& cand = st.session.joinTarget.candidates;
+	const char* target = cand.empty()
+		? st.session.joinTarget.hostEndpoint.c_str()
+		: cand.c_str();
+	g_ATLCNetplay("joiner: StartJoin target = \"%s\" (%s)",
+		target,
+		cand.empty() ? "legacy hostEndpoint" : "v3 candidates");
+
 	bool ok = ATNetplayGlue::StartJoin(
-		st.session.joinTarget.hostEndpoint.c_str(),
+		target,
 		ResolvedNickname().c_str(),
 		/*osRomHash*/    0,
 		/*basicRomHash*/ 0,

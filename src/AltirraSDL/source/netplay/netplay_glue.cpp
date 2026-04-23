@@ -608,7 +608,12 @@ bool StartJoin(const char* hostAddress,
 	g_lastJoinError.clear();
 	g_joinerTerminalTicks = 0;
 	g_joiner = std::make_unique<ATNetplay::Coordinator>();
-	bool ok = g_joiner->BeginJoin(hostAddress, playerHandle,
+	// Route through BeginJoinMulti so both single-endpoint ("host:port")
+	// and multi-candidate ("host:port;host:port;...") strings are
+	// handled uniformly.  A single candidate just means "spray to
+	// exactly one endpoint with retries" — which is strictly better
+	// than the old one-shot send under packet loss.
+	bool ok = g_joiner->BeginJoinMulti(hostAddress, 0, playerHandle,
 		osRomHash, basicRomHash, acceptTos, entryCodeHash);
 	if (!ok) {
 		// Keep the failed coordinator around so callers can read
@@ -720,6 +725,12 @@ void DisconnectActive() {
 	// after the user chose to leave.
 	g_lastJoinPhase = Phase::None;
 	g_lastJoinError.clear();
+}
+
+bool SendEmote(uint8_t iconId) {
+	ATNetplay::Coordinator *c = ActiveLockstep();
+	if (!c) return false;
+	return c->SendEmote(iconId);
 }
 
 } // namespace ATNetplayGlue

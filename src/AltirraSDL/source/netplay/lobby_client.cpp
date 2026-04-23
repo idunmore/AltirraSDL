@@ -191,6 +191,7 @@ bool ReadSession(JsonCursor& c, LobbySession& s) {
 		else if (key == "cartName")       c.parseString(s.cartName);
 		else if (key == "hostHandle")     c.parseString(s.hostHandle);
 		else if (key == "hostEndpoint")   c.parseString(s.hostEndpoint);
+		else if (key == "candidates")     c.parseString(s.candidates);
 		else if (key == "region")         c.parseString(s.region);
 		else if (key == "visibility")     c.parseString(s.visibility);
 		else if (key == "cartArtHash")    c.parseString(s.cartArtHash);
@@ -334,6 +335,16 @@ bool LobbyClient::Create(const LobbyCreateRequest& req,
 	AppendKV(body, "cartName",        req.cartName,        first);
 	AppendKV(body, "hostHandle",      req.hostHandle,      first);
 	AppendKV(body, "hostEndpoint",    req.hostEndpoint,    first);
+	{
+		// v3: serialize candidates vector as a semicolon-delimited
+		// string so the JSON reader on either side stays minimal.
+		std::string joined;
+		for (size_t i = 0; i < req.candidates.size(); ++i) {
+			if (i) joined.push_back(';');
+			joined += req.candidates[i];
+		}
+		AppendKV(body, "candidates",  joined,              first);
+	}
 	AppendKV(body, "region",          req.region,          first);
 	AppendKV(body, "playerCount",     req.playerCount,     first);
 	AppendKV(body, "maxPlayers",      req.maxPlayers,      first);

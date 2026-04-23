@@ -27,6 +27,8 @@
 
 #include "input/touch_widgets.h"
 #include "ui/core/ui_mode.h"
+#include "ui/emotes/emote_netplay.h"
+#include "settings.h"
 
 #include "netplay/netplay_glue.h"
 #include "netplay/lobby_config.h"
@@ -751,6 +753,25 @@ void RenderOnlinePlayPrefsBody() {
 	ATTouchToggle("Show game art in Online Play",
 		&st.prefs.showBrowserArt);
 	ATTouchToggle("Show in-session HUD", &st.prefs.showSessionHUD);
+
+	// Communication icons — same two toggles as Configure System >
+	// Emulator > Online Play on Desktop.  Kept in sync through the
+	// shared ATEmoteNetplay Get/Set accessors (registry-backed via the
+	// Environment settings callback).
+	ImGui::Spacing();
+	ATTouchSection("Communication Icons");
+	{
+		bool sendEmotes = ATEmoteNetplay::GetSendEnabled();
+		if (ATTouchToggle("Send icons to the other player", &sendEmotes)) {
+			ATEmoteNetplay::SetSendEnabled(sendEmotes);
+			ATSaveSettings(kATSettingsCategory_Environment);
+		}
+		bool recvEmotes = ATEmoteNetplay::GetReceiveEnabled();
+		if (ATTouchToggle("Receive icons from the other player", &recvEmotes)) {
+			ATEmoteNetplay::SetReceiveEnabled(recvEmotes);
+			ATSaveSettings(kATSettingsCategory_Environment);
+		}
+	}
 }
 
 void RenderPrefs() {

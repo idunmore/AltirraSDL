@@ -58,10 +58,23 @@ Everything else is stdlib.
 
 ```bash
 ./altirra-lobby
-BIND=:9000 ./altirra-lobby        # override bind address
-PORT=9000  ./altirra-lobby        # just the port
-TTL_SECONDS=60 ./altirra-lobby    # shorter session TTL
+BIND=:9000 ./altirra-lobby              # override bind address
+PORT=9000  ./altirra-lobby              # TCP/HTTP port
+TTL_SECONDS=60 ./altirra-lobby          # shorter session TTL
+UDP_REFLECTOR_PORT=9001 ./altirra-lobby # override NAT reflector port
+UDP_REFLECTOR_PORT=0 ./altirra-lobby    # disable the reflector
 ```
+
+The server exposes **two** sockets:
+
+- `PORT` (TCP, default 8080) — the HTTP session directory.
+- `UDP_REFLECTOR_PORT` (UDP, default 8081) — a stateless STUN-lite
+  reflector used by netplay hosts to discover their public
+  endpoint. See `docs/netplay-nat.md` in the client repo for the
+  wire format.
+
+Firewalls / security lists must permit **both** ports for netplay
+hosts behind NAT to be reachable from the public internet.
 
 Hit `/healthz` to confirm it's alive:
 

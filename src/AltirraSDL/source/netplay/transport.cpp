@@ -15,6 +15,7 @@
 #  endif
 #  include <winsock2.h>
 #  include <ws2tcpip.h>
+#  include <iphlpapi.h>
 #  include <windows.h>
    typedef int socklen_t;
 #  define NP_LAST_ERR()     ((int)WSAGetLastError())
@@ -29,6 +30,8 @@
 #  include <unistd.h>
 #  include <fcntl.h>
 #  include <netdb.h>
+#  include <net/if.h>
+#  include <ifaddrs.h>
 #  define NP_LAST_ERR()     (errno)
 #  define NP_WOULDBLOCK(e)  ((e) == EAGAIN || (e) == EWOULDBLOCK)
 #  define NP_CLOSE(s)       ::close((int)(s))
@@ -172,6 +175,20 @@ bool Transport::Listen(uint16_t port) {
 	::setsockopt((int)h, SOL_SOCKET, SO_REUSEADDR,
 	             (const char*)&yes, sizeof yes);
 
+	// SO_REUSEPORT (Linux 3.9+, *BSD, macOS, Android API 21+): allow a
+	// co-bound NAT reflector probe socket on the same port.  Without
+	// this, the probe can't share the NAT mapping the game socket
+	// established, and the srflx (public) candidate published to the
+	// lobby would point to a *different* external port than the game
+	// socket — making cross-internet joins fail on most cone-NAT
+	// routers.  Windows has no Linux-equivalent of SO_REUSEPORT; on
+	// that platform the probe falls back to an ephemeral port and the
+	// user may need to port-forward manually.
+#ifdef SO_REUSEPORT
+	::setsockopt((int)h, SOL_SOCKET, SO_REUSEPORT,
+	             (const char*)&yes, sizeof yes);
+#endif
+
 	sockaddr_in addr {};
 	addr.sin_family = AF_INET;
 	addr.sin_port = htons(port);
@@ -229,6 +246,161 @@ bool Transport::Resolve(const char* hostPort, Endpoint& out) {
 	}
 	::freeaddrinfo(results);
 	return out.IsValid();
+}
+
+bool Transport::DiscoverLocalIPv4(char* outIp, size_t outCap) {
+	if (!outIp || outCap < 16) return false;
+	outIp[0] = '\0';
+
+	InitNetSubsystem();
+
+	// Create a transient UDP socket and "connect" to a public address.
+	// No packet is actually sent — UDP connect just records the dest
+	// so the kernel picks an outbound route.  getsockname then reports
+	// the IP the kernel would use.  Works on Linux, macOS, Android,
+	// Windows, BSD.  Fallback destination is a well-known DNS root.
+	//
+	// We try 8.8.8.8 first (Google Public DNS), then 1.1.1.1 (Cloudflare)
+	// as a second attempt if a restrictive network filters 8.8.8.8's
+	// route.  If both fail we also try 192.0.2.1 (TEST-NET-1) which
+	// exists only in the route table, never on the wire.
+	const char* const kProbes[] = { "8.8.8.8", "1.1.1.1", "192.0.2.1" };
+
+	for (const char* probe : kProbes) {
+#if defined(_WIN32)
+		SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+		if (s == INVALID_SOCKET) continue;
+		intptr_t h = (intptr_t)s;
+#else
+		int s = ::socket(AF_INET, SOCK_DGRAM, 0);
+		if (s < 0) continue;
+		intptr_t h = (intptr_t)s;
+#endif
+
+		sockaddr_in probeAddr {};
+		probeAddr.sin_family = AF_INET;
+		probeAddr.sin_port = htons(53);
+#if defined(_WIN32)
+		InetPtonA(AF_INET, probe, &probeAddr.sin_addr);
+#else
+		inet_pton(AF_INET, probe, &probeAddr.sin_addr);
+#endif
+
+		if (::connect((int)h, (const sockaddr*)&probeAddr, sizeof probeAddr) != 0) {
+			NP_CLOSE(h);
+			continue;
+		}
+
+		sockaddr_in local {};
+		socklen_t localLen = sizeof local;
+		if (::getsockname((int)h, (sockaddr*)&local, &localLen) != 0) {
+			NP_CLOSE(h);
+			continue;
+		}
+		NP_CLOSE(h);
+
+		// Reject loopback — not useful for peers.  Also reject
+		// link-local / APIPA (169.254/16) which appears when DHCP
+		// fails — those addresses can never reach a peer on any
+		// other network.
+		uint32_t ipHost = ntohl(local.sin_addr.s_addr);
+		if ((ipHost & 0xFF000000u) == 0x7F000000u) continue;    // 127/8
+		if ((ipHost & 0xFFFF0000u) == 0xA9FE0000u) continue;    // 169.254/16
+		if (ipHost == 0) continue;
+
+#if defined(_WIN32)
+		const char* r = InetNtopA(AF_INET, &local.sin_addr, outIp, outCap);
+#else
+		const char* r = inet_ntop(AF_INET, &local.sin_addr, outIp, outCap);
+#endif
+		if (!r) continue;
+		return true;
+	}
+
+	outIp[0] = '\0';
+	return false;
+}
+
+bool Transport::EnumerateLocalIPv4s(std::vector<std::string>& out) {
+	out.clear();
+	InitNetSubsystem();
+
+#if defined(_WIN32)
+	// IP Helper API route — GetAdaptersAddresses reports every
+	// IPv4 unicast address on every "up" adapter.  ~16 KB buffer
+	// handles the common case; the ERROR_BUFFER_OVERFLOW path
+	// grows if the host has many NICs / addresses.
+	ULONG bufLen = 16 * 1024;
+	std::vector<uint8_t> buf(bufLen);
+	ULONG rc = ::GetAdaptersAddresses(
+		AF_INET,
+		GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST |
+		GAA_FLAG_SKIP_DNS_SERVER | GAA_FLAG_SKIP_FRIENDLY_NAME,
+		nullptr,
+		reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buf.data()),
+		&bufLen);
+	if (rc == ERROR_BUFFER_OVERFLOW) {
+		buf.resize(bufLen);
+		rc = ::GetAdaptersAddresses(
+			AF_INET,
+			GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST |
+			GAA_FLAG_SKIP_DNS_SERVER | GAA_FLAG_SKIP_FRIENDLY_NAME,
+			nullptr,
+			reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buf.data()),
+			&bufLen);
+	}
+	if (rc != NO_ERROR) return false;
+
+	for (IP_ADAPTER_ADDRESSES* a =
+			reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buf.data());
+	     a; a = a->Next) {
+		if (a->OperStatus != IfOperStatusUp) continue;
+		for (IP_ADAPTER_UNICAST_ADDRESS* u = a->FirstUnicastAddress;
+		     u; u = u->Next) {
+			if (!u->Address.lpSockaddr) continue;
+			if (u->Address.lpSockaddr->sa_family != AF_INET) continue;
+			auto* s4 = reinterpret_cast<sockaddr_in*>(u->Address.lpSockaddr);
+			uint32_t ipHost = ntohl(s4->sin_addr.s_addr);
+			if ((ipHost & 0xFF000000u) == 0x7F000000u) continue;  // 127/8
+			if ((ipHost & 0xFFFF0000u) == 0xA9FE0000u) continue;  // 169.254/16
+			if (ipHost == 0) continue;
+			char ipBuf[INET_ADDRSTRLEN] = {};
+			InetNtopA(AF_INET, &s4->sin_addr, ipBuf, sizeof ipBuf);
+			if (*ipBuf) out.emplace_back(ipBuf);
+		}
+	}
+#else
+	ifaddrs* head = nullptr;
+	if (::getifaddrs(&head) != 0) return false;
+	for (ifaddrs* a = head; a; a = a->ifa_next) {
+		if (!a->ifa_addr) continue;
+		if (a->ifa_addr->sa_family != AF_INET) continue;
+		// Skip interfaces that aren't up.  IFF_RUNNING means cable
+		// connected / associated; IFF_UP alone can be a brought-up
+		// but disconnected interface.
+		if ((a->ifa_flags & IFF_UP) == 0) continue;
+		if ((a->ifa_flags & IFF_RUNNING) == 0) continue;
+		auto* s4 = reinterpret_cast<sockaddr_in*>(a->ifa_addr);
+		uint32_t ipHost = ntohl(s4->sin_addr.s_addr);
+		if ((ipHost & 0xFF000000u) == 0x7F000000u) continue;  // 127/8
+		if ((ipHost & 0xFFFF0000u) == 0xA9FE0000u) continue;  // 169.254/16
+		if (ipHost == 0) continue;
+		char ipBuf[INET_ADDRSTRLEN] = {};
+		inet_ntop(AF_INET, &s4->sin_addr, ipBuf, sizeof ipBuf);
+		if (*ipBuf) {
+			// Deduplicate (macOS reports the same address on
+			// alias interfaces sometimes).
+			bool dup = false;
+			for (const auto& existing : out) {
+				if (existing == ipBuf) { dup = true; break; }
+			}
+			if (!dup) out.emplace_back(ipBuf);
+		}
+	}
+	::freeifaddrs(head);
+#endif
+
+	return !out.empty();
 }
 
 bool Transport::SendTo(const uint8_t* bytes, size_t n, const Endpoint& to) {

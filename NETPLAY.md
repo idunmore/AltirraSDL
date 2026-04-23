@@ -383,6 +383,29 @@ every 30 s. Lobby TTL is 90 s — if the host's last heartbeat was
 more than 90 s ago, the lobby removes the entry until the next
 heartbeat refreshes it.
 
+**Joiner stuck on "Asking the host to let you in…" forever**
+
+The handshake is direct UDP between joiner and host — the lobby is
+only a directory, not a relay. If the joiner is reaching the lobby
+but never completing the handshake, something is dropping the UDP
+packets between the two peers. Common causes:
+
+- **Host behind a restrictive NAT / CGNAT.** The host's router drops
+  inbound UDP from the joiner's IP because the mapping was never
+  established. Workaround: the host port-forwards the UDP port
+  (default 26100) on their router. See the netplay-NAT doc for
+  details.
+- **Mobile / cellular data on the joiner.** Carrier-grade NAT
+  (CGNAT) often uses symmetric mapping that breaks hole-punching.
+  Switch to Wi-Fi if possible.
+- **Corporate / school network on either side.** These frequently
+  block outbound UDP to arbitrary ports; the only fix is to try a
+  different network.
+
+The client now sprays `NetHello` to every host candidate (LAN,
+server-reflexive / public, loopback) for up to 15 seconds before
+giving up, so transient packet loss is no longer a failure mode.
+
 ---
 
 ## Related docs

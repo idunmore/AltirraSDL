@@ -236,4 +236,9 @@ bool IsResyncing(uint32_t* outReceivedChunks = nullptr,
 // running.
 void DisconnectActive();
 
+// Send a single communication icon ("emote") to the peer.  No-op
+// unless some coordinator is currently in Phase::Lockstepping.
+// Returns true iff the packet was handed to the socket.
+bool SendEmote(uint8_t iconId);
+
 } // namespace ATNetplayGlue

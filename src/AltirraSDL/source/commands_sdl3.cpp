@@ -19,6 +19,8 @@
 #include "ui_debugger.h"
 #include "ui_textselection.h"
 #include "uiclipboard.h"
+#include "ui/emotes/emote_picker.h"
+#include "netplay/netplay_glue.h"
 
 extern ATSimulator g_sim;
 extern SDL_Window *g_pWindow;
@@ -36,10 +38,24 @@ ATUICommandManager& ATUIGetCommandManager() {
 // =========================================================================
 
 static void CmdPulseWarpOn() {
+	// During a netplay lockstep session, warp is force-blocked by
+	// ATUINetplayBlocksWarp() (see uiaccessors_stubs.cpp).  Repurpose
+	// the bare F1 press to open the communication-icon picker instead,
+	// so the key isn't a silent no-op while online.
+	if (ATNetplayGlue::IsLockstepping()) {
+		ATEmotePicker::Open();
+		return;
+	}
 	ATUISetTurboPulse(true);
 }
 
 static void CmdPulseWarpOff() {
+	// Symmetric to CmdPulseWarpOn: during lockstep the key-up never
+	// needs to clear a warp state because warp never engaged.  The
+	// picker closes via its own cancel paths (Esc, click-outside,
+	// gamepad B), so nothing to do here.
+	if (ATNetplayGlue::IsLockstepping())
+		return;
 	ATUISetTurboPulse(false);
 }
 
@@ -84,6 +100,13 @@ static void CmdNextGTIAVisMode() {
 }
 
 static void CmdTogglePause() {
+	// Pausing during a netplay lockstep session desyncs the peers —
+	// our simulator stops advancing while the remote peer continues,
+	// and the lockstep frame counter diverges.  Suppress the toggle
+	// entirely while online; the user can Disconnect first if they
+	// actually want to stop.
+	if (ATNetplayGlue::IsLockstepping())
+		return;
 	if (g_sim.IsPaused()) g_sim.Resume();
 	else g_sim.Pause();
 }
@@ -179,23 +202,33 @@ static void CmdCheatDialog() {
 	ATUISetShowCheater(true);
 }
 
+// The debugger halts the simulator on a breakpoint / RunStop / Step and
+// expects to single-step at user pace.  That's incompatible with
+// lockstep netplay: the remote peer keeps advancing while we're halted
+// and the session desyncs within a frame.  Every debug-entry keypress
+// is suppressed while lockstepping; the user must Disconnect first.
 static void CmdDebugRunStop() {
+	if (ATNetplayGlue::IsLockstepping()) return;
 	ATUIDebuggerRunStop();
 }
 
 static void CmdDebugStepInto() {
+	if (ATNetplayGlue::IsLockstepping()) return;
 	ATUIDebuggerStepInto();
 }
 
 static void CmdDebugStepOver() {
+	if (ATNetplayGlue::IsLockstepping()) return;
 	ATUIDebuggerStepOver();
 }
 
 static void CmdDebugStepOut() {
+	if (ATNetplayGlue::IsLockstepping()) return;
 	ATUIDebuggerStepOut();
 }
 
 static void CmdDebugBreak() {
+	if (ATNetplayGlue::IsLockstepping()) return;
 	ATUIDebuggerBreak();
 }
 
@@ -259,6 +292,10 @@ static void CmdDebugNewBreakpoint() {
 	ATUIDebuggerShowBreakpointDialog(-1);
 }
 
+static void CmdOpenEmotePicker() {
+	ATEmotePicker::Open();
+}
+
 // =========================================================================
 // Command table
 // =========================================================================
@@ -275,6 +312,7 @@ static const ATUICommand kSDL3Commands[] = {
 	{ "View.NextANTICVisMode",         CmdNextANTICVisMode,     nullptr, nullptr, nullptr },
 	{ "View.NextGTIAVisMode",          CmdNextGTIAVisMode,      nullptr, nullptr, nullptr },
 	{ "System.TogglePause",            CmdTogglePause,          nullptr, nullptr, nullptr },
+	{ "Netplay.OpenEmotePicker",       CmdOpenEmotePicker,      nullptr, nullptr, nullptr },
 	{ "Input.CaptureMouse",            CmdCaptureMouse,         nullptr, nullptr, nullptr },
 	{ "View.ToggleFullScreen",         CmdToggleFullScreen,     nullptr, nullptr, nullptr },
 	{ "System.ToggleSlowMotion",       CmdToggleSlowMotion,     nullptr, nullptr, nullptr },

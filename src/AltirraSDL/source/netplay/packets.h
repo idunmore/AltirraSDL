@@ -34,6 +34,9 @@ constexpr uint32_t kMagicAck          = 0x41504E41u; // 'ANPA'
 // channel.  ResyncDone (joiner→host) confirms apply + requests resume.
 constexpr uint32_t kMagicResyncStart  = 0x53504E41u; // 'ANPS'
 constexpr uint32_t kMagicResyncDone   = 0x44504E41u; // 'ANPD'
+// Online-play communication icon ("emote").  Unreliable fire-and-forget;
+// a lost packet just means the peer misses one reaction.
+constexpr uint32_t kMagicEmote        = 0x45504E41u; // 'ANPE'
 
 // Protocol constants.
 // v1 = Go PoC, v2 adds entryCodeHash, v3 replaces savestate transfer
@@ -188,6 +191,14 @@ struct NetResyncStart {
 	uint32_t seedHash = 0;        // post-apply sim hash (sanity check only)
 };
 
+// NetEmote — either direction.  Fire-and-forget communication icon.
+// 8 bytes on the wire (magic + id + 3 reserved bytes for future flags).
+struct NetEmote {
+	uint32_t magic = kMagicEmote;
+	uint8_t  iconId = 0;        // 0..kATEmoteCount-1
+	uint8_t  reserved[3] = {};
+};
+
 // NetResyncDone — joiner → host.  Confirms the savestate applied
 // cleanly; host then exits Resyncing and both peers resume lockstep.
 // 12 bytes.
@@ -209,6 +220,7 @@ constexpr size_t kWireChunkHdrSize  = 16;                              // + payl
 constexpr size_t kWireAckSize       = 8;
 constexpr size_t kWireResyncStartSize = 24;
 constexpr size_t kWireResyncDoneSize  = 12;
+constexpr size_t kWireEmoteSize       = 8;
 
 // Maximum UDP datagram we need to send at once; chunks are the biggest.
 constexpr size_t kMaxDatagramSize = kWireChunkHdrSize + kSnapshotChunkSize;

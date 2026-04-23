@@ -191,6 +191,15 @@ target_sources(AltirraSDL PRIVATE
     source/ui/gamelibrary/game_library.cpp
     source/ui/gamelibrary/game_library_art.cpp
 
+    # --- ui/emotes/ : Online Play communication icons ---
+    source/ui/emotes/emote_assets.cpp
+    source/ui/emotes/emote_overlay.cpp
+    source/ui/emotes/emote_picker.cpp
+    source/ui/emotes/emote_netplay.cpp
+
+    # --- ui/sysconfig/ : Online Play settings page ---
+    source/ui/sysconfig/ui_system_pages_netplay.cpp
+
     # Registry persistence (filtered out by ui* regex, so add explicitly)
     ${CMAKE_SOURCE_DIR}/src/Altirra/source/uiregistry.cpp
 
@@ -291,6 +300,8 @@ if(ALTIRRA_NETPLAY)
         source/netplay/lobby_client.cpp
         source/netplay/lobby_config.cpp
         source/netplay/lan_discovery.cpp
+        source/netplay/nat_discovery.cpp
+        source/netplay/port_mapping.cpp
         source/netplay/platform_notify.cpp
 
         # Online Play UI — Phase 11
@@ -306,6 +317,9 @@ if(ALTIRRA_NETPLAY)
     if(WIN32)
         target_sources(AltirraSDL PRIVATE
             source/netplay/platform_notify_win32.cpp)
+        # IP Helper API — needed by port_mapping.cpp's default-gateway
+        # discovery (GetBestRoute).  ws2_32 is inherited transitively.
+        target_link_libraries(AltirraSDL PRIVATE iphlpapi)
         target_compile_definitions(AltirraSDL PRIVATE
             ALTIRRA_NETPLAY_HAS_NOTIFY_BACKEND=1)
     elseif(APPLE)
@@ -449,6 +463,40 @@ add_custom_command(
 target_sources(AltirraSDL PRIVATE ${KEYBOARD_GEN_C})
 target_include_directories(AltirraSDL PRIVATE ${KEYBOARD_GEN_DIR})
 
+# ---------------------------------------------------------------------------
+# Netplay emote icons (16 PNGs with transparency)
+# ---------------------------------------------------------------------------
+# Bake emote PNGs into C++ byte arrays so they ship inside the binary on
+# every platform (desktop, macOS .app, Android .apk) with no runtime
+# file lookup.  Decoding is done at load time by SDL3_image.
+set(EMOTES_ASSETS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/assets/emotes)
+set(EMOTES_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
+set(EMOTES_GEN_H ${EMOTES_GEN_DIR}/emotes_data.h)
+set(EMOTES_GEN_C ${EMOTES_GEN_DIR}/emotes_data.cpp)
+set(EMOTES_BAKE_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/tools/bake_emotes.py)
+
+set(EMOTES_INPUT_PNGS)
+foreach(IDX RANGE 1 16)
+    if(IDX LESS 10)
+        set(EMOTES_INPUT_PNGS ${EMOTES_INPUT_PNGS} ${EMOTES_ASSETS_DIR}/icon0${IDX}.png)
+    else()
+        set(EMOTES_INPUT_PNGS ${EMOTES_INPUT_PNGS} ${EMOTES_ASSETS_DIR}/icon${IDX}.png)
+    endif()
+endforeach()
+
+add_custom_command(
+    OUTPUT ${EMOTES_GEN_H} ${EMOTES_GEN_C}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${EMOTES_GEN_DIR}
+    COMMAND ${Python3_EXECUTABLE} ${EMOTES_BAKE_SCRIPT}
+            ${EMOTES_GEN_DIR}
+            ${EMOTES_ASSETS_DIR}
+    DEPENDS ${EMOTES_BAKE_SCRIPT} ${EMOTES_INPUT_PNGS}
+    COMMENT "Baking netplay emote PNGs -> C++"
+    VERBATIM
+)
+
+target_sources(AltirraSDL PRIVATE ${EMOTES_GEN_C})
+
 # ===========================================================================
 # Build info header — stamps version, build date/time, and git commit into
 # a generated header.  Runs at BUILD time (not configure time) so the
@@ -499,6 +547,7 @@ target_include_directories(AltirraSDL PRIVATE
     ${CMAKE_SOURCE_DIR}/src/AltirraSDL/source/ui/testmode
     ${CMAKE_SOURCE_DIR}/src/AltirraSDL/source/bridge
     ${CMAKE_SOURCE_DIR}/src/AltirraSDL/source/ui/mobile
+    ${CMAKE_SOURCE_DIR}/src/AltirraSDL/source/ui/emotes
     # ATAudio headers
     ${CMAKE_SOURCE_DIR}/src/ATAudio/h
     # VDDisplay internal headers (screenfx.h, bloom.h, bicubic.h)

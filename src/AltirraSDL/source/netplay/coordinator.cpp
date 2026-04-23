@@ -134,6 +134,106 @@ bool Coordinator::BeginJoin(const char* hostAddress,
 	return true;
 }
 
+bool Coordinator::BeginJoinMulti(const char* hostCandidatesSemicolonList,
+                                 uint16_t localPort,
+                                 const char* playerHandle,
+                                 uint64_t osRomHash,
+                                 uint64_t basicRomHash,
+                                 bool acceptTos,
+                                 const uint8_t* entryCodeHash) {
+	if (!mTransport.Listen(localPort)) {
+		FailWith("failed to bind UDP socket");
+		return false;
+	}
+
+	// Parse semicolon-separated candidates, resolve each.  Skip any
+	// that don't parse / resolve — a joiner only needs ONE working
+	// candidate for the hole-punch spray to succeed.
+	mHelloCandidates.clear();
+	const char* s = hostCandidatesSemicolonList ? hostCandidatesSemicolonList : "";
+	std::string cur;
+	auto flush = [&](const std::string& tok) {
+		if (tok.empty()) return;
+		Endpoint ep;
+		if (Transport::Resolve(tok.c_str(), ep)) {
+			// Deduplicate: mobile/loopback + lan often coincide when the
+			// probe can't reach the outside world.
+			for (const auto& existing : mHelloCandidates) {
+				if (existing.Equals(ep)) return;
+			}
+			mHelloCandidates.push_back(ep);
+			char fmt[64];
+			ep.Format(fmt, sizeof fmt);
+			g_ATLCNetplay("joiner candidate: %s -> %s",
+				tok.c_str(), fmt);
+		} else {
+			g_ATLCNetplay("joiner candidate unresolved: \"%s\"",
+				tok.c_str());
+		}
+	};
+	for (const char* p = s; *p; ++p) {
+		if (*p == ';' || *p == ',') {
+			flush(cur);
+			cur.clear();
+		} else if (*p != ' ' && *p != '\t') {
+			cur.push_back(*p);
+		}
+	}
+	flush(cur);
+
+	if (mHelloCandidates.empty()) {
+		FailWith("no reachable host candidates");
+		mTransport.Close();
+		return false;
+	}
+
+	// Pick the first candidate as the initial mPeer so the rest of the
+	// code (which uses mPeer for snapshot retries, etc.) has a usable
+	// default.  The ACTUAL peer is locked when the first NetWelcome
+	// arrives (HandleWelcomeFromHost sets mPeer = from).
+	mPeer      = mHelloCandidates.front();
+	mPeerKnown = true;
+
+	HandleFromString(playerHandle, reinterpret_cast<uint8_t*>(mPlayerHandle));
+	mOsRomHash = osRomHash;
+	mBasicRomHash = basicRomHash;
+	mAcceptTos = acceptTos;
+	if (entryCodeHash) {
+		std::memcpy(mEntryCodeHash, entryCodeHash, kEntryCodeHashLen);
+		mHasEntryCode = !IsZeroEntryCode(mEntryCodeHash);
+	} else {
+		std::memset(mEntryCodeHash, 0, kEntryCodeHashLen);
+		mHasEntryCode = false;
+	}
+
+	mRole = Role::Joiner;
+	mPhase = Phase::Handshaking;
+	mLastError = "";
+	mHelloStartMs = 0;  // set on first Poll tick
+	mLastHelloMs  = 0;
+
+	g_ATLCNetplay("joiner: multi-candidate (%u), spraying Hello",
+		(unsigned)mHelloCandidates.size());
+
+	// Initial spray to every candidate immediately.
+	NetHello h;
+	h.magic = kMagicHello;
+	h.protocolVersion = kProtocolVersion;
+	h.flags = 0;
+	h.osRomHash = mOsRomHash;
+	h.basicRomHash = mBasicRomHash;
+	std::memcpy(h.playerHandle, mPlayerHandle, kHandleLen);
+	h.acceptTos = mAcceptTos ? 1u : 0u;
+	std::memcpy(h.entryCodeHash, mEntryCodeHash, kEntryCodeHashLen);
+	size_t n = EncodeHello(h, mTxBuf, sizeof mTxBuf);
+	if (n) {
+		for (const auto& ep : mHelloCandidates) {
+			mTransport.SendTo(mTxBuf, n, ep);
+		}
+	}
+	return true;
+}
+
 // ---------------------------------------------------------------------------
 // Poll
 // ---------------------------------------------------------------------------
@@ -167,12 +267,38 @@ void Coordinator::Poll(uint64_t nowMs) {
 			case kMagicWelcome: {
 				NetWelcome w;
 				if (DecodeWelcome(mRxBuf, n, w) != DecodeResult::Ok) continue;
+				// Multi-candidate: lock mPeer onto the responder and
+				// stop spraying to the other candidates.  The first
+				// host to Welcome us wins.
+				if (!mHelloCandidates.empty() &&
+				    mPhase == Phase::Handshaking) {
+					mPeer = from;
+					mPeerKnown = true;
+					char fmt[64];
+					from.Format(fmt, sizeof fmt);
+					g_ATLCNetplay("joiner: locked onto responding host %s "
+						"(had %u candidates)",
+						fmt, (unsigned)mHelloCandidates.size());
+					mHelloCandidates.clear();
+				}
 				HandleWelcomeFromHost(w, nowMs);
 				break;
 			}
 			case kMagicReject: {
 				NetReject rj;
 				if (DecodeReject(mRxBuf, n, rj) != DecodeResult::Ok) continue;
+				// Only accept a Reject from the host we asked — an
+				// arbitrary bystander sending a Reject to our
+				// ephemeral port mustn't be able to abort the join.
+				// For multi-candidate, lock mPeer on the rejecter
+				// the same way Welcome does; the handler then sets
+				// Phase::Failed with the host-supplied reason.
+				if (!mHelloCandidates.empty() &&
+				    mPhase == Phase::Handshaking) {
+					mPeer = from;
+					mPeerKnown = true;
+					mHelloCandidates.clear();
+				}
 				HandleRejectFromHost(rj);
 				break;
 			}
@@ -212,10 +338,52 @@ void Coordinator::Poll(uint64_t nowMs) {
 				HandleResyncDone(d, nowMs);
 				break;
 			}
+			case kMagicEmote: {
+				NetEmote e;
+				if (DecodeEmote(mRxBuf, n, e) != DecodeResult::Ok) continue;
+				HandleEmote(e);
+				break;
+			}
 			default:
 				// Unknown magic — silently ignore (could be from a
 				// different version or a stray packet).
 				break;
+		}
+	}
+
+	// v3 NAT traversal: joiner retransmits NetHello to every candidate
+	// while we're still in Handshaking.  Stops as soon as any host
+	// replies (Welcome / Reject clears mHelloCandidates) or the hard
+	// timeout elapses.
+	if (mPhase == Phase::Handshaking && !mHelloCandidates.empty()) {
+		if (mHelloStartMs == 0) mHelloStartMs = nowMs;
+		if (nowMs - mHelloStartMs >= kHelloTimeoutMs) {
+			g_ATLCNetplay("joiner: handshake timeout after %ums, "
+				"no host responded (candidates tried: %u)",
+				(unsigned)(nowMs - mHelloStartMs),
+				(unsigned)mHelloCandidates.size());
+			FailWith("Could not reach host — please check the host is "
+				"online and try again.  If the host is behind a "
+				"restrictive NAT, they may need to port-forward their "
+				"UDP port.");
+			mHelloCandidates.clear();
+		} else if (nowMs - mLastHelloMs >= kHelloRetryMs) {
+			mLastHelloMs = nowMs;
+			NetHello h;
+			h.magic = kMagicHello;
+			h.protocolVersion = kProtocolVersion;
+			h.flags = 0;
+			h.osRomHash = mOsRomHash;
+			h.basicRomHash = mBasicRomHash;
+			std::memcpy(h.playerHandle, mPlayerHandle, kHandleLen);
+			h.acceptTos = mAcceptTos ? 1u : 0u;
+			std::memcpy(h.entryCodeHash, mEntryCodeHash, kEntryCodeHashLen);
+			size_t nn = EncodeHello(h, mTxBuf, sizeof mTxBuf);
+			if (nn) {
+				for (const auto& ep : mHelloCandidates) {
+					mTransport.SendTo(mTxBuf, nn, ep);
+				}
+			}
 		}
 	}
 
@@ -725,6 +893,16 @@ void Coordinator::SendBye(uint32_t reason) {
 	if (n) mTransport.SendTo(mTxBuf, n, mPeer);
 }
 
+bool Coordinator::SendEmote(uint8_t iconId) {
+	if (mPhase != Phase::Lockstepping) return false;
+	if (!mPeerKnown) return false;
+	NetEmote e;
+	e.iconId = iconId;
+	size_t n = EncodeEmote(e, mTxBuf, sizeof mTxBuf);
+	if (!n) return false;
+	return mTransport.SendTo(mTxBuf, n, mPeer);
+}
+
 // ---------------------------------------------------------------------------
 // Packet senders
 // ---------------------------------------------------------------------------
@@ -963,6 +1141,23 @@ void Coordinator::HandleResyncDone(const NetResyncDone& d, uint64_t /*nowMs*/) {
 	mResyncTxBuffer.clear();    // free memory
 	g_ATLCNetplay("host: resync complete, resumed at frame %u (epoch %u)",
 		(unsigned)mResyncResumeFrame, (unsigned)mResyncEpoch);
+}
+
+} // namespace ATNetplay
+
+// Forward the decoded emote to the frontend.  Declared in
+// ui/emotes/emote_netplay.h but we do not include that here so the
+// netplay module stays independent of the UI module.  Symbol is
+// defined in emote_netplay.cpp.
+namespace ATEmoteNetplay {
+void OnReceivedFromPeer(uint8_t iconId);
+}
+
+namespace ATNetplay {
+
+void Coordinator::HandleEmote(const NetEmote& e) {
+	if (mPhase != Phase::Lockstepping) return;
+	ATEmoteNetplay::OnReceivedFromPeer(e.iconId);
 }
 
 void Coordinator::FailWith(const char* msg) {

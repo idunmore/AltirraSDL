@@ -394,4 +394,29 @@ const char* CartToCStr(const uint8_t in[kCartLen], size_t* outLen) {
 	return fixedToCStr(in, kCartLen, outLen);
 }
 
+// ---------------------------------------------------------------------------
+// NetEmote (8 bytes)
+// ---------------------------------------------------------------------------
+
+size_t EncodeEmote(const NetEmote& e, uint8_t* buf, size_t bufSize) {
+	if (bufSize < kWireEmoteSize) return 0;
+	put_u32(buf + 0, kMagicEmote);
+	buf[4] = e.iconId;
+	buf[5] = 0;
+	buf[6] = 0;
+	buf[7] = 0;
+	return kWireEmoteSize;
+}
+
+DecodeResult DecodeEmote(const uint8_t* buf, size_t len, NetEmote& out) {
+	if (len < kWireEmoteSize) return DecodeResult::TooShort;
+	out.magic = get_u32(buf);
+	if (out.magic != kMagicEmote) return DecodeResult::BadMagic;
+	out.iconId = buf[4];
+	out.reserved[0] = buf[5];
+	out.reserved[1] = buf[6];
+	out.reserved[2] = buf[7];
+	return DecodeResult::Ok;
+}
+
 } // namespace ATNetplay
