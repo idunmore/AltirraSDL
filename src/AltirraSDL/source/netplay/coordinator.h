@@ -251,13 +251,12 @@ public:
 	// returns a peer-hint.  `nonce16` is the joiner's sessionNonce
 	// (may be all-zero for pre-v4 joiners), `candidatesSemicolonList`
 	// is the joiner's advertised "ip:port;ip:port;..." candidate set.
-	// Schedules a short burst of NetPunch probes to every candidate so
-	// our outbound NAT pinhole is pre-opened when the joiner's Hello
-	// spray arrives.  Safe to call repeatedly with the same nonce —
-	// we dedupe on nonce+endpoint.
+	// Queues NetPunch targets for each candidate; the initial burst
+	// and subsequent sustain probes are driven from Poll() so the
+	// caller doesn't need a monotonic clock.  Safe to call repeatedly
+	// with the same nonce — we dedupe on nonce+endpoint.
 	void IngestPeerHint(const uint8_t nonce16[kSessionNonceLen],
-	                    const char* candidatesSemicolonList,
-	                    uint64_t nowMs);
+	                    const char* candidatesSemicolonList);
 
 	// True once relay fallback has taken over the UDP path for this
 	// session.  UI can surface a "Relay active" badge after this flips.
@@ -516,6 +515,13 @@ private:
 		int      sentCount   = 0;
 	};
 	std::vector<PunchTarget> mPunchTargets;
+	// Persistent flag: at least one peer-hint has ever been delivered
+	// during this WaitingForJoiner phase.  The relay-fallback gate
+	// checks this instead of mPunchTargets-non-empty because punch
+	// targets are pruned after the 4 s sustain window; without a
+	// persistent flag the host would miss the 10 s relay trigger if
+	// the hint happened to arrive slightly earlier than that.
+	bool mHostHasSeenHint = false;
 	static constexpr int      kPunchBurstInitialCount = 5;
 	static constexpr uint64_t kPunchSustainIntervalMs = 500;
 	static constexpr uint64_t kPunchSustainDurationMs = 4000;
