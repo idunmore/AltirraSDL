@@ -6,6 +6,7 @@
 
 #include "coordinator.h"
 #include "packets.h"
+#include "protocol.h"
 #include "netplay_input.h"
 #include "netplay_savestate.h"
 #include "netplay_simhash.h"
@@ -731,6 +732,105 @@ bool SendEmote(uint8_t iconId) {
 	ATNetplay::Coordinator *c = ActiveLockstep();
 	if (!c) return false;
 	return c->SendEmote(iconId);
+}
+
+// --- v4 NAT traversal -----------------------------------------------------
+
+void HostSetRelayContext(const char* gameId,
+                         const char* sessionIdHex,
+                         const char* lobbyHostPort) {
+	HostSlot* h = FindHost(gameId);
+	if (!h || !h->coord) return;
+	uint8_t sid[16] = {};
+	if (!sessionIdHex ||
+	    !ATNetplay::UuidHexToBytes16(sessionIdHex, sid)) return;
+	h->coord->SetRelayContext(sid, lobbyHostPort);
+}
+
+void JoinerSetRelayContext(const char* sessionIdHex,
+                           const char* lobbyHostPort) {
+	if (!g_joiner) return;
+	uint8_t sid[16] = {};
+	if (!sessionIdHex ||
+	    !ATNetplay::UuidHexToBytes16(sessionIdHex, sid)) return;
+	g_joiner->SetRelayContext(sid, lobbyHostPort);
+}
+
+bool JoinerGetSessionNonceHex(char out33[33]) {
+	if (!g_joiner) return false;
+	uint8_t n[ATNetplay::kSessionNonceLen];
+	g_joiner->GetSessionNonce(n);
+	static const char kHex[] = "0123456789abcdef";
+	for (size_t i = 0; i < ATNetplay::kSessionNonceLen; ++i) {
+		out33[i*2]   = kHex[(n[i] >> 4) & 0xF];
+		out33[i*2+1] = kHex[ n[i]       & 0xF];
+	}
+	out33[32] = '\0';
+	return true;
+}
+
+uint16_t JoinerBoundPort() {
+	return g_joiner ? g_joiner->BoundPort() : 0;
+}
+
+size_t JoinerBuildLocalCandidates(char* out, size_t outSize) {
+	if (!out || outSize == 0) return 0;
+	out[0] = '\0';
+	uint16_t port = JoinerBoundPort();
+	if (!port) return 0;
+	std::vector<std::string> ips;
+	ATNetplay::Transport::EnumerateLocalIPv4s(ips);
+	std::string built;
+	for (const auto& ip : ips) {
+		if (!built.empty()) built.push_back(';');
+		char ep[64];
+		std::snprintf(ep, sizeof ep, "%s:%u", ip.c_str(), (unsigned)port);
+		built += ep;
+	}
+	// Always append loopback last — same-box tests otherwise lose the
+	// only candidate the host's punch can actually reach.
+	char loop[32];
+	std::snprintf(loop, sizeof loop, "127.0.0.1:%u", (unsigned)port);
+	if (!built.empty()) built.push_back(';');
+	built += loop;
+	if (built.size() + 1 > outSize) built.resize(outSize - 1);
+	std::memcpy(out, built.data(), built.size());
+	out[built.size()] = '\0';
+	return built.size();
+}
+
+void HostIngestPeerHint(const char* gameId,
+                        const char* nonceHex,
+                        const char* candidates) {
+	HostSlot* h = FindHost(gameId);
+	if (!h || !h->coord) return;
+	uint8_t nonce[ATNetplay::kSessionNonceLen] = {};
+	if (nonceHex && *nonceHex) {
+		// Parse exactly 32 hex chars (16 bytes).  Short / malformed
+		// nonces fall back to all-zero so the legacy handle-based
+		// host-side dedupe path still works.
+		size_t parsed = 0;
+		uint8_t acc = 0;
+		for (const char* p = nonceHex; *p && parsed < 32; ++p) {
+			char c = *p;
+			int v;
+			if      (c >= '0' && c <= '9') v = c - '0';
+			else if (c >= 'a' && c <= 'f') v = c - 'a' + 10;
+			else if (c >= 'A' && c <= 'F') v = c - 'A' + 10;
+			else break;
+			if ((parsed & 1) == 0) acc = (uint8_t)(v << 4);
+			else nonce[parsed / 2] = (uint8_t)(acc | (uint8_t)v);
+			++parsed;
+		}
+	}
+	// "now" for the coordinator is the same tick clock Poll uses.
+	// Approximate with SDL's best-effort monotonic ms via the
+	// coordinator's internal accounting: pass 0 and rely on the
+	// next Poll() to drive sustain probes.  Passing 0 is safe —
+	// IngestPeerHint uses `nowMs` only to timestamp the sustain
+	// window, and 0 means "first sends counted, sustain runs from
+	// the next Poll()".  The initial burst fires immediately here.
+	h->coord->IngestPeerHint(nonce, candidates, /*nowMs=*/0);
 }
 
 } // namespace ATNetplayGlue
