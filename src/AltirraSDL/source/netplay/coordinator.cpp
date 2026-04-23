@@ -87,6 +87,7 @@ bool Coordinator::BeginHost(uint16_t localPort,
 	mLastError = "";
 	mPhaseStartMs = 0;  // set on first Poll
 	mPunchTargets.clear();
+	mHostHasSeenHint = false;
 	mPeerPath = PeerPath::Direct;
 	mRelayRegistered = false;
 	mPunchProbesReceived = 0;
@@ -1435,8 +1436,7 @@ void Coordinator::GetSessionNonce(uint8_t out[kSessionNonceLen]) const {
 }
 
 void Coordinator::IngestPeerHint(const uint8_t nonce16[kSessionNonceLen],
-                                 const char* candidatesSemicolonList,
-                                 uint64_t nowMs) {
+                                 const char* candidatesSemicolonList) {
 	if (mRole != Role::Host) return;
 	if (mPhase != Phase::WaitingForJoiner) return;
 	if (!candidatesSemicolonList || !*candidatesSemicolonList) return;
@@ -1444,6 +1444,7 @@ void Coordinator::IngestPeerHint(const uint8_t nonce16[kSessionNonceLen],
 	// Parse the semicolon/comma list; tolerate whitespace.
 	const char* s = candidatesSemicolonList;
 	std::string cur;
+	bool anyAdded = false;
 	auto flush = [&](const std::string& tok) {
 		if (tok.empty()) return;
 		Endpoint ep;
@@ -1455,18 +1456,17 @@ void Coordinator::IngestPeerHint(const uint8_t nonce16[kSessionNonceLen],
 		for (auto& t : mPunchTargets) {
 			if (std::memcmp(t.nonce, nonce16, kSessionNonceLen) == 0 &&
 			    t.ep.Equals(ep)) {
-				// Refresh lastSentMs so sustain window extends.
-				t.firstSentMs = std::min(t.firstSentMs, nowMs);
-				return;
+				return;   // already queued
 			}
 		}
 		PunchTarget t;
 		std::memcpy(t.nonce, nonce16, kSessionNonceLen);
 		t.ep          = ep;
-		t.firstSentMs = nowMs;
+		t.firstSentMs = 0;   // sentinel: PumpPunchProbes will initialise
 		t.lastSentMs  = 0;
 		t.sentCount   = 0;
 		mPunchTargets.push_back(std::move(t));
+		anyAdded = true;
 		char fmt[64];
 		ep.Format(fmt, sizeof fmt);
 		g_ATLCNetplay("host: peer-hint endpoint %s (%s) — will probe",
@@ -1478,38 +1478,48 @@ void Coordinator::IngestPeerHint(const uint8_t nonce16[kSessionNonceLen],
 	}
 	flush(cur);
 
-	// Fire initial burst immediately.
-	NetPunch probe;
-	std::memcpy(probe.sessionNonce, nonce16, kSessionNonceLen);
-	uint8_t buf[kWirePunchSize];
-	size_t n = EncodePunch(probe, buf, sizeof buf);
-	if (!n) return;
-	for (auto& t : mPunchTargets) {
-		if (std::memcmp(t.nonce, nonce16, kSessionNonceLen) != 0) continue;
-		if (t.sentCount >= kPunchBurstInitialCount) continue;
-		for (int i = t.sentCount; i < kPunchBurstInitialCount; ++i) {
-			mTransport.SendTo(buf, n, t.ep);
-		}
-		t.sentCount  = kPunchBurstInitialCount;
-		t.lastSentMs = nowMs;
-	}
+	if (anyAdded) mHostHasSeenHint = true;
+	// Don't send probes here — we don't have a monotonic clock.  The
+	// next Poll() (one frame away at 60 Hz) will drive PumpPunchProbes
+	// with a real nowMs, do the initial burst, and start the sustain
+	// timer with correct bookkeeping.
 }
 
 void Coordinator::PumpPunchProbes(uint64_t nowMs) {
 	if (mPunchTargets.empty()) return;
-	// Drop targets that are past the sustain window.
+	// Drop targets that are past the sustain window.  Skip entries
+	// whose firstSentMs is still the 0-sentinel (they haven't been
+	// probed yet, so nowMs-0 is an artefact of the sentinel, not a
+	// real elapsed-time measurement).
 	for (auto it = mPunchTargets.begin(); it != mPunchTargets.end(); ) {
-		if (nowMs - it->firstSentMs > kPunchSustainDurationMs) {
+		if (it->firstSentMs != 0 &&
+		    nowMs - it->firstSentMs > kPunchSustainDurationMs) {
 			it = mPunchTargets.erase(it);
 		} else ++it;
 	}
 	for (auto& t : mPunchTargets) {
-		if (nowMs - t.lastSentMs < kPunchSustainIntervalMs) continue;
 		NetPunch probe;
 		std::memcpy(probe.sessionNonce, t.nonce, kSessionNonceLen);
 		uint8_t buf[kWirePunchSize];
 		size_t n = EncodePunch(probe, buf, sizeof buf);
 		if (!n) break;
+		if (t.firstSentMs == 0) {
+			// First pump after IngestPeerHint: fire the initial
+			// burst (5 probes back-to-back) and seed the sustain
+			// timer at nowMs.  Guard against nowMs==0 (extremely
+			// early Poll tick) by biasing up so the sentinel check
+			// still works — the subtraction later won't underflow
+			// because kPunchSustainDurationMs > 1.
+			uint64_t seed = nowMs ? nowMs : 1;
+			for (int i = 0; i < kPunchBurstInitialCount; ++i) {
+				mTransport.SendTo(buf, n, t.ep);
+			}
+			t.sentCount   = kPunchBurstInitialCount;
+			t.firstSentMs = seed;
+			t.lastSentMs  = seed;
+			continue;
+		}
+		if (nowMs - t.lastSentMs < kPunchSustainIntervalMs) continue;
 		mTransport.SendTo(buf, n, t.ep);
 		t.lastSentMs = nowMs;
 		++t.sentCount;
@@ -1581,7 +1591,7 @@ void Coordinator::MaybeEngageRelay(uint64_t nowMs) {
 	if (mRole == Role::Host && mPhase == Phase::WaitingForJoiner) {
 		if (mPhaseStartMs == 0) return;
 		if (nowMs - mPhaseStartMs < kRelayFallbackAfterMs) return;
-		if (mPunchTargets.empty()) return;  // no joiner known yet
+		if (!mHostHasSeenHint) return;  // no joiner known yet
 		SendRelayRegister();
 		mPeerPath = PeerPath::Relay;
 	}

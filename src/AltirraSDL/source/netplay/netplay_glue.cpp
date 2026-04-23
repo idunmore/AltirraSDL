@@ -823,14 +823,10 @@ void HostIngestPeerHint(const char* gameId,
 			++parsed;
 		}
 	}
-	// "now" for the coordinator is the same tick clock Poll uses.
-	// Approximate with SDL's best-effort monotonic ms via the
-	// coordinator's internal accounting: pass 0 and rely on the
-	// next Poll() to drive sustain probes.  Passing 0 is safe —
-	// IngestPeerHint uses `nowMs` only to timestamp the sustain
-	// window, and 0 means "first sends counted, sustain runs from
-	// the next Poll()".  The initial burst fires immediately here.
-	h->coord->IngestPeerHint(nonce, candidates, /*nowMs=*/0);
+	// The coordinator defers the initial burst + sustain timer
+	// bookkeeping to its next Poll() (one frame away at 60 Hz), so
+	// we don't need to supply a monotonic clock here.
+	h->coord->IngestPeerHint(nonce, candidates);
 }
 
 } // namespace ATNetplayGlue
