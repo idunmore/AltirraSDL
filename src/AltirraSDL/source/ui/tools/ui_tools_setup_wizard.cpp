@@ -85,8 +85,11 @@ static struct SetupWizardState {
 	}
 } g_setupWiz;
 
-// Firmware scan logic reimplemented from uifirmwarescan.cpp
-static void ATUIDoFirmwareScan(const char *utf8path) {
+// Firmware scan logic reimplemented from uifirmwarescan.cpp.
+// Exposed (no `static`) so the WASM bridge can invoke the same scan
+// on /home/web_user/firmware after an upload, keeping the firmware
+// list in sync with what the user has actually placed there.
+void ATUIDoFirmwareScan(const char *utf8path) {
 	ATFirmwareManager &fwmgr = *g_sim.GetFirmwareManager();
 	VDStringW path = VDTextU8ToW(utf8path, -1);
 	VDStringW pattern = VDMakePath(path.c_str(), L"*.*");
@@ -442,9 +445,24 @@ void ATUIRenderSetupWizard(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 			}
 
 			ImGui::Spacing();
-			if (ImGui::Button("Add Folder..."))
+			if (ImGui::Button("Add Folder...")) {
+#ifdef __EMSCRIPTEN__
+				// Browsers can't offer a cross-platform folder picker
+				// that reaches into the real filesystem.  The game
+				// library on WASM always lives under the fixed
+				// uploads path, so just seed the pending-scan slot
+				// directly — calling LibFolderCallback would take
+				// the same scanMutex we already hold here.
+				fprintf(stderr, "[wasm] SetupWizard: Add Folder -> /home/web_user/games\n");
+				{
+					std::lock_guard<std::mutex> lock(g_setupWiz.scanMutex);
+					g_setupWiz.pendingLibFolderPath = "/home/web_user/games";
+				}
+#else
 				SDL_ShowOpenFolderDialog(LibFolderCallback, nullptr,
 					window, nullptr, false);
+#endif
+			}
 
 			ImGui::Spacing();
 			ImGui::Spacing();
@@ -543,8 +561,24 @@ void ATUIRenderSetupWizard(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 			}
 
 			ImGui::Spacing();
-			if (ImGui::Button("Scan for firmware..."))
+			if (ImGui::Button("Scan for firmware...")) {
+#ifdef __EMSCRIPTEN__
+				// Same story as Add Folder above: browsers have no
+				// reliable cross-platform OS folder picker, and
+				// anything the user uploads via the Files overlay
+				// already lands in this well-known path.  Seed the
+				// pending-scan slot directly — routing through
+				// FirmwareScanCallback would re-enter the scanMutex
+				// we already hold here.
+				fprintf(stderr, "[wasm] SetupWizard: Scan for Firmware -> /home/web_user/firmware\n");
+				{
+					std::lock_guard<std::mutex> lock(g_setupWiz.scanMutex);
+					g_setupWiz.pendingScanPath = "/home/web_user/firmware";
+				}
+#else
 				SDL_ShowOpenFolderDialog(FirmwareScanCallback, nullptr, window, nullptr, false);
+#endif
+			}
 
 			if (!g_setupWiz.scanMessage.empty()) {
 				ImGui::SameLine();
