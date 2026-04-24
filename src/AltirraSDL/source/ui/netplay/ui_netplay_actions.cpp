@@ -945,6 +945,43 @@ void ReconcileHostedGames(uint64_t nowMs) {
 				o.lastHeartbeatMs = nowMs;
 			}
 		}
+
+		// NAT-PMP / PCP lease refresh.  The router granted a mapping
+		// with `natPmpLifetimeSec` at Create time; after that elapses
+		// the external→internal forward disappears and any joiner
+		// attempting to reach the mapped srflx gets no response.
+		// RFC 6886 §3.7 recommends renewing at half-lifetime, which
+		// gives the renew a full second half-lifetime to land before
+		// the mapping would actually drop.  Only fire once per
+		// half-lifetime per HostedGame — natPmpRefreshInFlight is
+		// cleared when the worker result arrives (ok or error).
+		if (!o.natPmpProtocol.empty() &&
+		    o.natPmpInternalPort != 0 &&
+		    o.natPmpLifetimeSec  != 0 &&
+		    o.natPmpAcquiredMs   != 0 &&
+		    !o.natPmpRefreshInFlight) {
+			const uint64_t halfLifeMs =
+				(uint64_t)o.natPmpLifetimeSec * 500ull;  // /2 * 1000
+			const uint64_t dueAt =
+				std::max<uint64_t>(
+					o.natPmpAcquiredMs + halfLifeMs,
+					o.natPmpRetryAfterMs);
+			if (nowMs >= dueAt) {
+				LobbyRequest req{};
+				req.op                      = LobbyOp::PortMapRefresh;
+				req.portRefreshInternalPort = o.natPmpInternalPort;
+				req.portRefreshLifetimeSec  = o.natPmpLifetimeSec;
+				req.tag                     = OfferTag(o);
+				o.natPmpRefreshInFlight = true;
+				g_ATLCNetplay("NAT-PMP: refreshing mapping for \"%s\" "
+					"(port %u, %us into %us lease)",
+					o.gameName.c_str(),
+					(unsigned)o.natPmpInternalPort,
+					(unsigned)((nowMs - o.natPmpAcquiredMs) / 1000),
+					(unsigned)o.natPmpLifetimeSec);
+				GetWorker().Post(std::move(req), "");
+			}
+		}
 	}
 }
 

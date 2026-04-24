@@ -127,7 +127,13 @@ void LobbyWorker::ThreadMain() {
 					std::string mapErr;
 					bool mapped = ATNetplay::RequestUdpPortMapping(
 						gamePort,
-						/*lifetimeSec=*/3600,    // 1 h; refresh on next Create
+						/*lifetimeSec=*/7200,    // 2 h; ReconcileHostedGames
+						                         // refreshes at half-lifetime,
+						                         // so the mapping stays live
+						                         // for arbitrarily long
+						                         // sessions.  Many routers
+						                         // clamp to their own max
+						                         // (commonly 7200 or 86400).
 						mapping, mapErr);
 					if (mapped && !mapping.externalIp.empty() &&
 					    mapping.externalPort != 0) {
@@ -255,6 +261,41 @@ void LobbyWorker::ThreadMain() {
 					cands = q.req.createReq.candidates.front();
 				out.ok = client.PostPeerHint(q.req.sessionId,
 					q.req.state, q.req.token, cands);
+				break;
+			}
+			case LobbyOp::PortMapRefresh: {
+				// Re-request the NAT-PMP / PCP mapping for the
+				// already-bound internal port.  The router may:
+				//   - return the same (internal, external) pair with a
+				//     fresh lease → happy path, no joiner-visible
+				//     change
+				//   - hand us a different external port (if someone
+				//     else squatted our old one during the lease) → we
+				//     report the new mapping and the main thread
+				//     updates the HostedGame / hostEndpoint; joiners
+				//     re-fetching the lobby listing pick up the new
+				//     endpoint
+				//   - refuse → we surface the error; the OLD mapping
+				//     may still be live on the router until its own
+				//     lease expires, so current joiners aren't affected
+				ATNetplay::PortMapping mapping;
+				std::string err;
+				bool mapped = ATNetplay::RequestUdpPortMapping(
+					q.req.portRefreshInternalPort,
+					q.req.portRefreshLifetimeSec
+						? q.req.portRefreshLifetimeSec
+						: 7200,
+					mapping, err);
+				out.ok = mapped;
+				if (mapped) {
+					out.natPmpProtocol     = mapping.protocol;
+					out.natPmpExternalIp   = mapping.externalIp;
+					out.natPmpExternalPort = mapping.externalPort;
+					out.natPmpInternalPort = mapping.internalPort;
+					out.natPmpLifetimeSec  = mapping.lifetimeSec;
+				} else {
+					out.error = err.empty() ? "no response" : err;
+				}
 				break;
 			}
 		}

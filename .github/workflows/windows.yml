@@ -22,10 +22,10 @@ name: Windows build
 
 on:
   push:
-    branches: [main]
+    branches: [main, net-play]
     tags: ['v*']
   pull_request:
-    branches: [main]
+    branches: [main, net-play]
   workflow_dispatch:
 
 # Cancel an in-progress run when a new commit lands on the same ref.
