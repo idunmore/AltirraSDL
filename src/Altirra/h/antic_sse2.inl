@@ -20,6 +20,7 @@
 
 #include <intrin.h>
 #include <at/atcore/intrin_sse2.h>
+#include <vd2/system/bitmath.h>
 
 void ATAnticSetDMACycles_SSE2(void *dst0, uint32 start, uint32 end, uint8 cyclePattern, uint8 dmaMask) {
 	__m128i *VDRESTRICT dst = (__m128i *)dst0;
@@ -70,7 +71,11 @@ inline void ATAnticSetRefreshCycles_SSE2(uint8 *dmaPattern) {
 		uint16 freeMask = ~(_mm_movemask_epi8(_mm_slli_epi16(*dp16, 7)) | imask);
 
 		if (freeMask) {
-			((uint8 *)dp16)[__builtin_ctz(freeMask)] |= 0x01;
+			// VDFindLowestSetBit dispatches to _BitScanForward on
+			// MSVC and __builtin_ctz on GCC/Clang.  The raw builtin
+			// is GCC/Clang-only; CI's Windows MSVC path fails to
+			// identify it otherwise.
+			((uint8 *)dp16)[VDFindLowestSetBit(freeMask)] |= 0x01;
 			break;
 		}
 
