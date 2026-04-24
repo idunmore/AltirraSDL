@@ -1256,25 +1256,36 @@ void RestoreSessionRestorePoint() {
 
 namespace {
 
-// Look up a firmware by CRC32 under the kernel-family type filter.
-// Returns 0 if no match.  Uses the ATFirmwareManager "[XXXXXXXX]"
-// ref-string path (firmwaremanager.cpp:605-626).
-uint64 FindKernelByCRC(ATFirmwareManager& fwm, uint32_t crc32) {
+// Look up a firmware by CRC32 under a type filter.  Returns 0 if no
+// match.  The ATFirmwareManager "[XXXXXXXX]" ref-string path
+// (firmwaremanager.cpp:605-626) would do this too but internally
+// calls LoadFirmware + CRC32 on every filter-matching firmware with
+// no cache — at 60 Hz per tile that hammered the disk on Android.
+// Iterating the in-memory fwList ourselves and routing the CRC
+// through ComputeFirmwareCRC32 (cached by firmware ID) collapses
+// the repeated scan into one-shot-per-firmware-per-session work.
+using TypeFilter = bool (*)(ATFirmwareType);
+uint64 FindFirmwareByCRC(ATFirmwareManager& fwm, uint32_t crc32,
+                         TypeFilter typeOk) {
 	if (crc32 == 0) return 0;
-	wchar_t ref[16];
-	swprintf(ref, 16, L"[%08X]", crc32);
-	return fwm.GetFirmwareByRefString(ref,
-		[](ATFirmwareType t) {
-			return ATIsKernelFirmwareType(t);
-		});
+	vdvector<ATFirmwareInfo> list;
+	fwm.GetFirmwareList(list);
+	for (const auto& fw : list) {
+		if (!fw.mbVisible) continue;
+		if (!typeOk(fw.mType)) continue;
+		if (ComputeFirmwareCRC32(fw.mId) == crc32) return fw.mId;
+	}
+	return 0;
+}
+
+uint64 FindKernelByCRC(ATFirmwareManager& fwm, uint32_t crc32) {
+	return FindFirmwareByCRC(fwm, crc32,
+		+[](ATFirmwareType t) { return ATIsKernelFirmwareType(t); });
 }
 
 uint64 FindBasicByCRC(ATFirmwareManager& fwm, uint32_t crc32) {
-	if (crc32 == 0) return 0;
-	wchar_t ref[16];
-	swprintf(ref, 16, L"[%08X]", crc32);
-	return fwm.GetFirmwareByRefString(ref,
-		[](ATFirmwareType t) { return t == kATFirmwareType_Basic; });
+	return FindFirmwareByCRC(fwm, crc32,
+		+[](ATFirmwareType t) { return t == kATFirmwareType_Basic; });
 }
 
 } // anonymous
