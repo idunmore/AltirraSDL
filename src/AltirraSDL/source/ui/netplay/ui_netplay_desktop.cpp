@@ -339,8 +339,10 @@ void DesktopBrowser() {
 			JoinCompat compat = CheckJoinCompat(s.kernelCRC32, s.basicCRC32,
 				missingCRC);
 			const bool playing = (s.state == "playing");
-			const bool joinable = !playing && compat != JoinCompat::MissingKernel
-			                              && compat != JoinCompat::MissingBasic;
+			const bool joinable = !playing
+				&& compat != JoinCompat::MissingKernel
+				&& compat != JoinCompat::MissingBasic
+				&& compat != JoinCompat::MissingBoth;
 
 			ImGui::TableNextRow();
 			ImGui::TableNextColumn();
@@ -368,7 +370,10 @@ void DesktopBrowser() {
 			// subsequent item is submitted, otherwise IsItemHovered
 			// would refer to that later item instead.
 			if (ImGui::IsItemHovered()) {
-				if (compat == JoinCompat::MissingKernel)
+				if (compat == JoinCompat::MissingBoth)
+					ImGui::SetTooltip("Missing OS and BASIC firmware — install "
+						"both in System → Firmware to join.");
+				else if (compat == JoinCompat::MissingKernel)
 					ImGui::SetTooltip("Missing OS firmware [%s] — install it "
 						"in System → Firmware to join.", missingCRC);
 				else if (compat == JoinCompat::MissingBasic)
@@ -428,7 +433,8 @@ void DesktopBrowser() {
 	const bool selPlaying = sel && sel->state == "playing";
 	const bool selOk = sel && !selPlaying
 		&& selCompat != JoinCompat::MissingKernel
-		&& selCompat != JoinCompat::MissingBasic;
+		&& selCompat != JoinCompat::MissingBasic
+		&& selCompat != JoinCompat::MissingBoth;
 	bool canJoin = sel && selOk && !ATNetplayGlue::IsActive();
 	ImGui::BeginDisabled(!canJoin);
 	if (ImGui::Button("Join", ImVec2(140, 0))) {
@@ -441,6 +447,8 @@ void DesktopBrowser() {
 		ImGui::SameLine();
 		if (selPlaying)
 			ImGui::TextDisabled("(in play)");
+		else if (selCompat == JoinCompat::MissingBoth)
+			ImGui::TextColored(cIncompat, "(missing OS and BASIC firmware)");
 		else if (selCompat == JoinCompat::MissingKernel)
 			ImGui::TextColored(cIncompat, "(missing OS firmware)");
 		else if (selCompat == JoinCompat::MissingBasic)

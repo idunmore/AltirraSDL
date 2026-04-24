@@ -28,6 +28,7 @@ extern void ATRegistryFlushToDisk();
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <unordered_map>
 
 namespace ATNetplayUI {
 
@@ -292,13 +293,32 @@ const char *MachineConfigSummary(const MachineConfig& c) {
 
 uint32_t ComputeFirmwareCRC32(uint64_t firmwareId) {
 	if (firmwareId == 0) return 0;
+
+	// LoadFirmware hits disk and the CRC32 sweeps the full buffer.
+	// Both are trivially slow individually but murderous when a per-
+	// frame UI path (e.g. the Browser tile's FirmwareNameForCRC and
+	// CheckJoinCompat) fans out to every installed firmware every
+	// repaint — scrolling the Gaming Mode browse list was visibly
+	// frame-stalling on Android because of this.  Memoise by the
+	// opaque firmware id, which is stable for the lifetime of an
+	// installed firmware entry; stale entries for firmwares the user
+	// removed mid-session are never consulted because the caller
+	// iterates the live fwList and only asks about IDs that appear
+	// there.  One thread (the UI thread) owns this path so no
+	// synchronization is needed.
+	static std::unordered_map<uint64_t, uint32_t> cache;
+	auto it = cache.find(firmwareId);
+	if (it != cache.end()) return it->second;
+
 	ATFirmwareManager *fwm = g_sim.GetFirmwareManager();
 	if (!fwm) return 0;
 	vdfastvector<uint8> buf;
 	if (!fwm->LoadFirmware(firmwareId, nullptr, 0, 0, nullptr, nullptr, &buf))
 		return 0;
 	if (buf.empty()) return 0;
-	return VDCRCTable::CRC32.CRC(buf.data(), buf.size());
+	const uint32_t crc = VDCRCTable::CRC32.CRC(buf.data(), buf.size());
+	cache.emplace(firmwareId, crc);
+	return crc;
 }
 
 const char *FirmwareNameForCRC(uint32_t crc, bool *outInstalledLocally) {
@@ -408,12 +428,14 @@ SpecLine BuildSpecLineFromSession(const ATNetplay::LobbySession& s,
 	push(s.hardwareMode.empty()  ? "?" : s.hardwareMode);
 	push(s.videoStandard.empty() ? "?" : s.videoStandard);
 	push(s.memoryMode.empty()    ? "?" : s.memoryMode);
+	const bool missK = compat == JoinCompat::MissingKernel
+	                || compat == JoinCompat::MissingBoth;
+	const bool missB = compat == JoinCompat::MissingBasic
+	                || compat == JoinCompat::MissingBoth;
 	out.tokens.push_back(ResolveFirmwareToken(
-		s.kernelCRC32, "default OS",
-		compat == JoinCompat::MissingKernel));
+		s.kernelCRC32, "default OS", missK));
 	out.tokens.push_back(ResolveFirmwareToken(
-		s.basicCRC32,  "BASIC off",
-		compat == JoinCompat::MissingBasic));
+		s.basicCRC32,  "BASIC off",  missB));
 
 	out.hasMissingFirmware =
 		out.tokens[3].missing || out.tokens[4].missing;
@@ -748,7 +770,12 @@ void Navigate(Screen next) {
 		g_state.screen = Screen::Closed;
 		return;
 	}
-	if (g_state.screen != Screen::Closed)
+	// Nickname is a first-time gate, not a navigable page: once the
+	// user saves a handle and moves on, backing into it again would
+	// just show an already-completed wizard.  Treat it like Closed so
+	// it never enters the back stack.
+	if (g_state.screen != Screen::Closed &&
+	    g_state.screen != Screen::Nickname)
 		g_state.backStack.push_back(g_state.screen);
 	g_state.screen = next;
 
