@@ -163,6 +163,17 @@ struct HostedGame {
 	uint16_t    natPmpInternalPort = 0;
 	uint32_t    natPmpLifetimeSec  = 0;
 	uint64_t    natPmpAcquiredMs   = 0;
+	// True while a PortMapRefresh request is in flight on the worker
+	// thread.  Prevents the per-tick refresh check from spamming the
+	// worker with duplicate requests before the first one completes.
+	bool        natPmpRefreshInFlight = false;
+	// Earliest monotonic-ms at which a failed refresh may retry.  The
+	// natural trigger is `natPmpAcquiredMs + lifetime/2` — on the
+	// happy path retryAfterMs stays 0 and that is the only gate; on
+	// failure we set it to `now + 5 min` so a broken/unreachable
+	// router doesn't cause us to re-post every main-loop tick until
+	// the original mapping finally expires.
+	uint64_t    natPmpRetryAfterMs = 0;
 
 	// Snapshot queuing — set once per session to avoid re-queueing the
 	// boot+serialize work on every ReconcileHostedGames tick.  Cleared when

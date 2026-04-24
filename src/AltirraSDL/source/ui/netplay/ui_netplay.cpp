@@ -250,6 +250,57 @@ void ATNetplayUI_Poll(uint64_t nowMs) {
 				}
 				return;
 			}
+			if (r.op == ATNetplayUI::LobbyOp::PortMapRefresh) {
+				ATNetplayUI::HostedGame* o =
+					ATNetplayUI::FindHostedGameByTag(r.tag);
+				if (!o) return;
+				o->natPmpRefreshInFlight = false;
+				if (r.ok && !r.natPmpProtocol.empty() &&
+				    r.natPmpInternalPort != 0) {
+					const bool portChanged =
+						(r.natPmpExternalPort != o->natPmpExternalPort) ||
+						(r.natPmpExternalIp   != o->natPmpExternalIp);
+					o->natPmpProtocol     = r.natPmpProtocol;
+					o->natPmpExternalIp   = r.natPmpExternalIp;
+					o->natPmpExternalPort = r.natPmpExternalPort;
+					o->natPmpInternalPort = r.natPmpInternalPort;
+					o->natPmpLifetimeSec  = r.natPmpLifetimeSec;
+					o->natPmpAcquiredMs   = nowMs;
+					o->natPmpRetryAfterMs = 0;
+					g_ATLCNetplay("NAT-PMP: refreshed mapping for \"%s\" "
+						"(%s %u→%s:%u lease=%us)%s",
+						o->gameName.c_str(),
+						r.natPmpProtocol.c_str(),
+						(unsigned)r.natPmpInternalPort,
+						r.natPmpExternalIp.c_str(),
+						(unsigned)r.natPmpExternalPort,
+						(unsigned)r.natPmpLifetimeSec,
+						portChanged
+							? " — external endpoint CHANGED"
+							: "");
+					// If the external port changed the lobby listing now
+					// advertises a stale host endpoint; the next heartbeat
+					// (≤30 s) refreshes it.  A live joiner mid-handshake
+					// would fall back to the reflector-probe srflx
+					// candidate already in the candidates list, so no
+					// explicit recovery path is needed here.
+				} else {
+					g_ATLCNetplay("NAT-PMP: refresh FAILED for \"%s\": %s "
+						"(existing mapping valid until natural expiry)",
+						o->gameName.c_str(),
+						r.error.empty() ? "no detail" : r.error.c_str());
+					// Back off for 5 minutes before retrying.  Without
+					// this, every tick would re-post because
+					// acquiredMs + halfLifeMs is already in the past.
+					// Worst-case degradation on prolonged router
+					// failure: mapping eventually expires and joiners
+					// fall back to the reflector-probe srflx candidate
+					// that was published alongside the mapping at
+					// Create time.
+					o->natPmpRetryAfterMs = nowMs + 5ull * 60ull * 1000ull;
+				}
+				return;
+			}
 			if (r.op == ATNetplayUI::LobbyOp::Stats) {
 				// Sum results across federated lobbies.  pendingResponses
 				// was set when the cycle was kicked off; each landing

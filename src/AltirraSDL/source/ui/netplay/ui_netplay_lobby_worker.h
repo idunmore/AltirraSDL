@@ -49,6 +49,15 @@ enum class LobbyOp {
 	// sessionNonce hex), req.state (joiner handle), req.createReq.
 	// candidates (joiner candidates, first element used).
 	PeerHint,
+	// NAT-PMP / PCP lease refresh.  Fires the existing
+	// RequestUdpPortMapping call for the already-bound internal port
+	// to renew the router's external→internal forward before its
+	// lease expires.  Uses req.portRefreshInternalPort +
+	// req.portRefreshLifetimeSec; the response fills the natPmp*
+	// fields the same way a Create does, so the main thread can
+	// update its HostedGame in the existing result handler.  No
+	// lobby I/O — this is a local LAN round-trip.
+	PortMapRefresh,
 };
 
 struct LobbyRequest {
@@ -60,6 +69,11 @@ struct LobbyRequest {
 	int                           playerCount = 1;  // heartbeat
 	std::string                   state;       // heartbeat: "" | "waiting" | "playing"
 	uint32_t                      tag = 0;     // caller cookie (round-trip)
+
+	// op == PortMapRefresh: the bound UDP port to renew, plus the
+	// desired lease hint (router may clamp to its own maximum).
+	uint16_t                      portRefreshInternalPort = 0;
+	uint32_t                      portRefreshLifetimeSec  = 0;
 };
 
 struct LobbyResult {

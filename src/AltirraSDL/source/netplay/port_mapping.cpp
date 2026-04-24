@@ -333,6 +333,242 @@ bool DoNatPmp(uint32_t gatewayBE, uint16_t internalPort,
 	return gotMap;
 }
 
+// -------------------------------------------------------------------
+// PCP (RFC 6887) MAP opcode.
+// -------------------------------------------------------------------
+//
+// PCP supersedes NAT-PMP.  On port 5351 both coexist: a PCP-only
+// router replies to a NAT-PMP (version 0) request with result code
+// UNSUPP_VERSION, and vice-versa a NAT-PMP-only router replies to a
+// PCP (version 2) request with UNSUPP_VERSION.  We try PCP first;
+// fall back to NAT-PMP on UNSUPP_VERSION or silence.  Wire format per
+// RFC 6887 §7 and §11: 24-byte common header + 36-byte MAP body =
+// 60 bytes request, 60 bytes response.
+//
+// Client IP in the header must be the source address we use to reach
+// the gateway — we discover it by connect()+getsockname() after
+// creating the socket, since the gateway is IPv4 and we want an
+// IPv4-mapped IPv6 address in the 16-byte slot.
+
+// Write an IPv4 (network-byte-order) into an IPv6 slot as an IPv4-
+// mapped IPv6 address (::ffff:a.b.c.d), per RFC 4291 §2.5.5.2.  The
+// slot must be at least 16 bytes.
+void WriteIPv4MappedIPv6(uint8_t slot[16], uint32_t ipv4BE) {
+	std::memset(slot, 0, 10);
+	slot[10] = 0xFF;
+	slot[11] = 0xFF;
+	std::memcpy(slot + 12, &ipv4BE, 4);
+}
+
+// Extract the IPv4 address from an IPv6 slot if it is IPv4-mapped;
+// otherwise return 0.  `out` receives network-byte-order IPv4.
+bool ReadIPv4FromMappedIPv6(const uint8_t slot[16], uint32_t& out) {
+	for (int i = 0; i < 10; ++i) if (slot[i] != 0) return false;
+	if (slot[10] != 0xFF || slot[11] != 0xFF) return false;
+	std::memcpy(&out, slot + 12, 4);
+	return true;
+}
+
+// Discover our own source IP for packets destined to `gatewayBE` by
+// creating a connected UDP socket (no data sent) and reading back
+// the kernel-assigned local address.  Returns network-byte-order
+// IPv4, or 0 on failure.
+uint32_t DiscoverOwnSourceIp(uint32_t gatewayBE) {
+#if defined(_WIN32)
+	SOCKET raw = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	if (raw == INVALID_SOCKET) return 0;
+	intptr_t s = (intptr_t)raw;
+#else
+	int raw = ::socket(AF_INET, SOCK_DGRAM, 0);
+	if (raw < 0) return 0;
+	intptr_t s = (intptr_t)raw;
+#endif
+	sockaddr_in to {};
+	to.sin_family = AF_INET;
+	to.sin_port   = htons(kNatPmpPort);
+	to.sin_addr.s_addr = gatewayBE;
+	uint32_t result = 0;
+	if (::connect((int)s, (const sockaddr*)&to, sizeof to) == 0) {
+		sockaddr_in me {};
+		socklen_t mlen = sizeof me;
+		if (::getsockname((int)s, (sockaddr*)&me, &mlen) == 0) {
+			result = me.sin_addr.s_addr;
+		}
+	}
+	PM_CLOSE(s);
+	return result;
+}
+
+// PCP common-header + MAP-body result codes.  Only the ones we act
+// on are listed here; any other non-zero code is treated as failure.
+constexpr uint8_t kPcpResultSuccess        = 0;
+constexpr uint8_t kPcpResultUnsuppVersion  = 1;
+
+bool DoPcp(uint32_t gatewayBE, uint32_t ownSourceBE, uint16_t internalPort,
+           uint32_t lifetimeSec, PortMapping& out,
+           std::string& err, bool& peerUnsuppVersion) {
+	peerUnsuppVersion = false;
+	EnsureNetSubsystem();
+
+#if defined(_WIN32)
+	SOCKET raw = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	if (raw == INVALID_SOCKET) { err = "socket() failed"; return false; }
+	intptr_t s = (intptr_t)raw;
+#else
+	int raw = ::socket(AF_INET, SOCK_DGRAM, 0);
+	if (raw < 0) { err = "socket() failed"; return false; }
+	intptr_t s = (intptr_t)raw;
+#endif
+
+	sockaddr_in gw {};
+	gw.sin_family = AF_INET;
+	gw.sin_port   = htons(kNatPmpPort);
+	gw.sin_addr.s_addr = gatewayBE;
+
+	// Build a 60-byte MAP request.  Layout:
+	//   [ 0] version=2
+	//   [ 1] R=0, opcode=1           → 0x01
+	//   [ 2] reserved (2)
+	//   [ 4] requested lifetime (be32)
+	//   [ 8] client IP (IPv4-mapped IPv6, 16 bytes)
+	//   [24] nonce (12 bytes)
+	//   [36] protocol=17 (UDP)
+	//   [37] reserved (3)
+	//   [40] internal port (be16)
+	//   [42] suggested external port (be16)
+	//   [44] suggested external IP (:: for "no preference", 16 bytes)
+	uint8_t req[60] = {};
+	req[0] = 2;     // version
+	req[1] = 0x01;  // R=0, opcode=1 MAP
+	WriteBE32(req + 4, lifetimeSec);
+	WriteIPv4MappedIPv6(req + 8, ownSourceBE);
+
+	// 96-bit nonce: seeded from wall-clock + PID so a rapid-retry loop
+	// in the same process generates distinct values.  The nonce only
+	// needs to match the response to correlate it — no cryptographic
+	// property is required by the protocol.
+	{
+		uint64_t t = MonoMillis();
+#if defined(_WIN32)
+		uint32_t pid = (uint32_t)GetCurrentProcessId();
+#else
+		uint32_t pid = (uint32_t)::getpid();
+#endif
+		WriteBE32(req + 24 +  0, (uint32_t)(t & 0xFFFFFFFFu));
+		WriteBE32(req + 24 +  4, (uint32_t)((t >> 32) & 0xFFFFFFFFu));
+		WriteBE32(req + 24 +  8, pid ^ (uint32_t)(t * 0x9E3779B1u));
+	}
+
+	req[36] = 17;   // UDP
+	WriteBE16(req + 40, internalPort);
+	WriteBE16(req + 42, internalPort);   // suggested external
+	// req[44..59] already zero (suggested external IP = ::)
+
+	uint8_t resp[64] = {};
+	const uint32_t kTriesMs[] = { 250, 500, 750 };
+	bool gotMap = false;
+
+	for (uint32_t tm : kTriesMs) {
+		int n = ::sendto((int)s, (const char*)req, (int)sizeof req,
+			0, (const sockaddr*)&gw, sizeof gw);
+		if (n != (int)sizeof req) { err = "send failed"; break; }
+		if (!WaitReadable(s, tm)) continue;
+
+		sockaddr_in from {};
+		socklen_t flen = sizeof from;
+		n = ::recvfrom((int)s, (char*)resp, (int)sizeof resp, 0,
+			(sockaddr*)&from, &flen);
+		if (n < 60) continue;
+		if (from.sin_addr.s_addr != gatewayBE) continue;
+		if (resp[0] != 2) {
+			// Router is NAT-PMP-only and echoed back its own v0
+			// response; treat as "PCP unsupported, fall back".
+			peerUnsuppVersion = true;
+			break;
+		}
+		if (resp[1] != 0x81) continue;   // not a MAP response
+		uint8_t result = resp[3];
+		if (result == kPcpResultUnsuppVersion) {
+			peerUnsuppVersion = true;
+			break;
+		}
+		if (result != kPcpResultSuccess) {
+			err = "PCP MAP refused (result code " + std::to_string((int)result) + ")";
+			break;
+		}
+		// Correlate nonce (bytes 24..35 of response body at offset 24 -
+		// common-header is 24 bytes so body starts at 24; nonce is
+		// first 12 bytes of body).  Drop mismatches — another client
+		// on the LAN might have a MAP in flight with the same port.
+		if (std::memcmp(resp + 24, req + 24, 12) != 0) continue;
+
+		uint32_t lifeGranted = ReadBE32(resp + 4);
+		uint16_t assignedExt = ReadBE16(resp + 24 + 18);
+		uint32_t extIpBE = 0;
+		std::string extIpStr;
+		if (ReadIPv4FromMappedIPv6(resp + 24 + 20, extIpBE) && extIpBE != 0) {
+			extIpStr = NetworkOrderToDotted(extIpBE);
+		}
+
+		out.protocol     = "PCP";
+		out.externalIp   = extIpStr;
+		out.externalPort = assignedExt;
+		out.lifetimeSec  = lifeGranted;
+		out.internalPort = internalPort;
+		gotMap = true;
+		break;
+	}
+
+	PM_CLOSE(s);
+	if (!gotMap && err.empty() && !peerUnsuppVersion)
+		err = "PCP gateway did not respond";
+	return gotMap;
+}
+
+// Release the mapping we just acquired via PCP by re-issuing MAP
+// with the same nonce and lifetime=0.  Best-effort, no retry.
+void DoPcpRelease(uint32_t gatewayBE, uint32_t ownSourceBE,
+                  const PortMapping& m) {
+	EnsureNetSubsystem();
+#if defined(_WIN32)
+	SOCKET raw = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	if (raw == INVALID_SOCKET) return;
+	intptr_t s = (intptr_t)raw;
+#else
+	int raw = ::socket(AF_INET, SOCK_DGRAM, 0);
+	if (raw < 0) return;
+	intptr_t s = (intptr_t)raw;
+#endif
+	sockaddr_in gw {};
+	gw.sin_family = AF_INET;
+	gw.sin_port   = htons(kNatPmpPort);
+	gw.sin_addr.s_addr = gatewayBE;
+
+	uint8_t req[60] = {};
+	req[0] = 2;
+	req[1] = 0x01;
+	// lifetime = 0 → release
+	WriteIPv4MappedIPv6(req + 8, ownSourceBE);
+	// We don't have the original nonce stashed (ReleaseUdpPortMapping's
+	// PortMapping carries enough for NAT-PMP — nonce would be a new
+	// field).  The PCP server's MAP-DELETE semantics key on
+	// (protocol, internalPort, clientIP) + any matching nonce, so
+	// using a fresh nonce with lifetime=0 tells it to find any
+	// mapping for this (proto, port, client) and drop it.
+	{
+		uint64_t t = MonoMillis();
+		WriteBE32(req + 24, (uint32_t)(t & 0xFFFFFFFFu));
+		WriteBE32(req + 28, (uint32_t)((t >> 32) & 0xFFFFFFFFu));
+		WriteBE32(req + 32, 0xDEADBEEFu);
+	}
+	req[36] = 17;
+	WriteBE16(req + 40, m.internalPort);
+	WriteBE16(req + 42, m.externalPort);
+	::sendto((int)s, (const char*)req, (int)sizeof req, 0,
+		(const sockaddr*)&gw, sizeof gw);
+	PM_CLOSE(s);
+}
+
 } // anon
 
 bool RequestUdpPortMapping(uint16_t internalPort,
@@ -347,15 +583,36 @@ bool RequestUdpPortMapping(uint16_t internalPort,
 	uint32_t gw = DiscoverDefaultGateway();
 	if (gw == 0) { err = "could not discover gateway"; return false; }
 
-	// First try NAT-PMP.  PCP upgrade is a planned follow-up — PCP's
-	// MAP opcode produces a strict superset of what NAT-PMP gives us,
-	// but requires a PCP-aware router and the slightly larger wire
-	// format.  Most consumer routers that support PCP also support
-	// NAT-PMP for backward compatibility, so NAT-PMP alone covers
-	// nearly all of the coverage population.
-	if (DoNatPmp(gw, internalPort, lifetimeSec, out, err)) {
+	// Try PCP first — it is the current IETF standard, covers strict
+	// modern routers (Apple AirPort internally, many OpenWrt/pfSense
+	// builds), and its MAP response is a strict superset of
+	// NAT-PMP's.  On UNSUPP_VERSION (router is NAT-PMP-only) or
+	// silence (router doesn't listen on 5351 at all), fall through.
+	uint32_t ownSrc = DiscoverOwnSourceIp(gw);
+	bool unsuppVersion = false;
+	std::string pcpErr;
+	if (ownSrc != 0 &&
+	    DoPcp(gw, ownSrc, internalPort, lifetimeSec, out, pcpErr,
+	          unsuppVersion)) {
 		return true;
 	}
+
+	// NAT-PMP (RFC 6886, version 0) — the legacy path for routers
+	// that never picked up PCP.  Covers Apple AirPort (pre-PCP),
+	// OpenWrt without miniupnpd, legacy TP-Link / ASUS firmwares.
+	std::string pmpErr;
+	if (DoNatPmp(gw, internalPort, lifetimeSec, out, pmpErr)) {
+		return true;
+	}
+
+	// Neither path succeeded.  Surface whichever error is most
+	// informative: if PCP saw an UNSUPP_VERSION the router speaks
+	// PCP only partially, and NAT-PMP's error is what the caller
+	// needs to see; otherwise prefer PCP's error (it was the newer,
+	// preferred attempt).
+	if (!pcpErr.empty() && !unsuppVersion) err = pcpErr;
+	else if (!pmpErr.empty())              err = pmpErr;
+	else                                   err = "router did not respond to PCP or NAT-PMP";
 	return false;
 }
 
@@ -364,6 +621,16 @@ void ReleaseUdpPortMapping(const PortMapping& m) {
 
 	uint32_t gw = DiscoverDefaultGateway();
 	if (gw == 0) return;
+
+	// Route to the matching protocol.  If the mapping was granted via
+	// PCP, a NAT-PMP release packet would be ignored (unsupported
+	// version on a PCP-strict router) and the mapping would linger
+	// until its lease expired naturally.
+	if (m.protocol == "PCP") {
+		uint32_t ownSrc = DiscoverOwnSourceIp(gw);
+		if (ownSrc != 0) DoPcpRelease(gw, ownSrc, m);
+		return;
+	}
 
 	EnsureNetSubsystem();
 
