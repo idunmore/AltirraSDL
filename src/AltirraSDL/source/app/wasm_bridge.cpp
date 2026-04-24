@@ -60,8 +60,12 @@ namespace {
 
 extern "C" EMSCRIPTEN_KEEPALIVE
 void ATWasmOnFileUploaded(const char* vfsPath, int bootNow) {
-	if (!vfsPath || !*vfsPath)
+	if (!vfsPath || !*vfsPath) {
+		fprintf(stderr, "[wasm] ATWasmOnFileUploaded: empty path, ignored\n");
 		return;
+	}
+	fprintf(stderr, "[wasm] ATWasmOnFileUploaded: path=%s boot=%d\n",
+	        vfsPath, bootNow);
 
 	// Defensive copy; the JS caller may free the string buffer as soon
 	// as we return.  string constructor makes an owned copy.
@@ -113,6 +117,11 @@ void ATWasmBridgeTick() {
 		batch.swap(g_wasmQueue);
 	}
 
+	if (batch.empty())
+		return;
+
+	fprintf(stderr, "[wasm] BridgeTick: draining %zu request(s)\n", batch.size());
+
 	for (const auto& req : batch) {
 		if (req.mBootNow) {
 			// VDStringW / VDTextU8ToW is the canonical UTF-8 → wchar_t
@@ -120,14 +129,19 @@ void ATWasmBridgeTick() {
 			// paths.  ATUIBootImage takes the wchar_t path and triggers
 			// the simulator's full load + cold-boot sequence (same path
 			// the desktop file-open dialog uses).
+			fprintf(stderr, "[wasm] BridgeTick: booting %s\n", req.mVfsPath.c_str());
 			const VDStringW pathW = VDTextU8ToW(VDStringSpanA(req.mVfsPath.c_str()));
-			ATUIBootImage(pathW.c_str());
+			try {
+				ATUIBootImage(pathW.c_str());
+				fprintf(stderr, "[wasm] BridgeTick: boot returned\n");
+			} catch (const std::exception& ex) {
+				fprintf(stderr, "[wasm] BridgeTick: boot threw std::exception: %s\n", ex.what());
+			} catch (...) {
+				fprintf(stderr, "[wasm] BridgeTick: boot threw unknown exception\n");
+			}
 		}
 		// else: nothing to do on the C side; the JS shell has already
-		// written the file to /persist and flushed to IDBFS.  A future
-		// addition would be an "ATWasmOnLibraryChanged" hook that
-		// refreshes the open game-library panel, but v1 lets the user
-		// click Refresh.
+		// written the file to /home/web_user and flushed to IDBFS.
 	}
 }
 

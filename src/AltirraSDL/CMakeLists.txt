@@ -686,6 +686,13 @@ elseif(ALTIRRA_WASM)
         "SHELL:-sENVIRONMENT=web"
         "SHELL:-sASYNCIFY=0"
         "SHELL:-sFORCE_FILESYSTEM=1"
+        # ASSERTIONS=1 turns cryptic "Aborted(undefined)" browser errors
+        # into "Aborted: <actual reason>" with a short stack summary.
+        # Adds roughly 200 KB to the wasm blob and a few % CPU overhead —
+        # worth every byte while the port is being debugged.  Once the
+        # WASM target is stable, drop this back to ASSERTIONS=0 to
+        # shrink the download.
+        "SHELL:-sASSERTIONS=1"
     )
     # Exception catching — always enabled, both Debug and Release.
     #
@@ -716,6 +723,21 @@ elseif(ALTIRRA_WASM)
     set_target_properties(AltirraSDL PROPERTIES SUFFIX ".js")
 
     # Generate the browser shell (index.html) from the template.
+    # Stamp the current git commit so the running page reveals which
+    # build the user loaded (makes "is this the stale cache?" a one-
+    # glance diagnosis instead of a guessing game).
+    execute_process(
+        COMMAND git rev-parse --short HEAD
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+        OUTPUT_VARIABLE ALTIRRA_WASM_GIT_SHA
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+    if(NOT ALTIRRA_WASM_GIT_SHA)
+        set(ALTIRRA_WASM_GIT_SHA "local")
+    endif()
+    string(TIMESTAMP ALTIRRA_WASM_BUILD_STAMP "%Y-%m-%d %H:%M UTC" UTC)
+
     set(ALTIRRA_WASM_INDEX_TEMPLATE
         "${CMAKE_CURRENT_SOURCE_DIR}/cmake/wasm_index.html.in")
     set(ALTIRRA_WASM_INDEX_OUTPUT

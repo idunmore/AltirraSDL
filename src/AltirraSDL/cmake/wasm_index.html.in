@@ -405,7 +405,12 @@
 </head>
 <body>
   <header>
-    <h1>AltirraSDL @PROJECT_VERSION@</h1>
+    <h1>AltirraSDL @PROJECT_VERSION@
+      <span style="color:#666; font-weight:400; font-size:0.75rem;"
+            title="Build: @ALTIRRA_WASM_BUILD_STAMP@">
+        @ALTIRRA_WASM_GIT_SHA@
+      </span>
+    </h1>
     <button id="btn-files" disabled>📁 Files…</button>
     <div id="status">Loading…</div>
     <div class="log-toggle" id="log-toggle" role="button" tabindex="0">▸ Show log</div>
@@ -547,6 +552,18 @@
       logEl.scrollTop = logEl.scrollHeight;
     }
 
+    // Structured JS-side logger that also hands messages off to the
+    // browser DevTools console — invaluable when "stderr" alone isn't
+    // enough because a native C++ abort or unhandled Promise cuts the
+    // page's rendering short before the log pane updates.
+    function jlog() {
+      const args = Array.prototype.slice.call(arguments);
+      appendLog('[js] ' + args.join(' '));
+      // Funnel to DevTools too so users who open the console see the
+      // same trail, time-correlated with any browser-level errors.
+      console.log.apply(console, ['[altirra-wasm]'].concat(args));
+    }
+
     function toast(msg, kind='ok') {
       const el = document.createElement('div');
       el.className = 'toast ' + kind;
@@ -647,19 +664,34 @@
     // ───────────────────────────────────────────────────────────────────
     function bridgeBoot(path) {
       if (!Module._ATWasmOnFileUploaded) {
+        jlog('boot: runtime not ready, cannot boot', path);
         toast('Runtime not ready', 'error');
         return;
       }
+      jlog('boot: requesting', path);
       try {
+        // Sanity-check the file exists in VFS before asking C to boot.
+        // Mismatched path = instant abort inside ATUIBootImage, which
+        // looks identical to other load failures but is 100% our fault.
+        let stat = null;
+        try { stat = Module.FS.stat(path); } catch (e) {
+          jlog('boot: FS.stat failed —', e && e.message ? e.message : e);
+          toast('File not found: ' + pathBasename(path), 'error');
+          return;
+        }
+        jlog('boot: VFS file present, size =', stat.size);
+
         const lenBytes = Module.lengthBytesUTF8(path) + 1;
         const cstr = Module._malloc(lenBytes);
         Module.stringToUTF8(path, cstr, lenBytes);
         Module._ATWasmOnFileUploaded(cstr, 1 /* bootNow */);
         Module._free(cstr);
+        jlog('boot: handed off to bridge queue');
         toast('Booting ' + pathBasename(path));
         closeFm();
         canvas.focus();
       } catch (e) {
+        jlog('boot: JS-side exception', e && e.message ? e.message : e);
         toast('Boot failed: ' + e, 'error');
       }
     }
@@ -697,15 +729,21 @@
       }
       ensureCategoryDirs();
 
+      jlog('upload: starting,', files.length, 'file(s),',
+           forceCategory ? 'forced to ' + forceCategory.id : 'auto-categorize');
+
       let wrote = 0;
       let firstBootable = null;
       for (const f of files) {
         try {
           const bytes = await readFileAsBytes(f);
           const safe  = sanitize(f.name);
+          const ext   = extOf(safe);
           const cat   = forceCategory
                           ? forceCategory
-                          : categoryForExt(extOf(safe));
+                          : categoryForExt(ext);
+          jlog('upload:', f.name, '→', cat.id,
+               '(' + fmtBytes(bytes.length) + ', ext=.' + (ext || '(none)') + ')');
           // mkdir -p again in case a force-category dir hasn't been made.
           try { Module.FS.mkdirTree(cat.dir); } catch (e) {}
           const path = cat.dir + '/' + safe;
@@ -715,11 +753,13 @@
             firstBootable = { path, cat };
           appendLog('[upload] ' + path + ' (' + fmtBytes(bytes.length) + ')');
         } catch (e) {
+          jlog('upload: failed —', f.name, '—', e && e.message ? e.message : e);
           toast('Upload failed: ' + f.name + ' (' + e + ')', 'error');
         }
       }
 
       if (wrote > 0) {
+        jlog('upload: wrote', wrote, 'file(s), flushing IDBFS');
         await syncFsOut();
         toast('Uploaded ' + wrote + ' file' + (wrote===1?'':'s'));
 
@@ -728,20 +768,31 @@
         const touchedFirmware =
           (forceCategory && forceCategory.id === 'firmware') ||
           lastWrittenPaths.some(p => p.includes('/firmware/'));
-        if (touchedFirmware && Module._ATWasmRescanFirmware) {
-          try {
-            Module._ATWasmRescanFirmware();
-          } catch (err) {
-            appendLog('[fw] rescan failed: ' + err);
+        if (touchedFirmware) {
+          jlog('upload: firmware touched, requesting rescan');
+          if (Module._ATWasmRescanFirmware) {
+            try {
+              Module._ATWasmRescanFirmware();
+              jlog('upload: rescan complete');
+            } catch (err) {
+              jlog('upload: rescan failed', err && err.message ? err.message : err);
+              appendLog('[fw] rescan failed: ' + err);
+            }
+          } else {
+            jlog('upload: _ATWasmRescanFirmware not exported — skipping rescan');
           }
         }
 
         if (firstBootable) {
+          jlog('upload: auto-boot', firstBootable.path);
           bridgeBoot(firstBootable.path);
         } else {
           // Non-bootable batch (e.g. screenshots) — just refresh view.
+          jlog('upload: non-bootable batch, refreshing view');
           renderFm();
         }
+      } else {
+        jlog('upload: 0 files written');
       }
     }
 
@@ -1079,7 +1130,9 @@
     // back to C.  Used by row-click in 'open' mode and by the Save
     // button in 'save' mode.
     function completePick(vfsPath) {
-      if (!pickMode) return;
+      if (!pickMode) { jlog('completePick: no pickMode, ignored'); return; }
+      const wasMode = pickMode;
+      jlog('completePick:', wasMode, 'mode, path =', vfsPath);
       pickMode = null;
       pickSaveExt = '';
       fmBackdrop.classList.remove('pick');
@@ -1089,6 +1142,9 @@
         Module.stringToUTF8(vfsPath, cstr, lenBytes);
         Module._ATWasmOnFilePicked(cstr);
         Module._free(cstr);
+        jlog('completePick: ATWasmOnFilePicked returned');
+      } else {
+        jlog('completePick: _ATWasmOnFilePicked not exported — callback dropped');
       }
       // Close without re-cancelling (pickMode is already cleared).
       fmBackdrop.classList.remove('open');
@@ -1126,6 +1182,10 @@
     //  non-matching rows in a future iteration.
     // ───────────────────────────────────────────────────────────────────
     window.altirraOpenFilePicker = function(nKey, category, filters, kind) {
+      jlog('picker open: key=0x' + (nKey>>>0).toString(16),
+           'category=' + category,
+           'filters=' + (filters || '(none)'),
+           'kind=' + (kind===1?'save':'open'));
       pickMode = (kind === 1) ? 'save' : 'open';
       pickSaveExt = '';
       if (pickMode === 'save' && filters) {
@@ -1148,10 +1208,12 @@
     // ───────────────────────────────────────────────────────────────────
     fmUpload.addEventListener('click', () => fmFilePicker.click());
     fmFilePicker.addEventListener('change', (e) => {
-      // When user clicks Upload from inside the overlay, route everything
-      // into the currently-selected category.  This is the "I want this
-      // .rom filed as a firmware" escape hatch.
-      uploadFiles(Array.from(e.target.files), activeCategory);
+      // Upload from inside the overlay auto-categorizes by extension
+      // so .rom files land in Firmware, .atr in Disks, etc.  Force-
+      // category still works via drag-drop onto the overlay (see
+      // the dragleave/drop handlers below) when the user explicitly
+      // wants to override auto-detect.
+      uploadFiles(Array.from(e.target.files));
       e.target.value = '';
     });
 
@@ -1270,14 +1332,33 @@
         runtimeReady = true;
         btnFiles.disabled = false;
         canvas.focus();
+        jlog('runtime ready, build=@ALTIRRA_WASM_GIT_SHA@',
+             '(@ALTIRRA_WASM_BUILD_STAMP@)');
+        // Log what's on disk after IDBFS syncfs completed so we can
+        // confirm uploads survive reloads.  readdir throws if the
+        // dir doesn't exist yet — swallow.
+        for (const c of CATEGORIES) {
+          try {
+            const entries = Module.FS.readdir(c.dir)
+              .filter(n => n !== '.' && n !== '..');
+            if (entries.length)
+              jlog('startup: ' + c.id + ' has',
+                   entries.length + ' file(s):', entries.join(', '));
+          } catch (e) {}
+        }
         // Ensure any firmware files that persisted across reloads are
         // visible to the emulator: run one scan after the emulator
         // finishes its own init so the Setup Wizard / Firmware page
         // see them without the user needing to click Scan.
         try {
-          if (Module._ATWasmRescanFirmware)
+          if (Module._ATWasmRescanFirmware) {
+            jlog('startup: running firmware rescan');
             Module._ATWasmRescanFirmware();
+          } else {
+            jlog('startup: _ATWasmRescanFirmware not exported');
+          }
         } catch (err) {
+          jlog('startup: firmware rescan failed —', err && err.message ? err.message : err);
           appendLog('[fw] startup rescan failed: ' + err);
         }
       },

@@ -211,20 +211,32 @@ namespace {
 // vfsPath == nullptr OR empty string → cancellation.
 extern "C" EMSCRIPTEN_KEEPALIVE
 void ATWasmOnFilePicked(const char *vfsPath) {
+	const bool cancelled = !(vfsPath && *vfsPath);
+	fprintf(stderr, "[wasm] ATWasmOnFilePicked: %s\n",
+	        cancelled ? "<cancel>" : vfsPath);
+
 	DialogContext *ctx = g_pPendingWasmDialog;
 	g_pPendingWasmDialog = nullptr;
-	if (!ctx) return;
+	if (!ctx) {
+		fprintf(stderr, "[wasm] ATWasmOnFilePicked: no pending ctx, ignored\n");
+		return;
+	}
 
 	// Fabricate an SDL-style (NULL-terminated) list so the existing
 	// trampoline / callback logic works unchanged.
 	const char *chosenList[2] = { nullptr, nullptr };
-	if (vfsPath && *vfsPath) {
+	if (!cancelled)
 		chosenList[0] = vfsPath;
+
+	try {
 		DialogTrampoline(ctx, chosenList, 0);
-	} else {
-		DialogTrampoline(ctx, chosenList, 0);
+		fprintf(stderr, "[wasm] ATWasmOnFilePicked: trampoline returned\n");
+	} catch (const std::exception& ex) {
+		fprintf(stderr, "[wasm] ATWasmOnFilePicked: std::exception: %s\n", ex.what());
+	} catch (...) {
+		fprintf(stderr, "[wasm] ATWasmOnFilePicked: unknown exception\n");
 	}
-	// DialogTrampoline deletes ctx.
+	// DialogTrampoline deletes ctx on its own.
 }
 
 void ATUIShowOpenFileDialog(
