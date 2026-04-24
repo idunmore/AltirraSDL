@@ -687,15 +687,29 @@ elseif(ALTIRRA_WASM)
         "SHELL:-sASYNCIFY=0"
         "SHELL:-sFORCE_FILESYSTEM=1"
     )
-    if(CMAKE_BUILD_TYPE STREQUAL "Release")
-        target_link_options(AltirraSDL PRIVATE
-            "SHELL:-sDISABLE_EXCEPTION_CATCHING=1"
-        )
-    else()
-        target_link_options(AltirraSDL PRIVATE
-            "SHELL:-sNO_DISABLE_EXCEPTION_CATCHING=1"
-        )
-    endif()
+    # Exception catching — always enabled, both Debug and Release.
+    #
+    # Altirra's file-load / media / disk / firmware paths throw
+    # MyError exceptions in common failure modes (wrong format,
+    # truncated image, IO error, unsupported cartridge type).  The
+    # frontend's try/catch layers recover from those and surface a
+    # dialog to the user.  Disabling the JS-level exception catch
+    # (-sDISABLE_EXCEPTION_CATCHING=1) turns every throw — even ones
+    # the C++ code catches — into a full wasm abort, which is what
+    # "Aborted(undefined)" errors look like in the browser.
+    #
+    # The perf cost of keeping catching enabled is a few percent for
+    # a 6502 emulator; the correctness win is non-negotiable.
+    #
+    # For a future optimisation we could switch to -fwasm-exceptions
+    # (near-zero-cost, uses the native WebAssembly exceptions
+    # proposal supported by all major browsers since 2023), but that
+    # needs matching -fwasm-exceptions at compile time for every
+    # translation unit and care with third-party libs.  Not worth
+    # the complexity today.
+    target_link_options(AltirraSDL PRIVATE
+        "SHELL:-sNO_DISABLE_EXCEPTION_CATCHING=1"
+    )
 
     # Set the final suffix so we produce AltirraSDL.js (plus .wasm side-file).
     # Emscripten defaults to .js for executables anyway, but be explicit.
