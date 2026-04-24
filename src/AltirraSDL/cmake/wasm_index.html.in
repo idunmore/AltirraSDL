@@ -6,23 +6,26 @@
   <title>AltirraSDL @PROJECT_VERSION@ — WebAssembly</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
     body {
       background: #111;
       color: #ddd;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
                    Roboto, sans-serif;
-      min-height: 100vh;
       display: flex;
       flex-direction: column;
-      align-items: center;
+      overflow: hidden;
     }
+
+    /* ── Top bar ────────────────────────────────────────────────── */
     header {
+      flex: 0 0 auto;
       width: 100%;
       background: #1a1a1a;
       border-bottom: 1px solid #333;
-      padding: 8px 12px;
+      padding: 6px 10px;
       display: flex;
-      gap: 12px;
+      gap: 10px;
       align-items: center;
       flex-wrap: wrap;
     }
@@ -47,24 +50,50 @@
       border-color: #2a2a2a;
       cursor: not-allowed;
     }
+    /* Status pushes everything after it (log toggle) to the right. */
     #status {
-      flex: 1;
+      flex: 1 1 auto;
       text-align: right;
       font-size: 0.8rem;
       color: #9fd89f;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+      padding-right: 8px;
     }
+    .log-toggle {
+      flex: 0 0 auto;
+      font-size: 0.8rem;
+      color: #888;
+      cursor: pointer;
+      user-select: none;
+      border: 1px solid transparent;
+      padding: 3px 8px;
+      border-radius: 3px;
+    }
+    .log-toggle:hover { color: #ddd; border-color: #444; }
+
+    /* ── Canvas area — fills all remaining space, letterboxes ───── */
     #canvas-wrap {
+      flex: 1 1 auto;
       position: relative;
-      margin-top: 12px;
+      min-height: 0;          /* allow shrinking below content size */
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #000;
     }
     canvas {
       display: block;
-      width: 800px;
-      height: 600px;
-      max-width: 100vw;
+      /* Maintain an Atari 4:3 aspect; scale to fit available area
+         without cropping.  The GPU framebuffer stays at whatever the
+         SDL_Renderer backbuffer was created at (typically 800x600);
+         the browser's CSS layer rescales that to the computed size. */
+      max-width: 100%;
+      max-height: 100%;
+      aspect-ratio: 4 / 3;
+      width: auto;
+      height: 100%;
       background: #000;
       outline: none;
     }
@@ -81,28 +110,23 @@
       justify-content: center;
     }
     #drop-overlay.active { display: flex; }
+
+    /* ── Log panel — hidden by default, bottom of viewport ──────── */
     #log {
-      width: 800px;
-      max-width: 100vw;
-      height: 120px;
-      margin-top: 8px;
+      flex: 0 0 auto;
+      width: 100%;
+      max-height: 30vh;
+      min-height: 120px;
       overflow-y: auto;
       white-space: pre;
       background: #000;
-      border: 1px solid #333;
+      border-top: 1px solid #333;
       color: #aaa;
-      padding: 6px;
+      padding: 6px 10px;
       font-size: 0.75rem;
       font-family: "SF Mono", Menlo, Consolas, monospace;
     }
     #log.hidden { display: none; }
-    .log-toggle {
-      font-size: 0.75rem;
-      color: #666;
-      cursor: pointer;
-      user-select: none;
-      margin-top: 6px;
-    }
   </style>
 </head>
 <body>
@@ -112,6 +136,7 @@
     <button id="btn-upload-firmware" disabled>Upload Firmware…</button>
     <button id="btn-save-library" disabled>Save Library</button>
     <div id="status">Loading…</div>
+    <div class="log-toggle" id="log-toggle" role="button" tabindex="0">▸ Show log</div>
   </header>
 
   <div id="canvas-wrap">
@@ -119,7 +144,6 @@
     <div id="drop-overlay">Drop files here to upload</div>
   </div>
 
-  <div class="log-toggle" id="log-toggle">▸ Show log</div>
   <div id="log" class="hidden"></div>
 
   <!-- File input elements (hidden; driven by toolbar buttons). -->
@@ -130,6 +154,24 @@
   <script>
   (() => {
     // ───────────────────────────────────────────────────────────────────────
+    //  Persistence root
+    //
+    //  We mount IDBFS at /home/web_user — the same path Emscripten sets
+    //  $HOME to by default.  That single mount covers:
+    //
+    //    /home/web_user/.config/altirra/settings.ini   (emulator settings,
+    //       computed by registry_sdl3.cpp via $HOME or $XDG_CONFIG_HOME)
+    //    /home/web_user/games/*                        (uploaded cartridges)
+    //    /home/web_user/firmware/*                     (uploaded OS ROMs)
+    //
+    //  Using a single mount means one syncfs flush persists everything
+    //  (settings + uploads) to the per-origin IndexedDB in one shot.
+    // ───────────────────────────────────────────────────────────────────────
+    const PERSIST_ROOT  = '/home/web_user';
+    const GAMES_DIR     = PERSIST_ROOT + '/games';
+    const FIRMWARE_DIR  = PERSIST_ROOT + '/firmware';
+
+    // ───────────────────────────────────────────────────────────────────────
     //  DOM handles
     // ───────────────────────────────────────────────────────────────────────
     const canvas      = document.getElementById('canvas');
@@ -137,6 +179,7 @@
     const logEl       = document.getElementById('log');
     const logToggle   = document.getElementById('log-toggle');
     const dropOverlay = document.getElementById('drop-overlay');
+    const canvasWrap  = document.getElementById('canvas-wrap');
     const btnGame     = document.getElementById('btn-upload-game');
     const btnFirmware = document.getElementById('btn-upload-firmware');
     const btnSave     = document.getElementById('btn-save-library');
@@ -149,14 +192,18 @@
       logEl.scrollTop = logEl.scrollHeight;
     }
 
-    logToggle.addEventListener('click', () => {
+    function toggleLog() {
       logEl.classList.toggle('hidden');
       logToggle.textContent =
         logEl.classList.contains('hidden') ? '▸ Show log' : '▾ Hide log';
+    }
+    logToggle.addEventListener('click', toggleLog);
+    logToggle.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleLog(); }
     });
 
     // ───────────────────────────────────────────────────────────────────────
-    //  IDBFS persistence helpers (populated once runtime is ready)
+    //  IDBFS persistence helpers
     // ───────────────────────────────────────────────────────────────────────
     async function syncFsIn() {
       return new Promise((resolve) => {
@@ -178,9 +225,10 @@
     // ───────────────────────────────────────────────────────────────────────
     //  Upload handling
     //
-    //  v1: write bytes into /persist/<games|firmware>/<basename>, flush to
-    //  IndexedDB, and report success.  Boot integration is wired up in a
-    //  later phase via an exported C function (ATWasmOnFileUploaded).
+    //  Writes the file bytes into the IDBFS-backed tree, flushes to
+    //  IndexedDB, and notifies the native bridge via
+    //  Module._ATWasmOnFileUploaded so the emulator can cold-boot the
+    //  first game (or merely see new firmware).
     // ───────────────────────────────────────────────────────────────────────
     async function readFileAsBytes(file) {
       return new Promise((resolve, reject) => {
@@ -203,13 +251,9 @@
         appendLog('[upload] runtime not ready');
         return;
       }
-      const dir = (kind === 'firmware') ? '/persist/firmware' : '/persist/games';
+      const dir = (kind === 'firmware') ? FIRMWARE_DIR : GAMES_DIR;
       try { Module.FS.mkdirTree(dir); } catch (e) {}
 
-      // Keep track of the first successfully-written game so the main
-      // tick can cold-boot it after this handler returns.  Firmware
-      // uploads don't auto-boot (users configure them in the Firmware
-      // page); games do, which matches the "drag-drop to play" UX.
       let wrote = 0;
       let firstGamePath = null;
       const lastWrittenPaths = [];
@@ -230,15 +274,9 @@
       }
 
       if (wrote > 0) {
-        // Persist to IndexedDB before handing control to the emulator
-        // so a crash during boot doesn't lose the upload.
         await syncFsOut();
         statusEl.textContent = 'Uploaded ' + wrote + ' file(s)';
 
-        // Notify the native bridge.  Booting the first game uploaded
-        // is the common case; the rest (and every firmware upload)
-        // goes through the non-boot branch so the emulator picks the
-        // file up on its next library refresh.
         try {
           if (Module._ATWasmOnFileUploaded) {
             for (const p of lastWrittenPaths) {
@@ -272,22 +310,38 @@
       e.target.value = '';
     });
 
-    // Drag-drop: accept files anywhere on the canvas area.
+    // Drag-drop anywhere on the canvas area — including the letterbox
+    // margins around it — feels more forgiving than forcing the user to
+    // hit the video rectangle precisely.
     ['dragenter', 'dragover'].forEach((evt) => {
-      canvas.addEventListener(evt, (e) => {
+      canvasWrap.addEventListener(evt, (e) => {
         e.preventDefault();
         dropOverlay.classList.add('active');
       });
     });
     ['dragleave', 'drop'].forEach((evt) => {
-      canvas.addEventListener(evt, (e) => {
+      canvasWrap.addEventListener(evt, (e) => {
         e.preventDefault();
         dropOverlay.classList.remove('active');
       });
     });
-    canvas.addEventListener('drop', (e) => {
+    canvasWrap.addEventListener('drop', (e) => {
       if (e.dataTransfer && e.dataTransfer.files.length) {
         uploadFiles(Array.from(e.dataTransfer.files), 'game');
+      }
+    });
+
+    // ───────────────────────────────────────────────────────────────────────
+    //  Auto-flush on page hide.  Browsers fire `pagehide` (and
+    //  `visibilitychange` to hidden) before closing / navigating, which
+    //  is our last chance to persist any in-memory-only changes to
+    //  IndexedDB.  Best-effort — we can't await async work here, but
+    //  syncfs(false) kicks off the IDB transaction and the browser
+    //  usually lets it finish before tearing down the page.
+    // ───────────────────────────────────────────────────────────────────────
+    window.addEventListener('pagehide', () => {
+      if (Module && Module.FS && Module.FS.syncfs) {
+        Module.FS.syncfs(false, () => {});
       }
     });
 
@@ -306,21 +360,25 @@
         return path;
       },
       preRun: [function () {
-        // Mount IDBFS at /persist for per-origin persistence.  Subdirs
-        // /persist/games and /persist/firmware are created lazily when
-        // an upload lands.  FS.syncfs(true) copies IndexedDB contents
-        // into the memory-backed view so in-emulator code sees them.
+        // Mount IDBFS at the default $HOME.  /home/web_user is created
+        // by Emscripten's MEMFS during startup, so the mkdir is
+        // idempotent — we just replace the MEMFS mount at that path
+        // with IDBFS.  FS.syncfs(true) copies IndexedDB contents into
+        // the memory-backed view before main() runs.
         try {
-          Module.FS.mkdir('/persist');
-          Module.FS.mount(Module.IDBFS, {}, '/persist');
+          // The directory may or may not exist yet depending on the
+          // Emscripten version; mkdir-if-missing covers both.
+          try { Module.FS.mkdir(PERSIST_ROOT); } catch (e) {}
+          Module.FS.mount(Module.IDBFS, {}, PERSIST_ROOT);
         } catch (e) {
           appendLog('[fs] mount error: ' + e);
         }
         Module.addRunDependency('idbfs-populate');
         Module.FS.syncfs(true, (err) => {
           if (err) appendLog('[fs] initial syncfs failed: ' + err);
-          try { Module.FS.mkdirTree('/persist/games'); } catch (e) {}
-          try { Module.FS.mkdirTree('/persist/firmware'); } catch (e) {}
+          try { Module.FS.mkdirTree(GAMES_DIR); } catch (e) {}
+          try { Module.FS.mkdirTree(FIRMWARE_DIR); } catch (e) {}
+          try { Module.FS.mkdirTree(PERSIST_ROOT + '/.config/altirra'); } catch (e) {}
           Module.removeRunDependency('idbfs-populate');
         });
       }],
