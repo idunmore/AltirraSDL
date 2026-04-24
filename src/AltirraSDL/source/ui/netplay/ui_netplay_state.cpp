@@ -408,12 +408,14 @@ SpecLine BuildSpecLineFromSession(const ATNetplay::LobbySession& s,
 	push(s.hardwareMode.empty()  ? "?" : s.hardwareMode);
 	push(s.videoStandard.empty() ? "?" : s.videoStandard);
 	push(s.memoryMode.empty()    ? "?" : s.memoryMode);
+	const bool missK = compat == JoinCompat::MissingKernel
+	                || compat == JoinCompat::MissingBoth;
+	const bool missB = compat == JoinCompat::MissingBasic
+	                || compat == JoinCompat::MissingBoth;
 	out.tokens.push_back(ResolveFirmwareToken(
-		s.kernelCRC32, "default OS",
-		compat == JoinCompat::MissingKernel));
+		s.kernelCRC32, "default OS", missK));
 	out.tokens.push_back(ResolveFirmwareToken(
-		s.basicCRC32,  "BASIC off",
-		compat == JoinCompat::MissingBasic));
+		s.basicCRC32,  "BASIC off",  missB));
 
 	out.hasMissingFirmware =
 		out.tokens[3].missing || out.tokens[4].missing;

@@ -1308,22 +1308,25 @@ JoinCompat CheckJoinCompat(const std::string& kernelHex,
 	ATFirmwareManager *fwm = g_sim.GetFirmwareManager();
 	if (!fwm) return JoinCompat::Unknown;
 
-	if (haveK) {
-		uint64 id = FindKernelByCRC(*fwm, kCrc);
-		if (!id) {
-			if (outMissingCRCHex)
-				std::snprintf(outMissingCRCHex, 9, "%08X", kCrc);
-			return JoinCompat::MissingKernel;
-		}
+	bool missK = false, missB = false;
+	if (haveK) missK = (FindKernelByCRC(*fwm, kCrc) == 0);
+	if (haveB) missB = (FindBasicByCRC (*fwm, bCrc) == 0);
+
+	// outMissingCRCHex carries a single "offending" CRC for callers
+	// that render a one-liner toast ("install ROM [xxxx]").  When
+	// both slots are missing, report the kernel CRC — the OS is the
+	// more-fundamental requirement and tends to be the first thing
+	// the user installs anyway.  The Browser row's per-token red
+	// flag still shows both names because it consumes the enum
+	// directly (see BuildSpecLineFromSession).
+	if (outMissingCRCHex) {
+		if      (missK) std::snprintf(outMissingCRCHex, 9, "%08X", kCrc);
+		else if (missB) std::snprintf(outMissingCRCHex, 9, "%08X", bCrc);
 	}
-	if (haveB) {
-		uint64 id = FindBasicByCRC(*fwm, bCrc);
-		if (!id) {
-			if (outMissingCRCHex)
-				std::snprintf(outMissingCRCHex, 9, "%08X", bCrc);
-			return JoinCompat::MissingBasic;
-		}
-	}
+
+	if (missK && missB) return JoinCompat::MissingBoth;
+	if (missK)          return JoinCompat::MissingKernel;
+	if (missB)          return JoinCompat::MissingBasic;
 	return JoinCompat::Compatible;
 }
 

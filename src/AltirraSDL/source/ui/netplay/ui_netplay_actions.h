@@ -140,6 +140,7 @@ enum class JoinCompat : uint8_t {
 	Compatible,     // both required CRCs resolve in our firmware mgr
 	MissingKernel,  // OS ROM not installed locally
 	MissingBasic,   // BASIC ROM not installed locally
+	MissingBoth,    // both OS and BASIC ROMs not installed locally
 };
 
 // outMissingCRCHex (optional, capacity >= 9) receives the offending
