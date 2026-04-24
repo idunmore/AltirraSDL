@@ -20,6 +20,7 @@
 // only; they are invoked from the tick lambda inside main().
 extern "C" void VDWASMTimerTick();
 extern void ATWasmBridgeTick();
+extern "C" void ATWasmSyncFSOut();
 #endif
 #define SDL_MAIN_HANDLED
 #include <SDL3/SDL_main.h>
@@ -2145,6 +2146,23 @@ int main(int argc, char *argv[]) {
 		// queue is empty.  Forward-declared at file scope above.
 		VDWASMTimerTick();
 		ATWasmBridgeTick();
+
+		// Periodic IDBFS flush so in-memory writes (emulator settings,
+		// save states, registry updates, uploaded files that somehow
+		// skipped the upload-time syncfs) persist to IndexedDB within
+		// a few seconds of happening.  pagehide is a best-effort
+		// fire-and-forget safety net; this is the primary durability
+		// mechanism and covers the common "user closes the tab"
+		// case without relying on onbeforeunload / pagehide firing.
+		//
+		// Interval: every 600 ticks ≈ 10 s at 60 Hz.  Shorter wastes
+		// IDB transactions on unchanged state, longer loses more
+		// recent writes on ungraceful close.  Tuned by feel.
+		static int s_wasmFlushTick = 0;
+		if (++s_wasmFlushTick >= 600) {
+			s_wasmFlushTick = 0;
+			ATWasmSyncFSOut();
+		}
 #endif
 
 		// Process deferred file dialog results on main thread

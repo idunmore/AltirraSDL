@@ -430,7 +430,6 @@
         <h2 id="fm-title">Files</h2>
         <div class="fm-actions">
           <button id="fm-upload">📁 Upload…</button>
-          <button id="fm-connect" title="Requires Chromium/Safari 15.4+">＋ Connect Folder</button>
           <input type="search" id="fm-search" class="fm-search" placeholder="Search…">
         </div>
         <button class="fm-close" id="fm-close" title="Close (Esc)">✕</button>
@@ -519,7 +518,6 @@
     const fmList      = document.getElementById('fm-list');
     const fmSummary   = document.getElementById('fm-summary');
     const fmUpload    = document.getElementById('fm-upload');
-    const fmConnect   = document.getElementById('fm-connect');
     const fmSearch    = document.getElementById('fm-search');
     const fmClose     = document.getElementById('fm-close');
     const fmFilePicker= document.getElementById('fm-filepicker');
@@ -783,13 +781,18 @@
           }
         }
 
+        // Always refresh the overlay so the sidebar counts reflect
+        // the new file while the overlay is still visible.  If we're
+        // about to auto-boot (and close the overlay), the user still
+        // catches the updated counts in peripheral vision before the
+        // boot transition.
+        renderFm();
+
         if (firstBootable) {
           jlog('upload: auto-boot', firstBootable.path);
           bridgeBoot(firstBootable.path);
         } else {
-          // Non-bootable batch (e.g. screenshots) — just refresh view.
-          jlog('upload: non-bootable batch, refreshing view');
-          renderFm();
+          jlog('upload: non-bootable batch, staying open');
         }
       } else {
         jlog('upload: 0 files written');
@@ -879,11 +882,31 @@
 
     function renderList() {
       fmList.innerHTML = '';
-      const rows = listCategory(activeCategory);
       const q = (fmSearch.value || '').toLowerCase().trim();
-      const filtered = q
-        ? rows.filter(r => r.name.toLowerCase().includes(q))
-        : rows;
+
+      // When a search query is active, scan every category's rows and
+      // merge the matches into one cross-category view.  Each match
+      // carries the originating category so the row can show its icon
+      // and still route the primary action correctly.  With no query
+      // the list falls back to the active category only.
+      let rows;
+      let searching = !!q;
+      if (searching) {
+        rows = [];
+        for (const c of CATEGORIES) {
+          for (const r of listCategory(c)) {
+            if (r.name.toLowerCase().includes(q)) {
+              rows.push(Object.assign({ _cat: c }, r));
+            }
+          }
+        }
+        rows.sort((a,b) => b.mtime - a.mtime);
+      } else {
+        rows = listCategory(activeCategory).map(r =>
+          Object.assign({ _cat: activeCategory }, r));
+      }
+
+      const filtered = rows;
 
       // ── Save mode banner: filename input + save button ────────────
       // Rendered above the file list so existing filenames are visible
@@ -927,14 +950,16 @@
       if (filtered.length === 0) {
         const empty = document.createElement('div');
         empty.className = 'fm-empty';
-        const main = rows.length === 0
-          ? 'No ' + activeCategory.label.toLowerCase() + ' yet'
-          : 'No matches for "' + q + '"';
+        const main = searching
+          ? 'No matches for "' + q + '"'
+          : 'No ' + activeCategory.label.toLowerCase() + ' yet';
         const hint = pickMode === 'save'
           ? 'Type a name above and press Save'
           : (pickMode === 'open'
               ? 'Upload a file or pick from another category'
-              : 'Drop files here or click Upload');
+              : (searching
+                  ? 'Clear the search box to see all files'
+                  : 'Drop files here or click Upload'));
         empty.innerHTML =
           '<div>' + main + '</div>' +
           '<div class="hint">' + hint + '</div>';
@@ -951,7 +976,13 @@
         row.className = 'fm-row' + (r.path === selectedPath ? ' selected' : '');
         row.dataset.path = r.path;
 
-        const icon    = activeCategory.icon;
+        // Use the row's own category (set in listCategory / the
+        // cross-category search loop) rather than activeCategory,
+        // so that a "wiz" search that matches wizard.xex in Games
+        // and wizard-firmware.rom in Firmware renders each row with
+        // its correct icon + primary action.
+        const rowCat = r._cat || activeCategory;
+        const icon   = rowCat.icon;
         const actions = document.createElement('div');
         actions.className = 'actions';
 
@@ -979,10 +1010,10 @@
           actions.appendChild(useBtn);
         } else {
           // Normal library-management mode.
-          if (activeCategory.primary) {
+          if (rowCat.primary) {
             const primary = document.createElement('button');
             primary.className = 'primary';
-            primary.textContent = activeCategory.primary;
+            primary.textContent = rowCat.primary;
             primary.addEventListener('click', (e) => {
               e.stopPropagation();
               bridgeBoot(r.path);
@@ -1043,12 +1074,13 @@
           renderList();
         });
         row.addEventListener('dblclick', () => {
+          const rc = r._cat || activeCategory;
           if (pickMode === 'open') {
             completePick(r.path);
           } else if (pickMode === 'save') {
             const input = document.getElementById('fm-savename');
             if (input) { input.value = r.name; input.focus(); input.select(); }
-          } else if (activeCategory.primary) {
+          } else if (rc.primary) {
             bridgeBoot(r.path);
           }
         });
@@ -1218,26 +1250,17 @@
     });
 
     // ───────────────────────────────────────────────────────────────────
-    //  Search — live-filter the current category
+    //  Search — live substring filter across every category
     // ───────────────────────────────────────────────────────────────────
-    fmSearch.addEventListener('input', () => renderList());
+    fmSearch.addEventListener('input', () => {
+      jlog('search: query =', JSON.stringify(fmSearch.value || ''));
+      renderList();
+    });
 
-    // ───────────────────────────────────────────────────────────────────
-    //  Connect Folder (File System Access API) — stub for now
-    //
-    //  Step 4 in the WASM port plan.  The button is visible everywhere
-    //  for discoverability but only works in Chromium/Safari 15.4+ where
-    //  showDirectoryPicker exists.
-    // ───────────────────────────────────────────────────────────────────
-    if (typeof window.showDirectoryPicker !== 'function') {
-      fmConnect.disabled = true;
-      fmConnect.title = 'Folder connection requires Chromium or Safari 15.4+';
-    } else {
-      fmConnect.title = 'Mount a real folder from your computer (coming soon)';
-      fmConnect.addEventListener('click', () => {
-        toast('Connect Folder lands in a follow-up — folder API is available here', 'ok');
-      });
-    }
+    // Connect Folder (File System Access API) lands in a later
+    // commit — the button has been removed from the toolbar until
+    // the full import / write-back flow ships, so users don't stare
+    // at a placeholder they can't use.
 
     // ───────────────────────────────────────────────────────────────────
     //  Drag & drop
