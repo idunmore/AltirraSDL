@@ -170,10 +170,16 @@ jobs:
           retention-days: 30
 
       # Upload the raw deployment directory as a Pages artifact.  The
-      # deploy-pages job below picks it up and publishes it live.  Only
-      # uploaded on main pushes (to avoid racing with PR builds).
+      # deploy-pages job below picks it up and publishes it live.
+      #
+      # Deploy from both `main` (the canonical production path) and
+      # `WASM-target` (the development branch for this port, so a
+      # feature-branch push can be verified end-to-end at
+      # ilmenit.github.io/AltirraSDL before merging).  The two refs
+      # produce independent workflow runs, so there is no cross-branch
+      # race — each push publishes its own commit.
       - name: Upload GitHub Pages artifact
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/WASM-target')
         uses: actions/upload-pages-artifact@v3
         with:
           path: wasm-dist
@@ -182,7 +188,7 @@ jobs:
   deploy-pages:
     name: Deploy to GitHub Pages
     needs: wasm
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/WASM-target')
     runs-on: ubuntu-latest
     permissions:
       pages: write
