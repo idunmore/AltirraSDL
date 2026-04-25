@@ -21,7 +21,10 @@
 #include "uimenu.h"
 #include "uitypes.h"
 #include "simulator.h"
+#include "diskinterface.h"
 #include "devicemanager.h"
+#include "gtia.h"
+#include <at/ataudio/pokey.h>
 #include <at/atcore/device.h>
 #include <vd2/system/text.h>
 #include "constants.h"
@@ -203,9 +206,15 @@ void ATUISetFrameRateMode(ATFrameRateMode mode) { s_frameRateMode = mode; }
 // main_pacer.cpp:160-168 for the lock logic.  Windows defaults this off
 // because the Windows engine has its own clock recovery; SDL3 needs the lock
 // to avoid visible stutter on standard 60 Hz displays.
+//
+// The setter must also push the flag into GTIA — gtia.cpp:1953 reads
+// mbVsyncAdaptiveEnabled directly. Mirrors Windows main.cpp:591-599.
 static bool s_vsyncAdaptive = true;
 bool ATUIGetFrameRateVSyncAdaptive() { return s_vsyncAdaptive; }
-void ATUISetFrameRateVSyncAdaptive(bool v) { s_vsyncAdaptive = v; }
+void ATUISetFrameRateVSyncAdaptive(bool v) {
+	s_vsyncAdaptive = v;
+	g_sim.GetGTIA().SetVsyncAdaptiveEnabled(v);
+}
 
 static bool s_turbo = false;
 static bool s_turboPulse = false;
@@ -268,9 +277,30 @@ void ATUISetWindowCaptionTemplate(const char *s) { s_windowCaption = s ? s : "";
 // Enhanced text mode
 // =========================================================================
 
+// Mirrors Windows main.cpp:2662-2681. Without dispatching into the simulator,
+// the System Config "Enhanced Text Mode" radio (ui_system_pages_b.cpp:541)
+// silently fails: VirtualScreenHandler is never enabled and POKEY is never
+// kicked out of the OS get-byte loop, so Software-mode text never appears.
 static ATUIEnhancedTextMode s_enhTextMode = kATUIEnhancedTextMode_None;
 ATUIEnhancedTextMode ATUIGetEnhancedTextMode() { return s_enhTextMode; }
-void ATUISetEnhancedTextMode(ATUIEnhancedTextMode mode) { s_enhTextMode = mode; }
+void ATUISetEnhancedTextMode(ATUIEnhancedTextMode mode) {
+	if (s_enhTextMode == mode)
+		return;
+
+	s_enhTextMode = mode;
+
+	switch (mode) {
+		case kATUIEnhancedTextMode_None:
+		case kATUIEnhancedTextMode_Hardware:
+			g_sim.SetVirtualScreenEnabled(false);
+			break;
+
+		case kATUIEnhancedTextMode_Software:
+			g_sim.SetVirtualScreenEnabled(true);
+			g_sim.GetPokey().PushBreak();
+			break;
+	}
+}
 
 // =========================================================================
 // Reset flags (uiconfirm.h)
@@ -313,7 +343,20 @@ bool ATUIHandlePortMenuCommand(uint32) { return false; }
 // =========================================================================
 
 void ATSyncCPUHistoryState() {}
+
+// No-op by design. Windows main.cpp:491-553 recomputes frame timing
+// constants and pushes audioOutput->SetCyclesPerSecond on every speed/
+// framerate setter. The SDL3 frame loop calls UpdatePacerRate() every
+// rendered frame (main_sdl3.cpp:2501), which polls
+// ATUIGetFrameRateMode/SpeedModifier/SlowMotion/FrameRateVSyncAdaptive and
+// pushes audio->SetCyclesPerSecond itself (main_pacer.cpp:481-483). The
+// imperative push from setters is therefore redundant on SDL3.
 void ATUIUpdateSpeedTiming() {}
+
+// No-op by design. Windows main.cpp:2023-2027 calls pane->OnSize() to
+// recompute stretch/aspect on the Win32 HWND display pane. SDL3 re-reads
+// ATUIGetDisplayStretchMode/Zoom/Pan every frame in main_sdl3.cpp:960 and
+// display_sdl3.cpp, so an explicit relayout call is unnecessary.
 void ATUIResizeDisplay() {}
 
 // =========================================================================
@@ -497,10 +540,28 @@ void ATUISwitchMemoryMode(VDGUIHandle h, ATMemoryMode mode) {
 	g_sim.SetMemoryMode(mode);
 	g_sim.ColdReset();
 }
-static bool s_driveSounds = true;
-bool ATUIGetDriveSoundsEnabled() { return s_driveSounds; }
-void ATUISetDriveSoundsEnabled(bool v) { s_driveSounds = v; }
-void ATUIRecalibrateLightPen() {}
+// Mirrors Windows main.cpp:2451-2461: state lives on the disk interfaces, not
+// a side-channel static. Without this, settings.cpp save/load round-trips
+// `false` because the engine never sees the UI toggle, and drive sounds
+// (spindle hum + step clicks) silently never play.
+bool ATUIGetDriveSoundsEnabled() {
+	return g_sim.GetDiskInterface(0).AreDriveSoundsEnabled();
+}
+void ATUISetDriveSoundsEnabled(bool v) {
+	for (int i = 0; i < 15; ++i)
+		g_sim.GetDiskInterface(i).SetDriveSoundsEnabled(v);
+}
+void ATUIRecalibrateLightPen() {
+	// TODO(SDL3): port ATUIDisplayToolRecalibrateLightPen from
+	// uidisplaytool.cpp:106-137. Blocked on two prerequisites:
+	//   1. SDL3 mouse clicks must route to ATLightPenPort::TriggerCorrection
+	//      so OnTriggerCorrectionEvent fires (currently no SDL3 code
+	//      raises that event).
+	//   2. An ImGui overlay banner is needed to display the two-stage
+	//      "Click reference point / click where program drew it" prompt
+	//      (Windows uses ATUIDisplayTool::SetPrompt).
+	// Until both land, this menu item (ui_menus.cpp:918) is inert.
+}
 void ATUIActivatePanZoomTool() { ATUISetPanZoomToolActive(true); }
 void ATUIOpenOnScreenKeyboard() {}
 static bool s_holdKeysActive = false;
