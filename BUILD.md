@@ -479,6 +479,42 @@ not loaded" (unless that Mac happens to have Homebrew SDL3 installed
 at the same prefix). The CMake configure step prints a `[macOS]`
 warning block reminding you of this when a system SDL3 is detected.
 
+#### Joystick / gamepad input from terminal launches
+
+On macOS 14+, launching the bare Mach-O directly from a terminal
+(`./AltirraSDL.app/Contents/MacOS/AltirraSDL`) makes
+GameController.framework attribute permissions to the parent shell
+instead of to AltirraSDL. The shell's bundle has no
+`NSGameControllerUsageDescription`, so `gamecontrollerd` silently
+refuses to enumerate USB / Bluetooth / MFi / Xbox / DualShock /
+DualSense pads — `SDL_GetGamepads()` returns 0 and joystick port
+mapping has nothing to bind. Launches via Finder, drag-and-drop, or
+`open -a` are unaffected because LaunchServices makes AltirraSDL
+itself the responsible process. See [issue #62][issue-62] for the
+full diagnosis.
+
+Two equivalent dev-iteration workflows are supported:
+
+```bash
+# Option 1 — wrapper script: re-launches via LaunchServices and
+# reattaches stdout/stderr to the current terminal.  Full
+# GameController.framework support, including MFi-only pads.
+./scripts/altirra-macos-dev.sh [boot-image]
+
+# Option 2 — bare Mach-O with the IOKit fallback enabled.  Skips the
+# LaunchServices hop entirely (fastest) at the cost of disabling SDL3's
+# MFi driver — IOKit HID is sufficient for every common USB / Bluetooth
+# pad in the joystick-port use case.
+ALTIRRA_MACOS_FORCE_IOKIT=1 \
+    ./build/macos-release/src/AltirraSDL/AltirraSDL.app/Contents/MacOS/AltirraSDL
+```
+
+The `open` command (no script) also works and is the canonical
+"end-user" launch — `open -a Altirra` from anywhere will pick up
+controllers correctly without any extra flags.
+
+[issue-62]: https://github.com/ilmenit/AltirraSDL/issues/62
+
 ### Distribution mode — self-contained .app + DMG
 
 ```bash

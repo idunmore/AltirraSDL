@@ -1260,6 +1260,38 @@ int main(int argc, char *argv[]) {
 	}
 #endif
 
+#if defined(__APPLE__) && !defined(__IPHONEOS__) && !defined(__ANDROID__)
+	// macOS dev convenience: when the .app/Contents/MacOS/AltirraSDL
+	// binary is launched directly from a terminal, GameController.framework
+	// (gamecontrollerd) attributes permissions to the *responsible* process
+	// — i.e. the parent shell / Terminal.app — not to AltirraSDL.  The
+	// terminal's bundle has no NSGameControllerUsageDescription, so
+	// gamecontrollerd silently refuses to enumerate USB / Bluetooth / MFi /
+	// Xbox / DualShock / DualSense controllers.  SDL3's MFi driver
+	// (SDL_mfijoystick.m) sees zero gamepads, no SDL_EVENT_GAMEPAD_ADDED
+	// is delivered, and joystick port mapping has nothing to bind.
+	//
+	// Launching the .app via `open -a` / Finder / drag-and-drop fixes this
+	// because LaunchServices makes AltirraSDL itself the responsible
+	// process — but that is awkward for development iteration.
+	//
+	// Setting ALTIRRA_MACOS_FORCE_IOKIT=1 disables the MFi driver entirely
+	// and falls back to SDL3's IOKit HID driver, which does not go through
+	// gamecontrollerd and works regardless of the responsible-process
+	// chain.  The trade-off is that controllers which advertise themselves
+	// only via GameController.framework (rare on macOS, typically MFi-only
+	// peripherals) become invisible — for the joystick-port use case
+	// (digital direction + button) IOKit is sufficient on every common
+	// pad.  See issue #62.
+	if (const char *v = SDL_getenv("ALTIRRA_MACOS_FORCE_IOKIT");
+		v && *v == '1') {
+		SDL_SetHint(SDL_HINT_JOYSTICK_MFI, "0");
+		SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+			"Altirra: ALTIRRA_MACOS_FORCE_IOKIT=1: SDL_JOYSTICK_MFI=0 "
+			"(using IOKit HID instead of GameController.framework)");
+	}
+#endif
+
 	phase = "SDL_Init";
 	if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_EVENTS | SDL_INIT_GAMEPAD)) {
 		ATReportFatal(phase, SDL_GetError());
