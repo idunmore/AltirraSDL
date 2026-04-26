@@ -239,7 +239,12 @@ if(WIN32)
     target_compile_definitions(AltirraBridgeServer PRIVATE VD_OS_WINDOWS=1)
 elseif(APPLE)
     target_compile_definitions(AltirraBridgeServer PRIVATE VD_OS_MACOS=1)
-    # CoreMIDI for the MidiMate device backend.
+    # CoreMIDI for the MidiMate device backend. The CoreMIDI headers
+    # use Objective-C blocks, so the actual MIDI calls live in the
+    # Objective-C++ file midimate_coremidi.mm; midimate_sdl3.cpp talks
+    # to it through a plain-C wrapper.
+    target_sources(AltirraBridgeServer PRIVATE
+        ${ALTIRRA_SDL_DIR}/source/os/midimate_coremidi.mm)
     target_link_libraries(AltirraBridgeServer PRIVATE
         "-framework CoreFoundation"
         "-framework CoreMIDI"
