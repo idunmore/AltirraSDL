@@ -97,7 +97,7 @@ DecodeResult DecodeHello(const uint8_t* buf, size_t len, NetHello& out) {
 }
 
 // ---------------------------------------------------------------------------
-// NetWelcome (88 bytes)
+// NetWelcome (120 bytes at v4: 88 base + 32 BootConfig)
 // ---------------------------------------------------------------------------
 
 size_t EncodeWelcome(const NetWelcome& w, uint8_t* buf, size_t bufSize) {
@@ -109,23 +109,19 @@ size_t EncodeWelcome(const NetWelcome& w, uint8_t* buf, size_t bufSize) {
 	put_u32(buf + 8 + kCartLen, w.snapshotBytes);                   // 72..76
 	put_u32(buf + 8 + kCartLen + 4, w.snapshotChunks);              // 76..80
 	put_u64(buf + 8 + kCartLen + 8, w.settingsHash);                // 80..88
-	// NetBootConfig (40 bytes, offset 88).
+	// NetBootConfig (36 bytes, offset 88).
 	uint8_t *b = buf + 88;
-	b[0] = w.boot.hardwareMode;
-	b[1] = w.boot.memoryMode;
-	b[2] = w.boot.videoStandard;
-	b[3] = w.boot.basicEnabled;
-	b[4] = w.boot.cpuMode;
-	b[5] = w.boot.sioAcceleration;
-	std::memcpy(b + 6, w.boot.reserved0, 2);                        //  6..8
-	put_u32(b + 8, w.boot.kernelCRC32);                             //  8..12
+	put_u16(b + 0, w.boot.canonicalProfileVersion);                 //  0..2
+	put_u16(b + 2, w.boot.reserved0);                               //  2..4
+	b[4] = w.boot.hardwareMode;                                     //  4
+	b[5] = w.boot.memoryMode;                                       //  5
+	b[6] = w.boot.videoStandard;                                    //  6
+	b[7] = w.boot.basicEnabled;                                     //  7
+	put_u32(b +  8, w.boot.kernelCRC32);                            //  8..12
 	put_u32(b + 12, w.boot.basicCRC32);                             // 12..16
-	put_u32(b + 16, w.boot.masterSeed);                             // 16..20
-	put_u16(b + 20, w.boot.bootFrames);                             // 20..22
-	put_u16(b + 22, w.boot.reserved1);                              // 22..24
-	put_u32(b + 24, w.boot.gameFileCRC32);                          // 24..28
-	std::memcpy(b + 28, w.boot.gameExtension, 8);                   // 28..36
-	std::memcpy(b + 36, w.boot.reserved2, 4);                       // 36..40
+	put_u32(b + 16, w.boot.gameFileCRC32);                          // 16..20
+	std::memcpy(b + 20, w.boot.gameExtension, 8);                   // 20..28
+	std::memcpy(b + 28, w.boot.reserved1, 8);                       // 28..36
 	return kWireWelcomeSize;
 }
 
@@ -140,21 +136,17 @@ DecodeResult DecodeWelcome(const uint8_t* buf, size_t len, NetWelcome& out) {
 	out.snapshotChunks = get_u32(buf + 8 + kCartLen + 4);
 	out.settingsHash = get_u64(buf + 8 + kCartLen + 8);
 	const uint8_t *b = buf + 88;
-	out.boot.hardwareMode    = b[0];
-	out.boot.memoryMode      = b[1];
-	out.boot.videoStandard   = b[2];
-	out.boot.basicEnabled    = b[3];
-	out.boot.cpuMode         = b[4];
-	out.boot.sioAcceleration = b[5];
-	std::memcpy(out.boot.reserved0, b + 6, 2);
-	out.boot.kernelCRC32   = get_u32(b + 8);
+	out.boot.canonicalProfileVersion = get_u16(b + 0);
+	out.boot.reserved0     = get_u16(b + 2);
+	out.boot.hardwareMode  = b[4];
+	out.boot.memoryMode    = b[5];
+	out.boot.videoStandard = b[6];
+	out.boot.basicEnabled  = b[7];
+	out.boot.kernelCRC32   = get_u32(b +  8);
 	out.boot.basicCRC32    = get_u32(b + 12);
-	out.boot.masterSeed    = get_u32(b + 16);
-	out.boot.bootFrames    = get_u16(b + 20);
-	out.boot.reserved1     = get_u16(b + 22);
-	out.boot.gameFileCRC32 = get_u32(b + 24);
-	std::memcpy(out.boot.gameExtension, b + 28, 8);
-	std::memcpy(out.boot.reserved2, b + 36, 4);
+	out.boot.gameFileCRC32 = get_u32(b + 16);
+	std::memcpy(out.boot.gameExtension, b + 20, 8);
+	std::memcpy(out.boot.reserved1, b + 28, 8);
 	return DecodeResult::Ok;
 }
 

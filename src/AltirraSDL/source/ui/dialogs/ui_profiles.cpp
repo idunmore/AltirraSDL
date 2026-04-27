@@ -12,10 +12,24 @@
 #include "ui_main.h"
 #include "simulator.h"
 #include "settings.h"
+#ifdef ALTIRRA_NETPLAY_ENABLED
+#include "netplay/netplay_glue.h"
+#endif
 
 extern ATSimulator g_sim;
 
 void ATUIRenderProfiles(ATSimulator &sim, ATUIState &state) {
+#ifdef ALTIRRA_NETPLAY_ENABLED
+	// Defensive: if the dialog was already open when an Online Play
+	// session began (the menu gate only blocks new opens, not
+	// pre-existing windows), close it.  Editing / switching profiles
+	// while the canonical Online Play profile is active would break
+	// the session.
+	if (ATNetplayGlue::IsActive()) {
+		state.showProfiles = false;
+		return;
+	}
+#endif
 	ImGui::SetNextWindowSize(ImVec2(500, 400), ImGuiCond_Appearing);
 	ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
 	if (!ImGui::Begin("Profiles", &state.showProfiles, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings)) {

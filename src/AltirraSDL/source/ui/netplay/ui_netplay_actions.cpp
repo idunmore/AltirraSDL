@@ -9,6 +9,7 @@
 #include "ui_netplay_widgets.h"
 
 #include "netplay/netplay_glue.h"
+#include "netplay/netplay_profile.h"
 #include "netplay/lobby_config.h"
 #include "netplay/lobby_protocol.h"
 #include "netplay/netplay_simhash.h"
@@ -399,9 +400,6 @@ void PostLobbyDelete(HostedGame& o) {
 // Kick off an actual host coordinator for this offer, binding an
 // ephemeral port and posting Create afterwards.  Idempotent relative
 // to an already-running coordinator.
-// Constant master seed for locked-RNG netplay; both peers reseed at
-// the lockstep-entry edge in netplay_glue.cpp.
-constexpr uint32_t kNetplayMasterSeed = 0xA7C0BEEFu;
 
 // Extract the file extension from a UTF-8 path into a NUL-padded
 // 8-byte field (with the leading dot kept for ATSimulator::Load's
@@ -470,19 +468,20 @@ static uint32_t CRC32OfHostedGame(const HostedGame& o) {
 	}
 }
 
-// Build a NetBootConfig from a HostedGame's MachineConfig.
+// Build a NetBootConfig from a HostedGame's MachineConfig.  v4 only
+// carries the 6 per-game variables — everything else (CPU mode, SIO
+// patch, master seed, etc.) is pinned by the canonical Netplay
+// Session Profile (see ATNetplayProfile in
+// netplay/netplay_profile.h).
 ATNetplay::NetBootConfig BuildBootConfig(const HostedGame& o) {
 	ATNetplay::NetBootConfig bc{};
+	bc.canonicalProfileVersion = ATNetplayProfile::kCanonicalProfileVersion;
 	bc.hardwareMode    = (uint8_t)o.config.hardwareMode;
 	bc.memoryMode      = (uint8_t)o.config.memoryMode;
 	bc.videoStandard   = (uint8_t)o.config.videoStandard;
 	bc.basicEnabled    = o.config.basicEnabled ? 1 : 0;
-	bc.cpuMode         = (uint8_t)o.config.cpuMode;
-	bc.sioAcceleration = o.config.sioPatchEnabled ? 1 : 0;
 	bc.kernelCRC32     = o.config.kernelCRC32;
 	bc.basicCRC32      = o.config.basicCRC32;
-	bc.masterSeed      = kNetplayMasterSeed;
-	bc.bootFrames      = 0;
 	bc.gameFileCRC32   = CRC32OfHostedGame(o);
 	ExtractExtensionInto(o.gamePath, bc.gameExtension);
 	return bc;
@@ -543,9 +542,9 @@ void StopCoordForHostedGame(HostedGame& o) {
 // coordinator is expected to recover into Lockstepping (or surface a
 // real terminal phase like Ended/Failed).  They MUST be treated as
 // "in session" so the activity edge in ReconcileHostedGames doesn't
-// fire RestoreSessionRestorePoint mid-resync — that consumes the
-// pre-session snapshot and clobbers the local sim while the resync
-// transfer is still in flight.
+// fire ATNetplayProfile::EndSession mid-resync — that would tear
+// down the canonical session profile while the resync transfer is
+// still in flight.
 bool AnyHostedGameInSession() {
 	for (auto& o : GetState().hostedGames) {
 		using P = ATNetplayGlue::Phase;
@@ -622,21 +621,19 @@ void ReconcileHostedGames(uint64_t nowMs) {
 		st.activity = UserActivity::Idle;
 	}
 
-	// Session-end edge: if we were InSession last tick and aren't now,
-	// put the user's pre-session emulator state back.  Held as a full
-	// in-memory savestate so everything (mounted media, per-session
-	// sim tweaks, running game, paused/running, etc.) comes back
-	// exactly as they left it.  The snapshot was taken in
-	// kATDeferred_NetplayHostBoot / joiner flow before the preset was
-	// applied — see SaveSessionRestorePoint.
+	// Session-end edge: if we were InSession last tick and aren't
+	// now, tear down the canonical netplay profile and switch back
+	// to the user's pre-session profile.  Idempotent — safe even if
+	// EndSession was already invoked synchronously by the explicit
+	// Leave path or by the glue cleanup hook on app shutdown.
 	if (prev == UserActivity::InSession &&
 	    st.activity != UserActivity::InSession &&
-	    HasSessionRestorePoint()) {
-		RestoreSessionRestorePoint();
-		// In-app feedback so the user knows their prior emulator
-		// state came back.  Platform notifications don't cover this
+	    ATNetplayProfile::IsActive()) {
+		ATNetplayProfile::EndSession();
+		// In-app feedback so the user knows their normal config
+		// came back.  Platform notifications don't cover this
 		// since nothing "arrived" — the session simply ended.
-		PushToast("Session ended — your previous game was restored.",
+		PushToast("Session ended — your normal settings were restored.",
 			ToastSeverity::Info, 4000);
 	}
 
@@ -728,7 +725,7 @@ void ReconcileHostedGames(uint64_t nowMs) {
 			// screen (Accept navigates away on its own), put the user
 			// back where they were.  Otherwise just tear down our
 			// saved-context bookkeeping; the Accept path is responsible
-			// for RestoreSessionRestorePoint when its session ends.
+			// for ATNetplayProfile::EndSession when its session ends.
 			if (st.screen == Screen::AcceptJoinPrompt) {
 				if (st.session.promptSavedValid) {
 					st.screen = st.session.promptSavedScreen;
@@ -1219,51 +1216,13 @@ void StartJoiningAction() {
 }
 
 // -------------------------------------------------------------------
-// Machine-preset apply + session restore-point
+// Join compatibility — firmware CRC32 lookup helpers.
+//
+// (The pre-session restore-point + ApplyMachineConfig paths from the
+// v3 protocol have been replaced by the canonical Netplay Session
+// Profile in netplay/netplay_profile.cpp.  Session begin/end now go
+// through ATNetplayProfile::BeginSession / EndSession.)
 // -------------------------------------------------------------------
-
-namespace {
-
-// Full in-memory savestate of the user's pre-session simulator state.
-// Populated by SaveSessionRestorePoint; consumed (and cleared) by
-// RestoreSessionRestorePoint.  We keep two refs: the state proper
-// plus its sidecar info object (the same pair CreateSnapshot returns).
-vdrefptr<IATSerializable> g_restoreSnap;
-vdrefptr<IATSerializable> g_restoreSnapInfo;
-
-} // anonymous
-
-bool HasSessionRestorePoint() { return g_restoreSnap != nullptr; }
-
-bool SaveSessionRestorePoint() {
-	g_restoreSnap     = nullptr;
-	g_restoreSnapInfo = nullptr;
-	try {
-		g_sim.CreateSnapshot(~g_restoreSnap, ~g_restoreSnapInfo);
-	} catch (...) {
-		g_restoreSnap     = nullptr;
-		g_restoreSnapInfo = nullptr;
-		return false;
-	}
-	return g_restoreSnap != nullptr;
-}
-
-void RestoreSessionRestorePoint() {
-	if (!g_restoreSnap) return;
-	try {
-		ATStateLoadContext ctx {};
-		// Be permissive — the user's pre-session firmware / hardware
-		// will match by construction (we just snapshotted it), but
-		// ApplySnapshot sometimes flags advisory mismatches.
-		ctx.mbAllowKernelMismatch = true;
-		g_sim.ApplySnapshot(*g_restoreSnap, &ctx);
-		g_sim.Resume();
-	} catch (...) {
-		// Best-effort; don't blow up the UI if restore fails.
-	}
-	g_restoreSnap     = nullptr;
-	g_restoreSnapInfo = nullptr;
-}
 
 namespace {
 
@@ -1350,73 +1309,6 @@ JoinCompat CheckJoinCompat(const std::string& kernelHex,
 	if (missK)          return JoinCompat::MissingKernel;
 	if (missB)          return JoinCompat::MissingBasic;
 	return JoinCompat::Compatible;
-}
-
-std::string ApplyMachineConfig(const MachineConfig& cfg) {
-	ATFirmwareManager *fwm = g_sim.GetFirmwareManager();
-	if (!fwm) return "firmware manager unavailable";
-
-	// Resolve firmware by CRC32 first so we fail fast before touching
-	// hardware state.  Zero CRC = "use Altirra's default for this
-	// hardware mode" — we resolve that via GetFirmwareOfType after
-	// the hardware switch.
-	uint64 kernelId = FindKernelByCRC(*fwm, cfg.kernelCRC32);
-	if (cfg.kernelCRC32 != 0 && kernelId == 0) {
-		char buf[96];
-		std::snprintf(buf, sizeof buf,
-			"OS firmware with CRC32 %08X is not installed",
-			cfg.kernelCRC32);
-		return buf;
-	}
-	uint64 basicId = FindBasicByCRC(*fwm, cfg.basicCRC32);
-	if (cfg.basicCRC32 != 0 && basicId == 0) {
-		char buf[96];
-		std::snprintf(buf, sizeof buf,
-			"BASIC firmware with CRC32 %08X is not installed",
-			cfg.basicCRC32);
-		return buf;
-	}
-
-	// Hardware first — ATUISwitchHardwareMode resets per-hardware
-	// defaults (memory mode, kernel etc.) so everything else must be
-	// set afterwards.
-	if (g_sim.GetHardwareMode() != cfg.hardwareMode) {
-		if (!ATUISwitchHardwareMode(nullptr, cfg.hardwareMode,
-				/*switchProfile*/ true)) {
-			return "could not switch hardware mode";
-		}
-	}
-
-	g_sim.SetMemoryMode(cfg.memoryMode);
-	g_sim.SetVideoStandard(cfg.videoStandard);
-	g_sim.SetCPUMode(cfg.cpuMode, g_sim.GetCPUSubCycles());
-	ATUIUpdateSpeedTiming();
-
-	// If CRC was 0 (unset), fall back to the hardware's default
-	// firmware type.  This mirrors what ATUISwitchHardwareMode does
-	// internally but is explicit for documentation.
-	if (kernelId == 0 && cfg.kernelCRC32 == 0) {
-		ATFirmwareType defType;
-		switch (cfg.hardwareMode) {
-			case kATHardwareMode_5200:   defType = kATFirmwareType_Kernel5200; break;
-			case kATHardwareMode_800:    defType = kATFirmwareType_Kernel800_OSB; break;
-			case kATHardwareMode_XEGS:   defType = kATFirmwareType_KernelXEGS; break;
-			case kATHardwareMode_1200XL: defType = kATFirmwareType_Kernel1200XL; break;
-			default:                     defType = kATFirmwareType_KernelXL; break;
-		}
-		kernelId = fwm->GetFirmwareOfType(defType, true);
-	}
-	if (kernelId) g_sim.SetKernel(kernelId);
-
-	if (basicId == 0 && cfg.basicCRC32 == 0) {
-		basicId = fwm->GetFirmwareOfType(kATFirmwareType_Basic, true);
-	}
-	if (basicId) g_sim.SetBasic(basicId);
-
-	g_sim.SetBASICEnabled(cfg.basicEnabled);
-	g_sim.SetSIOPatchEnabled(cfg.sioPatchEnabled);
-
-	return {};
 }
 
 } // namespace ATNetplayUI

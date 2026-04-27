@@ -78,6 +78,9 @@ extern "C" void ATWasmSyncFSOut();
 // call sites in this file without `#ifdef` clutter.  See netplay_glue.h
 // for the rationale.
 #include "netplay/netplay_glue.h"
+#ifdef ALTIRRA_NETPLAY_ENABLED
+#include "netplay/netplay_profile.h"
+#endif
 #include "ui/emotes/emote_picker.h"
 #include "ui/emotes/emote_assets.h"
 #include "ui/emotes/emote_netplay.h"
@@ -1717,6 +1720,19 @@ int main(int argc, char *argv[]) {
 	// calls ATLoadSettings() internally with the profile's settings,
 	// replacing the direct ATLoadSettings() call we had before.
 	ATLoadDefaultProfiles();
+
+	// Online Play crash recovery — if the previous run died while a
+	// netplay session was active (the canonical Session Profile was
+	// in effect), the lock file at $configDir/netplay_session.lock
+	// holds the user's pre-session profile id.  Recovery rewrites
+	// Profiles\Current profile back to that id BEFORE the load
+	// below, so the user comes up with their normal config and not
+	// the canonical netplay-session config.  No-op if there's no
+	// lock file.
+#ifdef ALTIRRA_NETPLAY_ENABLED
+	(void)ATNetplayProfile::RecoverFromCrash();
+#endif
+
 	// Match Windows main.cpp:3947 — load every registered category except
 	// FullScreen (window placement is handled separately).  Using the
 	// _All mask ensures Devices, MountedImages, and NVRAM round-trip across

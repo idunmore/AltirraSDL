@@ -5,6 +5,7 @@
 #include "coordinator.h"
 
 #include "protocol.h"
+#include "netplay_profile.h"
 
 #include <at/atcore/logging.h>
 
@@ -688,6 +689,13 @@ void Coordinator::HandleHelloFromJoiner(const NetHello& hello,
 		SendReject(kRejectVersionSkew, from);
 		return;
 	}
+	// Note: cross-Altirra-release canonical-profile mismatches
+	// (kRejectCanonicalProfileMismatch) are detected on the JOINER
+	// side, in HandleWelcomeFromHost, by comparing the host's
+	// advertised canonicalProfileVersion against the local
+	// ATNetplayProfile::kCanonicalProfileVersion.  The joiner's
+	// Hello does not carry the field, so there is nothing for the
+	// host to compare here.
 	if (hello.osRomHash != mOsRomHash) {
 		SendReject(kRejectOsMismatch, from);
 		return;
@@ -920,6 +928,25 @@ void Coordinator::SubmitSnapshotForUpload(const uint8_t* data, size_t len) {
 void Coordinator::HandleWelcomeFromHost(const NetWelcome& w, uint64_t /*nowMs*/) {
 	if (mPhase != Phase::Handshaking) return;
 
+	// v4: reject if the host's canonical-profile version differs
+	// from ours.  Same rationale as the symmetric check on the host
+	// side (HandleHelloFromJoiner): cold-booting to a different
+	// canonical baseline guarantees a frame-0 desync.  We surface
+	// this through Phase::Failed + a cached LastError so the user
+	// sees a clear explanation instead of mysterious silence.
+	if (w.boot.canonicalProfileVersion !=
+	    ATNetplayProfile::kCanonicalProfileVersion) {
+		mPhase = Phase::Failed;
+		mLastError = "Host is running a different Online Play "
+			"profile version. Both peers must run a compatible "
+			"Altirra release.";
+		g_ATLCNetplay("joiner: canonical profile mismatch "
+			"(host=v%u, local=v%u)",
+			(unsigned)w.boot.canonicalProfileVersion,
+			(unsigned)ATNetplayProfile::kCanonicalProfileVersion);
+		return;
+	}
+
 	// Adopt host-chosen parameters.
 	mInputDelay = w.inputDelayFrames;
 	std::memcpy(mCartName, w.cartName, kCartLen);
@@ -952,6 +979,11 @@ void Coordinator::HandleRejectFromHost(const NetReject& r) {
 		case kRejectHostNotReady:   mLastError = "Host is not ready to accept joiners yet."; break;
 		case kRejectBadEntryCode:   mLastError = "Incorrect join code. Ask the host for the right code and try again."; break;
 		case kRejectHostRejected:   mLastError = "The host declined your request to join."; break;
+		case kRejectCanonicalProfileMismatch:
+			mLastError = "Host is running a different Online Play "
+				"profile version. Both peers must run a compatible "
+				"Altirra release.";
+			break;
 		default:                    mLastError = "Host rejected the connection (unknown reason)."; break;
 	}
 	g_ATLCNetplay("joiner: %s (reason code %u)", mLastError, (unsigned)r.reason);

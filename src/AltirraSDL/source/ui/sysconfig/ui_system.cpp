@@ -19,6 +19,9 @@
 #include "cpu.h"
 #include "firmwaremanager.h"
 #include "devicemanager.h"
+#ifdef ALTIRRA_NETPLAY_ENABLED
+#include "netplay/netplay_glue.h"
+#endif
 #include "diskinterface.h"
 #include "cartridge.h"
 #include "gtia.h"
@@ -164,6 +167,16 @@ static const TreeEntry kTreeEntries[] = {
 static const int kNumTreeEntries = sizeof(kTreeEntries) / sizeof(kTreeEntries[0]);
 
 void ATUIRenderSystemConfig(ATSimulator &sim, ATUIState &state) {
+#ifdef ALTIRRA_NETPLAY_ENABLED
+	// Defensive: if the dialog was already open when an Online Play
+	// session began (the gate in CmdConfigure / the menu only blocks
+	// new opens, not pre-existing ones), close it here.  Editing the
+	// canonical Online Play profile mid-session would silently desync.
+	if (ATNetplayGlue::IsActive()) {
+		state.showSystemConfig = false;
+		return;
+	}
+#endif
 	ImGui::SetNextWindowSize(ImVec2(640, 480), ImGuiCond_Appearing);
 	ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
 	if (!ImGui::Begin("Configure System", &state.showSystemConfig, ImGuiWindowFlags_NoSavedSettings)) {

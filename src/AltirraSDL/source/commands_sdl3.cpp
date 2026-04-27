@@ -202,6 +202,10 @@ static void CmdDrivesDialog() {
 }
 
 static void CmdConfigure() {
+	// Configure System edits settings the canonical Online Play
+	// profile pins.  Suppress the shortcut while a session is active
+	// so the user can't open the dialog and silently desync.
+	if (ATNetplayGlue::IsActive()) return;
 	ATUISetShowSystemConfig(true);
 }
 

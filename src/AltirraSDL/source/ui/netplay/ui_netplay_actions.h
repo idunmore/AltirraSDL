@@ -78,45 +78,26 @@ void StartJoiningAction();
 // No-op if the id is unknown.
 void SubmitHostGameFileForGame(const char *gameId);
 
-// --- Machine-preset apply + session restore-point -----------------------
+// --- Session lifecycle -------------------------------------------------
 //
 // A hosted session is non-destructive to the user's normal emulator
-// setup.  When a peer connects, the host:
-//   1. Saves the live sim state via SaveSessionRestorePoint() (a full
-//      in-memory savestate).  If this fails, the session is refused.
-//   2. Applies the MachineConfig (hardware, memory, video, firmware)
-//      via ApplyMachineConfig().
-//   3. Loads the hosted game image + ColdReset + Resume.
-// When the session ends (clean or error), RestoreSessionRestorePoint()
-// puts the live sim back to exactly how the user left it — menu state,
-// mounted media, everything.  The Altirra settings.ini on disk is NEVER
-// modified by this flow.
-
-// Save the current simulator state into an in-memory snapshot owned by
-// the actions TU.  Returns false if CreateSnapshot fails.  Clears any
-// previously-held restore point first — nested sessions are impossible
-// by the activity state machine, but be defensive.
-bool SaveSessionRestorePoint();
-
-// Apply the in-memory snapshot (if any) back to the simulator.  Clears
-// the snapshot on exit so a double-call is a no-op.  Errors are logged
-// and suppressed — the user's state may be partially restored, but we
-// don't want to leave them with a modal error dialog when the session
-// has simply ended.
-void RestoreSessionRestorePoint();
-
-// True when a restore point is currently held.  Used by the reconcile
-// loop to detect session-end edges and trigger RestoreSessionRestorePoint.
-bool HasSessionRestorePoint();
-
-// Apply a MachineConfig to the live simulator (hardware mode, memory
-// mode, video standard, CPU mode, BASIC enable, SIO patch, firmware
-// resolved by CRC32).  Does NOT Load a game image; that's the
-// caller's job (NetplayHostBoot).  Returns empty string on success;
-// on failure, a short human reason (missing firmware, unsupported
-// combination).  Settings are always read from / written to the
-// live simulator, never to settings.ini on disk.
-std::string ApplyMachineConfig(const MachineConfig& cfg);
+// setup.  When a peer connects, the host calls
+// ATNetplayProfile::BeginSession (see netplay/netplay_profile.h),
+// which:
+//   1. Snapshots the user's current profile id to a crash-recovery
+//      lock file.
+//   2. ATSaveSettings(All) — flushes the user's live state into
+//      their saved profile.
+//   3. Switches the active profile to the canonical Netplay Session
+//      Profile and applies its fixed deterministic baseline +
+//      per-game overrides directly to the live simulator.
+//   4. SetLockedRandomSeed + ColdReset.
+// The caller (kATDeferred_NetplayHostBoot / NetplayJoinerApply)
+// then UnloadAlls + Loads the hosted game image.
+// When the session ends (clean Bye, peer disconnect, snapshot apply
+// failure, app shutdown, process crash), ATNetplayProfile::EndSession
+// switches the active profile back to the user's id and ATLoadSettings
+// restores their exact saved state.
 
 // --- Back-compat shims for the old single-session Host Setup screen ----
 //

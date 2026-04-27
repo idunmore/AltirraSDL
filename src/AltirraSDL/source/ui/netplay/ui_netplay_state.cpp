@@ -130,9 +130,12 @@ static void LoadOffers(VDRegistryAppKey& key) {
 		(void)key.getBool(kn, false);
 		o.enabled = false;
 
-		// MachineConfig — 8 keys.  Missing keys fall through to
-		// struct defaults (800XL / 320K / NTSC / 6502 / BASIC off /
-		// SIO on / no firmware CRC).
+		// MachineConfig — 6 keys (canonical netplay profile pins
+		// CPU mode and SIO patch as fixed values, so those two
+		// keys are no longer per-game; legacy entries for them
+		// from older AltirraSDL builds are silently ignored).
+		// Missing keys fall through to struct defaults
+		// (800XL / 320K / NTSC / BASIC off / no firmware CRC).
 		std::snprintf(kn, sizeof kn, "Game%d_hwMode", i);
 		o.config.hardwareMode = (ATHardwareMode)key.getInt(kn,
 			(int)o.config.hardwareMode);
@@ -142,13 +145,8 @@ static void LoadOffers(VDRegistryAppKey& key) {
 		std::snprintf(kn, sizeof kn, "Game%d_videoStd", i);
 		o.config.videoStandard = (ATVideoStandard)key.getInt(kn,
 			(int)o.config.videoStandard);
-		std::snprintf(kn, sizeof kn, "Game%d_cpuMode", i);
-		o.config.cpuMode = (ATCPUMode)key.getInt(kn,
-			(int)o.config.cpuMode);
 		std::snprintf(kn, sizeof kn, "Game%d_basicEnabled", i);
 		o.config.basicEnabled = key.getBool(kn, o.config.basicEnabled);
-		std::snprintf(kn, sizeof kn, "Game%d_sioPatch", i);
-		o.config.sioPatchEnabled = key.getBool(kn, o.config.sioPatchEnabled);
 		std::snprintf(kn, sizeof kn, "Game%d_kernelCRC", i);
 		o.config.kernelCRC32 = (uint32_t)key.getInt(kn, 0);
 		std::snprintf(kn, sizeof kn, "Game%d_basicCRC", i);
@@ -178,8 +176,10 @@ static void SaveOffers(VDRegistryAppKey& key) {
 	static const char *kSuffixes[] = {
 		"_id", "_path", "_name", "_art", "_private", "_code", "_enabled",
 		"_preset",  // legacy — scrub on save
-		"_hwMode", "_memMode", "_videoStd", "_cpuMode",
-		"_basicEnabled", "_sioPatch", "_kernelCRC", "_basicCRC",
+		"_cpuMode",   // legacy (v3 MachineConfig) — scrub on save
+		"_sioPatch",  // legacy (v3 MachineConfig) — scrub on save
+		"_hwMode", "_memMode", "_videoStd",
+		"_basicEnabled", "_kernelCRC", "_basicCRC",
 		"_fileCRC", "_fileStampLo", "_fileStampHi",
 	};
 
@@ -219,12 +219,8 @@ static void SaveOffers(VDRegistryAppKey& key) {
 		key.setInt(kn, (int)o.config.memoryMode);
 		std::snprintf(kn, sizeof kn, "Game%d_videoStd", i);
 		key.setInt(kn, (int)o.config.videoStandard);
-		std::snprintf(kn, sizeof kn, "Game%d_cpuMode", i);
-		key.setInt(kn, (int)o.config.cpuMode);
 		std::snprintf(kn, sizeof kn, "Game%d_basicEnabled", i);
 		key.setBool(kn, o.config.basicEnabled);
-		std::snprintf(kn, sizeof kn, "Game%d_sioPatch", i);
-		key.setBool(kn, o.config.sioPatchEnabled);
 		std::snprintf(kn, sizeof kn, "Game%d_kernelCRC", i);
 		key.setInt(kn, (int)o.config.kernelCRC32);
 		std::snprintf(kn, sizeof kn, "Game%d_basicCRC", i);
@@ -504,12 +500,11 @@ std::string HostedGameSignature(const std::string& path,
                                 const MachineConfig& c) {
 	char buf[384];
 	std::snprintf(buf, sizeof buf,
-		"%s|hw=%d|mem=%d|vs=%d|cpu=%d|basic=%d|sio=%d"
-		"|kc=%08X|bc=%08X",
+		"%s|hw=%d|mem=%d|vs=%d|basic=%d|kc=%08X|bc=%08X",
 		path.c_str(),
 		(int)c.hardwareMode, (int)c.memoryMode,
-		(int)c.videoStandard, (int)c.cpuMode,
-		c.basicEnabled ? 1 : 0, c.sioPatchEnabled ? 1 : 0,
+		(int)c.videoStandard,
+		c.basicEnabled ? 1 : 0,
 		c.kernelCRC32, c.basicCRC32);
 	return buf;
 }
@@ -519,9 +514,7 @@ MachineConfig CaptureCurrentMachineConfig() {
 	c.hardwareMode    = g_sim.GetHardwareMode();
 	c.memoryMode      = g_sim.GetMemoryMode();
 	c.videoStandard   = g_sim.GetVideoStandard();
-	c.cpuMode         = g_sim.GetCPUMode();
 	c.basicEnabled    = g_sim.IsBASICEnabled();
-	c.sioPatchEnabled = g_sim.IsSIOPatchEnabled();
 	c.kernelCRC32     = ComputeFirmwareCRC32(g_sim.GetKernelId());
 	c.basicCRC32      = ComputeFirmwareCRC32(g_sim.GetBasicId());
 	return c;

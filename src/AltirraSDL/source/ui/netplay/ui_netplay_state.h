@@ -28,7 +28,6 @@
 #include "netplay/platform_notify.h"
 
 #include "constants.h"  // ATHardwareMode, ATMemoryMode, ATVideoStandard
-#include "cpu.h"        // ATCPUMode
 
 namespace ATNetplay { struct LobbyEntry; }
 
@@ -78,23 +77,25 @@ enum class HostedGameState : uint8_t {
 	Failed,       // last attempt failed; held locally so user can retry
 };
 
-// Full machine configuration per hosted game.  Serialised to the
-// lobby Welcome packet so the joiner can reproduce the exact same
-// hardware the host cold-boots.  Firmware is identified by CRC32 of
-// the loaded ROM bytes; both peers must have a matching-CRC entry in
-// their ATFirmwareManager or the joiner refuses.
+// Per-game machine configuration — the 6 variables a host can pick
+// per hosted game.  Everything else is pinned by the canonical
+// Netplay Session Profile (see ATNetplayProfile in
+// netplay/netplay_profile.h): both peers force a fixed
+// deterministic configuration for the duration of a session, so
+// CPU model, SIO patch flag, accuracy options, attached devices,
+// memory clear pattern, etc. are not negotiable per session.
+//
+// Firmware is identified by CRC32 of the loaded ROM bytes; both
+// peers must have a matching-CRC entry in their ATFirmwareManager
+// or the joiner refuses to apply.  CRC32 = 0 means "use the
+// canonical default for this hardware mode" (e.g. AltirraOS-XL for
+// 800XL).
 struct MachineConfig {
 	ATHardwareMode  hardwareMode    = kATHardwareMode_800XL;
 	ATMemoryMode    memoryMode      = kATMemoryMode_320K;
 	ATVideoStandard videoStandard   = kATVideoStandard_NTSC;
-	ATCPUMode       cpuMode         = kATCPUMode_6502;
 	bool            basicEnabled    = false;
-	bool            sioPatchEnabled = true;   // full-speed SIO
 
-	// CRC32 of the installed firmware ROM bytes; 0 = unset / not
-	// required.  Captured on the host from the currently-selected
-	// firmware at Add-Game time; verified on the joiner against
-	// ATFirmwareManager::GetFirmwareByRefString(L"[XXXXXXXX]", ...).
 	uint32_t        kernelCRC32     = 0;
 	uint32_t        basicCRC32      = 0;
 };

@@ -8,6 +8,7 @@
 #include "packets.h"
 #include "protocol.h"
 #include "netplay_input.h"
+#include "netplay_profile.h"
 #include "netplay_savestate.h"
 #include "netplay_simhash.h"
 
@@ -266,10 +267,9 @@ void Poll(uint64_t nowMs) {
 		// frames.  Using a constant here (not a per-session value)
 		// is deliberate: both peers reach this line once lockstep
 		// engages, and we want the same seed on both.
-		constexpr uint32_t kNetplayMasterSeed = 0xA7C0BEEFu;
-		g_sim.ReseedNetplayRandomState(kNetplayMasterSeed);
+		g_sim.ReseedNetplayRandomState(ATNetplayProfile::kLockedRandomSeed);
 		g_ATLCNetplay("lockstep entry: reseeded RNG (master=0x%08X)",
-			kNetplayMasterSeed);
+			(unsigned)ATNetplayProfile::kLockedRandomSeed);
 
 		// Normalize CPU registers across peers.  ATCPUEmulator::ColdReset
 		// (cpu.cpp:217-253 → WarmReset) only resets PC/InsnPC/P/pipeline

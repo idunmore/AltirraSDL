@@ -30,8 +30,21 @@ static inline void ShortcutContextMenu(const char *command) {
 
 // --- body extracted from ui_menus.cpp -------------------------------------
 void ATUIRenderSystemMenu(ATSimulator &sim, ATUIState &state) {
-	// Profiles submenu (matches Windows System > Profiles)
-	if (ImGui::BeginMenu("Profiles")) {
+#ifdef ALTIRRA_NETPLAY_ENABLED
+	const bool netplayActiveTop = ATNetplayGlue::IsActive();
+#else
+	const bool netplayActiveTop = false;
+#endif
+
+	// Profiles submenu (matches Windows System > Profiles).  Disabled
+	// while Online Play is active — the canonical Online Play profile
+	// must not be mutated mid-session, and switching out of it would
+	// abandon the active session in an inconsistent state.
+	if (netplayActiveTop) {
+		ImGui::BeginDisabled();
+		ImGui::MenuItem("Profiles (disabled: Playing Online)");
+		ImGui::EndDisabled();
+	} else if (ImGui::BeginMenu("Profiles")) {
 		if (ImGui::MenuItem("Edit Profiles..."))
 			state.showProfiles = true;
 
@@ -75,9 +88,18 @@ void ATUIRenderSystemMenu(ATSimulator &sim, ATUIState &state) {
 		ImGui::EndMenu();
 	}
 
-	if (ImGui::MenuItem("Configure System...", ATUIGetShortcutStringForCommand("System.Configure")))
-		state.showSystemConfig = true;
-	ShortcutContextMenu("System.Configure");
+	// Configure System dialog likewise edits settings the canonical
+	// Online Play profile pins — disable to prevent mid-session
+	// configuration drift.
+	if (netplayActiveTop) {
+		ImGui::BeginDisabled();
+		ImGui::MenuItem("Configure System... (disabled: Playing Online)");
+		ImGui::EndDisabled();
+	} else {
+		if (ImGui::MenuItem("Configure System...", ATUIGetShortcutStringForCommand("System.Configure")))
+			state.showSystemConfig = true;
+		ShortcutContextMenu("System.Configure");
+	}
 
 	ImGui::Separator();
 

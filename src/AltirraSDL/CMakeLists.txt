@@ -405,6 +405,7 @@ endif()
 if(ALTIRRA_NETPLAY)
     target_sources(AltirraSDL PRIVATE
         source/netplay/protocol.cpp
+        source/netplay/netplay_profile.cpp
         source/netplay/transport.cpp
         source/netplay/snapshot_channel.cpp
         source/netplay/lockstep.cpp

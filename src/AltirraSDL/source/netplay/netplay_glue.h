@@ -62,13 +62,14 @@ bool IsActive();
 // coordinator can be in this phase per the activity state machine.
 bool IsLockstepping();
 
-// Session-end cleanup hook.  Registered by ui_netplay_actions to call
-// RestoreSessionRestorePoint when the lower glue layer tears down a
-// session via DisconnectActive() or Shutdown() — paths that don't
-// otherwise reach the activity-edge restore in ReconcileHostedGames.
-// The hook is invoked before coordinators are torn down so the sim
-// can be returned to its pre-session state cleanly.  Pass nullptr to
-// clear.
+// Session-end cleanup hook.  Registered by ui_netplay so the
+// canonical netplay profile (see ATNetplayProfile in
+// netplay/netplay_profile.h) is torn down when the lower glue layer
+// dismantles a session via DisconnectActive() or Shutdown() — paths
+// that don't otherwise reach the activity-edge restore in
+// ReconcileHostedGames.  The hook is invoked before coordinators are
+// torn down so the sim can be returned to its pre-session state
+// cleanly.  Pass nullptr to clear.
 using SessionEndCleanupFn = void(*)();
 void SetSessionEndCleanupHook(SessionEndCleanupFn fn);
 

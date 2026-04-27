@@ -1036,8 +1036,9 @@ namespace {
 	// Firmware dropdown cache.  Built lazily on first dialog open;
 	// each entry caches the firmware's CRC32 so we don't re-read the
 	// ROM bytes every frame.  Index 0 is a sentinel meaning
-	// "Altirra default for the hardware mode" (CRC = 0 in the
-	// MachineConfig → ApplyMachineConfig does GetFirmwareOfType).
+	// "Altirra default for the hardware mode" — CRC = 0 in the
+	// MachineConfig is resolved by ATNetplayProfile::BeginSession
+	// via DefaultKernelForHardware (netplay_profile.cpp).
 	struct FirmwareChoice {
 		uint64_t    id;
 		uint32_t    crc32;
@@ -1537,8 +1538,10 @@ void DesktopAddOffer() {
 		ImGui::Checkbox("BASIC enabled", &s_addConfig.basicEnabled);
 		ImGui::EndDisabled();
 
-		ImGui::Checkbox("SIO full-speed acceleration",
-			&s_addConfig.sioPatchEnabled);
+		// SIO full-speed acceleration + CPU mode are pinned by the
+		// canonical Online Play profile (see ATNetplayProfile in
+		// netplay/netplay_profile.h); they are deliberately not
+		// per-game and have no UI here.
 
 		ImGui::Spacing();
 		ImGui::TextDisabled("Firmware (shipped by CRC32 — joiner must have a matching entry)");

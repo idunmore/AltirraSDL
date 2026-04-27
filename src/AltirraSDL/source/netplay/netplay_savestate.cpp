@@ -15,21 +15,14 @@
 
 #include "savestateio.h"  // from Altirra/h
 
+#include "netplay_profile.h"
+
 #include <at/atcore/logging.h>
 
 extern ATSimulator g_sim;
 extern ATLogChannel g_ATLCNetplay;
 
 namespace ATNetplay {
-
-namespace {
-
-// Must match the seed used at lockstep entry (netplay_glue.cpp:190).
-// Both peers re-seed with the same constant after apply so the PIA /
-// POKEY RNG streams diverge identically from that frame forward.
-constexpr uint32_t kNetplayMasterSeed = 0xA7C0BEEFu;
-
-} // anonymous
 
 bool CaptureSavestate(std::vector<uint8_t>& out) {
 	out.clear();
@@ -89,7 +82,7 @@ bool ApplySavestate(const uint8_t* data, size_t len) {
 		// Both peers hit this line with the same constant so their PIA
 		// floating-input LFSR streams realign from this frame forward.
 		// See netplay_glue.cpp:176-214 for the full background.
-		g_sim.ReseedNetplayRandomState(kNetplayMasterSeed);
+		g_sim.ReseedNetplayRandomState(ATNetplayProfile::kLockedRandomSeed);
 		g_ATLCNetplay("resync: applied savestate (%zu bytes, RNG reseeded)", len);
 		return true;
 	} catch (const MyError& e) {

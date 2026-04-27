@@ -49,6 +49,7 @@
 #include "netplay/netplay_input.h"
 #include "netplay/netplay_simhash.h"
 #include "netplay/netplay_glue.h"
+#include "netplay/netplay_profile.h"
 #include "netplay/packets.h"
 #endif
 #include "ui_main_internal.h"
@@ -573,10 +574,17 @@ void ATUIPollDeferredActions() {
 				break;
 			}
 			case kATDeferred_NetplayHostBoot: {
-				// Netplay-only boot path: no compat-dialog gate (we
-				// must Resume even if the title is flagged, otherwise
-				// the snapshot captures a paused sim and both sides
-				// end up with a frozen screen after Lockstepping).
+				// Netplay-only boot path.  v4 (canonical Session
+				// Profile): we hand the per-game overrides to
+				// ATNetplayProfile::BeginSession, which snapshots the
+				// user's pre-session profile to disk, force-applies
+				// the canonical fixed configuration (no devices, no
+				// FP patch, etc.), sets the locked random seed, and
+				// ColdResets.  The user's Altirra config on disk is
+				// preserved across the session and restored on every
+				// session-end path (clean Bye, peer disconnect, app
+				// shutdown, even process crash via the lock-file
+				// recovery in ATNetplayProfile::RecoverFromCrash).
 				//
 				// Unlike kATDeferred_BootImage, we carry two strings:
 				//   a.path  = offer id (UTF-16 encoded UTF-8)
@@ -596,39 +604,28 @@ void ATUIPollDeferredActions() {
 					break;
 				}
 
-				// Step 1: save the user's pre-session simulator state
-				// into an in-memory snapshot so we can restore it
-				// exactly when the session ends.  Altirra settings.ini
-				// on disk is never touched — only the live sim mutates.
-				if (!ATNetplayUI::SaveSessionRestorePoint()) {
+				ATNetplayUI::HostedGame *hg =
+					ATNetplayUI::FindHostedGame(std::string(gameIdU8.c_str()));
+				if (!hg) {
 					ATNetplayUI_HostBootFailed(gameIdU8.c_str(),
-						"could not capture pre-session state; session refused");
+						"internal: hosted game vanished");
 					break;
 				}
 
-				// Step 2: apply the offer's machine config (hardware,
-				// memory, video, CPU, firmware by CRC32).  Must
-				// happen before UnloadAll+Load so the load uses the
-				// correct hardware.
-				{
-					ATNetplayUI::HostedGame *hg =
-						ATNetplayUI::FindHostedGame(std::string(gameIdU8.c_str()));
-					ATNetplayUI::MachineConfig cfg =
-						hg ? hg->config : ATNetplayUI::MachineConfig{};
-					std::string err = ATNetplayUI::ApplyMachineConfig(cfg);
-					if (!err.empty()) {
-						ATNetplayUI::RestoreSessionRestorePoint();
-						ATNetplayUI_HostBootFailed(gameIdU8.c_str(),
-							err.c_str());
-						break;
-					}
-				}
+				ATNetplayProfile::PerGameOverrides ov{};
+				ov.hardwareMode  = (uint8_t)hg->config.hardwareMode;
+				ov.memoryMode    = (uint8_t)hg->config.memoryMode;
+				ov.videoStandard = (uint8_t)hg->config.videoStandard;
+				ov.basicEnabled  = hg->config.basicEnabled ? 1 : 0;
+				ov.kernelCRC32   = hg->config.kernelCRC32;
+				ov.basicCRC32    = hg->config.basicCRC32;
 
-				// Lock the RNG seed to the same master seed the
-				// joiner will use, so PIA floating inputs + HLE
-				// program-launch delay are bit-identical.  Shared
-				// constant with ui_netplay_actions.cpp.
-				g_sim.SetLockedRandomSeed(0xA7C0BEEFu);
+				if (!ATNetplayProfile::BeginSession(ov)) {
+					ATNetplayUI_HostBootFailed(gameIdU8.c_str(),
+						"could not establish Online Play profile "
+						"(missing firmware or settings flush failed)");
+					break;
+				}
 
 				g_sim.UnloadAll(ATUIGetBootUnloadStorageMask());
 
@@ -648,14 +645,19 @@ void ATUIPollDeferredActions() {
 				mctx.mbStopOnIncompatibleDiskFormat = false;
 				mctx.mpImageLoadContext            = &imgCtx;
 
-				// Retry loop mirroring kATDeferred_BootImage
-				// (ui_main.cpp:271-323).  We auto-resolve mode and
-				// BASIC conflicts silently — for netplay there's no
-				// user to answer a dialog and the peer is waiting on
-				// the other end of the handshake.
+				// v4: we no longer auto-switch hardware mode on
+				// 5200/computer mismatch.  The canonical session
+				// profile pins the hardware to the host's per-game
+				// override; if the cart needs 5200, the host should
+				// have set hardwareMode=5200 in the offer.  Mismatch
+				// surfaces as a clean error so the host fixes the
+				// offer before retrying.  We keep the BASIC-conflict
+				// auto-disable because BASIC enable IS a per-game
+				// override, so it's safe to flip the canonical input
+				// for this session.
 				bool loadSuccess = false;
 				VDStringA failReason;
-				int safety = 10;
+				int safety = 5;
 				for (;;) {
 					try {
 						if (g_sim.Load(mctx)) {
@@ -673,29 +675,14 @@ void ATUIPollDeferredActions() {
 						mctx.mbStopAfterImageLoaded = false;
 
 					if (mctx.mbMode5200Required) {
-						mctx.mbMode5200Required = false;
-						if (g_sim.GetHardwareMode() != kATHardwareMode_5200) {
-							if (!ATUISwitchHardwareMode(nullptr,
-							        kATHardwareMode_5200, true)) {
-								failReason = "could not switch to 5200 mode";
-								break;
-							}
-						}
-						continue;
+						failReason = "this game requires 5200 mode — set "
+							"Hardware to 5200 in the hosted game and retry";
+						break;
 					} else if (mctx.mbModeComputerRequired) {
-						mctx.mbModeComputerRequired = false;
-						if (g_sim.GetHardwareMode() == kATHardwareMode_5200) {
-							if (!ATUISwitchHardwareMode(nullptr,
-							        kATHardwareMode_800XL, true)) {
-								failReason = "could not switch to computer mode";
-								break;
-							}
-						}
-						continue;
+						failReason = "this game requires computer mode — set "
+							"Hardware to 800/800XL/130XE in the hosted game and retry";
+						break;
 					} else if (mctx.mbMemoryConflictBasic) {
-						// Silently disable BASIC — most common and
-						// safe auto-resolution; netplay host cannot
-						// show a dialog mid-handshake.
 						mctx.mbStopOnMemoryConflictBasic = false;
 						mctx.mbMemoryConflictBasic       = false;
 						g_sim.SetBASICEnabled(false);
@@ -706,9 +693,6 @@ void ATUIPollDeferredActions() {
 						continue;
 					}
 
-					// Unknown cart mapper, or some other load failure
-					// we don't auto-resolve.  There's no user dialog
-					// path for netplay.
 					if (imgCtx.mLoadType == kATImageType_Cartridge)
 						failReason = "cartridge mapper not recognised";
 					else if (failReason.empty())
@@ -717,10 +701,7 @@ void ATUIPollDeferredActions() {
 				}
 
 				if (!loadSuccess) {
-					// Restore the user's pre-session state before
-					// surfacing the error — otherwise they're left
-					// with whatever partial state Load left behind.
-					ATNetplayUI::RestoreSessionRestorePoint();
+					ATNetplayProfile::EndSession();
 					ATNetplayUI_HostBootFailed(gameIdU8.c_str(),
 						failReason.empty()
 						    ? "image could not be loaded"
@@ -731,14 +712,15 @@ void ATUIPollDeferredActions() {
 				ATAddMRU(imagePath.c_str());
 				g_sim.ColdReset();
 
-				// v3 cold-boot: stay paused until lockstep engages.
+				// v4 cold-boot: stay paused until lockstep engages.
 				// The joiner does Load + ColdReset + Pause symmetrically,
 				// so both peers are at "frame 0 post-ColdReset" when
 				// lockstep entry Resumes them together in netplay_glue.
 				// The HLE program loader's CPU trap at $01FE (if any)
 				// fires inside lockstep on both peers at the same
-				// emulated tick because mLockedRandomSeed seeds
-				// mProgramLaunchDelay deterministically.
+				// emulated tick because the locked random seed
+				// (kLockedRandomSeed) seeds mProgramLaunchDelay
+				// deterministically.
 				{
 					extern ATLogChannel g_ATLCNetplay;
 					VDStringA imgU8 = VDTextWToU8(imagePath);
@@ -765,9 +747,11 @@ void ATUIPollDeferredActions() {
 			}
 			case kATDeferred_NetplayJoinerApply: {
 				// a.path is a local cache file containing the host's
-				// game bytes.  v3 cold-boot path: apply BootConfig,
-				// set locked seed, UnloadAll, Load, ColdReset, Resume,
-				// then ack the coordinator → Lockstepping.
+				// game bytes.  v4 cold-boot path: hand the host's
+				// per-game overrides to ATNetplayProfile::BeginSession
+				// (which snapshots the user's profile + applies the
+				// canonical fixed configuration), then UnloadAll +
+				// Load + ColdReset + Pause + ack the coordinator.
 				extern void ATNetplayUI_JoinerSnapshotApplied();
 				extern void ATNetplayUI_JoinerSnapshotFailed(const char *);
 				extern ATLogChannel g_ATLCNetplay;
@@ -782,38 +766,40 @@ void ATUIPollDeferredActions() {
 					(int)g_sim.GetMemoryMode(),
 					(int)g_sim.GetVideoStandard());
 
-				if (!ATNetplayUI::SaveSessionRestorePoint()) {
-					ATNetplayUI_JoinerSnapshotFailed(
-						"could not capture pre-session state");
-					break;
-				}
-
-				// Apply host's MachineConfig (firmware-by-CRC32).
 				auto netBoot = ATNetplayGlue::JoinBootConfig();
-				ATNetplayUI::MachineConfig cfg;
-				cfg.hardwareMode    = (ATHardwareMode)netBoot.hardwareMode;
-				cfg.memoryMode      = (ATMemoryMode)netBoot.memoryMode;
-				cfg.videoStandard   = (ATVideoStandard)netBoot.videoStandard;
-				cfg.cpuMode         = (ATCPUMode)netBoot.cpuMode;
-				cfg.basicEnabled    = (netBoot.basicEnabled != 0);
-				cfg.sioPatchEnabled = (netBoot.sioAcceleration != 0);
-				cfg.kernelCRC32     = netBoot.kernelCRC32;
-				cfg.basicCRC32      = netBoot.basicCRC32;
-				std::string err = ATNetplayUI::ApplyMachineConfig(cfg);
-				if (!err.empty()) {
-					ATNetplayUI::RestoreSessionRestorePoint();
-					ATNetplayUI_JoinerSnapshotFailed(err.c_str());
+
+				// Backstop check for the canonical-profile mismatch
+				// (the coordinator should already have rejected the
+				// Welcome and we shouldn't even be here, but defend
+				// against future flow changes).
+				if (netBoot.canonicalProfileVersion !=
+				    ATNetplayProfile::kCanonicalProfileVersion) {
+					ATNetplayUI_JoinerSnapshotFailed(
+						"Host is running a different Online Play "
+						"profile version. Both peers must run a "
+						"compatible Altirra release.");
 					break;
 				}
 
-				// Lock the RNG seed to the host's master seed so PIA
-				// floating inputs + HLE program-launch delay are
-				// deterministic across peers.
-				g_sim.SetLockedRandomSeed(netBoot.masterSeed);
+				ATNetplayProfile::PerGameOverrides ov{};
+				ov.hardwareMode  = netBoot.hardwareMode;
+				ov.memoryMode    = netBoot.memoryMode;
+				ov.videoStandard = netBoot.videoStandard;
+				ov.basicEnabled  = netBoot.basicEnabled;
+				ov.kernelCRC32   = netBoot.kernelCRC32;
+				ov.basicCRC32    = netBoot.basicCRC32;
+
+				if (!ATNetplayProfile::BeginSession(ov)) {
+					ATNetplayUI_JoinerSnapshotFailed(
+						"could not establish Online Play profile "
+						"(missing firmware or settings flush failed)");
+					break;
+				}
 
 				// Unload the joiner's pre-session media before Load.
-				// EndSession's RestoreSessionRestorePoint brings it
-				// all back.
+				// ATNetplayProfile::EndSession brings the user's
+				// pre-session media + devices back via the saved
+				// profile reload.
 				g_sim.UnloadAll(ATUIGetBootUnloadStorageMask());
 
 				VDStringA reason;
@@ -864,7 +850,7 @@ void ATUIPollDeferredActions() {
 					}
 					ATNetplayUI_JoinerSnapshotApplied();
 				} else {
-					ATNetplayUI::RestoreSessionRestorePoint();
+					ATNetplayProfile::EndSession();
 					ATNetplayUI_JoinerSnapshotFailed(
 						reason.empty() ? "cold-boot failed"
 						               : reason.c_str());

@@ -30,15 +30,15 @@ static int fails = 0;
 
 static void testWireSizes() {
 	CHECK(kWireHelloSize    == 90);
-	CHECK(kWireBootCfgSize  == 40);
-	CHECK(kWireWelcomeSize  == 128);
+	CHECK(kWireBootCfgSize  == 36);
+	CHECK(kWireWelcomeSize  == 124);
 	CHECK(kWireRejectSize   == 8);
 	CHECK(kWireInputPktSize == 36);
 	CHECK(kWireByeSize      == 8);
 	CHECK(kWireChunkHdrSize == 16);
 	CHECK(kWireAckSize      == 8);
 	CHECK(kRedundancyR      == 5);
-	CHECK(kProtocolVersion  == 3);
+	CHECK(kProtocolVersion  == 4);
 }
 
 static void testMagicAnchors() {
@@ -97,17 +97,14 @@ static void testWelcomeRoundTrip() {
 	in.snapshotBytes = 65536;
 	in.snapshotChunks = 55;
 	in.settingsHash = 0xABCDEF0011223344ULL;
-	// BootConfig (v3)
+	// BootConfig (v4) — only 6 per-game vars + canonical-profile version.
+	in.boot.canonicalProfileVersion = 1;
 	in.boot.hardwareMode    = 1;          // 800XL
 	in.boot.memoryMode      = 7;          // 64K
 	in.boot.videoStandard   = 0;          // NTSC
 	in.boot.basicEnabled    = 1;
-	in.boot.cpuMode         = 0;          // 6502
-	in.boot.sioAcceleration = 1;
 	in.boot.kernelCRC32     = 0x1F9CD270u;
 	in.boot.basicCRC32      = 0x7D684184u;
-	in.boot.masterSeed      = 0xDEADBEEFu;
-	in.boot.bootFrames      = 0;
 	in.boot.gameFileCRC32   = 0xCAFEBABEu;
 	std::memcpy(in.boot.gameExtension, ".atr\0\0\0\0", 8);
 
@@ -123,16 +120,13 @@ static void testWelcomeRoundTrip() {
 	CHECK(out.snapshotBytes == 65536);
 	CHECK(out.snapshotChunks == 55);
 	CHECK(out.settingsHash == 0xABCDEF0011223344ULL);
+	CHECK(out.boot.canonicalProfileVersion == 1);
 	CHECK(out.boot.hardwareMode    == 1);
 	CHECK(out.boot.memoryMode      == 7);
 	CHECK(out.boot.videoStandard   == 0);
 	CHECK(out.boot.basicEnabled    == 1);
-	CHECK(out.boot.cpuMode         == 0);
-	CHECK(out.boot.sioAcceleration == 1);
 	CHECK(out.boot.kernelCRC32     == 0x1F9CD270u);
 	CHECK(out.boot.basicCRC32      == 0x7D684184u);
-	CHECK(out.boot.masterSeed      == 0xDEADBEEFu);
-	CHECK(out.boot.bootFrames      == 0);
 	CHECK(out.boot.gameFileCRC32   == 0xCAFEBABEu);
 	CHECK(std::memcmp(out.boot.gameExtension, ".atr\0\0\0\0", 8) == 0);
 }

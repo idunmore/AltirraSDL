@@ -63,6 +63,9 @@
 #include "options.h"
 #include "firmwaremanager.h"
 #include "debugger.h"
+#ifdef ALTIRRA_NETPLAY_ENABLED
+#include "netplay/netplay_glue.h"
+#endif
 #include "ui_mode.h"
 #include "logging.h"
 
@@ -889,47 +892,63 @@ static void BuildViewMenu(NSMenu *menu) {
 // =========================================================================
 
 static void BuildSystemMenu(NSMenu *menu) {
+#ifdef ALTIRRA_NETPLAY_ENABLED
+	const bool netplayActive = ATNetplayGlue::IsActive();
+#else
+	const bool netplayActive = false;
+#endif
 
-
-	// Profiles submenu
+	// Profiles submenu — disabled while Online Play is active
+	// (the canonical session profile must not be mutated mid-session,
+	// and switching out of it would abandon the session in an
+	// inconsistent state).
 	{
-		NSMenu *profMenu = AddSubmenu(menu, @"Profiles");
-		AddItem(profMenu, @"Edit Profiles...", false, true, [=]{
-			g_uiState.showProfiles = true;
-		});
-		bool temporary = ATSettingsGetTemporaryProfileMode();
-		AddItem(profMenu, @"Temporary Profile", temporary, true, [=]{
-			ATSettingsSetTemporaryProfileMode(!ATSettingsGetTemporaryProfileMode());
-		});
-		AddSeparator(profMenu);
+		NSMenu *profMenu = AddSubmenu(menu,
+			netplayActive ? @"Profiles (disabled: Playing Online)" : @"Profiles",
+			!netplayActive);
+		if (!netplayActive) {
+			AddItem(profMenu, @"Edit Profiles...", false, true, [=]{
+				g_uiState.showProfiles = true;
+			});
+			bool temporary = ATSettingsGetTemporaryProfileMode();
+			AddItem(profMenu, @"Temporary Profile", temporary, true, [=]{
+				ATSettingsSetTemporaryProfileMode(!ATSettingsGetTemporaryProfileMode());
+			});
+			AddSeparator(profMenu);
 
-		uint32 currentId = ATSettingsGetCurrentProfileId();
-		{
-			VDStringW name = ATSettingsProfileGetName(0);
-			AddItem(profMenu, NSStr(name), currentId == 0, true, [=]{
-				if (ATSettingsGetCurrentProfileId() != 0) {
-					ATSettingsSwitchProfile(0);
-					g_sim.Resume();
-				}
-			});
-		}
-		vdfastvector<uint32> profileIds;
-		ATSettingsProfileEnum(profileIds);
-		for (uint32 id : profileIds) {
-			if (!ATSettingsProfileGetVisible(id))
-				continue;
-			VDStringW name = ATSettingsProfileGetName(id);
-			uint32 pid = id;
-			AddItem(profMenu, NSStr(name), currentId == id, true, [=]{
-				if (ATSettingsGetCurrentProfileId() != pid) {
-					ATSettingsSwitchProfile(pid);
-					g_sim.Resume();
-				}
-			});
+			uint32 currentId = ATSettingsGetCurrentProfileId();
+			{
+				VDStringW name = ATSettingsProfileGetName(0);
+				AddItem(profMenu, NSStr(name), currentId == 0, true, [=]{
+					if (ATSettingsGetCurrentProfileId() != 0) {
+						ATSettingsSwitchProfile(0);
+						g_sim.Resume();
+					}
+				});
+			}
+			vdfastvector<uint32> profileIds;
+			ATSettingsProfileEnum(profileIds);
+			for (uint32 id : profileIds) {
+				if (!ATSettingsProfileGetVisible(id))
+					continue;
+				VDStringW name = ATSettingsProfileGetName(id);
+				uint32 pid = id;
+				AddItem(profMenu, NSStr(name), currentId == id, true, [=]{
+					if (ATSettingsGetCurrentProfileId() != pid) {
+						ATSettingsSwitchProfile(pid);
+						g_sim.Resume();
+					}
+				});
+			}
 		}
 	}
 
-	AddItem(menu, @"Configure System...", @"s", NSEventModifierFlagCommand, false, true, [=]{
+	// Configure System dialog likewise edits settings the canonical
+	// Online Play profile pins — disable while a session is active.
+	AddItem(menu,
+		netplayActive ? @"Configure System... (disabled: Playing Online)"
+		              : @"Configure System...",
+		@"s", NSEventModifierFlagCommand, false, !netplayActive, [=]{
 		g_uiState.showSystemConfig = true;
 	});
 
@@ -1582,6 +1601,12 @@ static void BuildHelpMenu(NSMenu *menu) {
 // =========================================================================
 
 static void BuildAppMenu(NSMenu *appMenu) {
+#ifdef ALTIRRA_NETPLAY_ENABLED
+	const bool netplayActive = ATNetplayGlue::IsActive();
+#else
+	const bool netplayActive = false;
+#endif
+
 	// About
 	AddItem(appMenu, @"About Altirra", false, true, [=]{
 		g_uiState.showAboutDialog = true;
@@ -1589,8 +1614,12 @@ static void BuildAppMenu(NSMenu *appMenu) {
 
 	AddSeparator(appMenu);
 
-	// Preferences (Cmd+,)
-	AddItem(appMenu, @"Preferences...", @",", NSEventModifierFlagCommand, false, true, [=]{
+	// Preferences (Cmd+,) — same Configure System dialog, disabled
+	// during Online Play for the same reason.
+	AddItem(appMenu,
+		netplayActive ? @"Preferences... (disabled: Playing Online)"
+		              : @"Preferences...",
+		@",", NSEventModifierFlagCommand, false, !netplayActive, [=]{
 		g_uiState.showSystemConfig = true;
 	});
 

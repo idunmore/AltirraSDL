@@ -1114,8 +1114,10 @@ void RenderMachineConfigSection(MachineConfig& cfg) {
 		ATTouchToggle("BASIC enabled", &cfg.basicEnabled);
 		if (is5200) ImGui::EndDisabled();
 
-		ATTouchToggle("SIO full-speed acceleration",
-			&cfg.sioPatchEnabled);
+		// SIO patch + CPU mode are pinned by the canonical Online
+		// Play profile (see ATNetplayProfile in
+		// netplay/netplay_profile.h); they are deliberately not
+		// per-game and have no UI here.
 
 		ImGui::Spacing();
 		ATTouchMutedText("Firmware (CRC32 — joiner must have a "
@@ -1159,8 +1161,10 @@ void RenderMachineConfigSection(MachineConfig& cfg) {
 	ImGui::Checkbox("BASIC enabled", &cfg.basicEnabled);
 	ImGui::EndDisabled();
 
-	ImGui::Checkbox("SIO full-speed acceleration",
-		&cfg.sioPatchEnabled);
+	// SIO patch + CPU mode are pinned by the canonical Online
+	// Play profile (see ATNetplayProfile in
+	// netplay/netplay_profile.h); they are deliberately not
+	// per-game and have no UI here.
 
 	ImGui::Spacing();
 	ImGui::TextDisabled("Firmware (shipped by CRC32 — joiner must have "

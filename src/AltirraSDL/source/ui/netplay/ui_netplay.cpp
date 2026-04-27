@@ -11,6 +11,7 @@
 
 #include "netplay/platform_notify.h"
 #include "netplay/netplay_glue.h"
+#include "netplay/netplay_profile.h"
 #include "netplay/packets.h"
 
 #include "ui/core/ui_mode.h"
@@ -76,11 +77,12 @@ LobbyWorker& GetWorker() { return GetWorkerImpl(); }
 
 // Cleanup hook installed into the netplay glue.  Fires when the lower
 // glue layer tears down a session via DisconnectActive() or Shutdown(),
-// so the user's pre-session sim state is restored even on paths that
-// don't go through the activity-edge in ReconcileHostedGames.
+// so the canonical netplay profile is unwound and the user's
+// pre-session settings restored even on paths that don't go through
+// the activity-edge in ReconcileHostedGames (notably app shutdown).
+// Idempotent — EndSession internally guards on IsActive().
 static void ATNetplayUI_GlueCleanupHook() {
-	if (ATNetplayUI::HasSessionRestorePoint())
-		ATNetplayUI::RestoreSessionRestorePoint();
+	ATNetplayProfile::EndSession();
 }
 
 void ATNetplayUI_Initialize(SDL_Window *window) {
@@ -535,13 +537,12 @@ void ATNetplayUI_EndSession() {
 	for (auto& o : ATNetplayUI::GetState().hostedGames) {
 		ATNetplayUI::DisableHostedGame(o.id);
 	}
-	// Restore the user's pre-session sim immediately rather than
-	// waiting for the next ReconcileHostedGames tick to catch the
-	// activity edge.  Makes the menu click feel synchronous and
-	// guarantees the snapshot is consumed by the explicit-end path
-	// before any later poll could observe a transient phase.
-	if (ATNetplayUI::HasSessionRestorePoint())
-		ATNetplayUI::RestoreSessionRestorePoint();
+	// Tear down the canonical netplay profile immediately rather
+	// than waiting for the next ReconcileHostedGames tick to catch
+	// the activity edge.  Makes the menu click feel synchronous and
+	// guarantees the user's pre-session profile is restored before
+	// any later poll could observe a transient phase.  Idempotent.
+	ATNetplayProfile::EndSession();
 	ATNetplayUI::Navigate(ATNetplayUI::Screen::MyHostedGames);
 }
 
