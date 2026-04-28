@@ -81,6 +81,7 @@ void LobbyWorker::ThreadMain() {
 		LobbyResult out{};
 		out.op          = q.req.op;
 		out.tag         = q.req.tag;
+		out.coordGen    = q.req.coordGen;
 		out.sourceLobby = q.source;
 
 		switch (q.req.op) {

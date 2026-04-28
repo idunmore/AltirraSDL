@@ -84,6 +84,30 @@ struct PerGameOverrides {
 // BeginSession's existing "kernel CRC32 X not installed" error path.
 void ResolveDefaultFirmwareCRCs(PerGameOverrides& ov);
 
+// Record the path of the media file the netplay handler just loaded
+// (.atr / .car / .xex / .cas) so EndSession can guarantee it is
+// unmounted from the live sim AND scrubbed from the user's saved
+// profile chain MountedImages.  Without this, a netplay-loaded image
+// can persist into the user's profile via two paths:
+//   (a) the user already had this image loaded before joining → the
+//       BeginSession ATSaveSettings captures it in profile 0, and
+//       EndSession's profile-reload restores it; the user perceives
+//       this as netplay leakage even though it is technically their
+//       own pre-session state.
+//   (b) the snapshot apply or profile reload leaves it mounted, and
+//       the post-session ATSaveSettings captures it.
+// Either way, on restart the user sees the netplay's image auto-
+// loaded — which violates the "ephemeral session" expectation.
+// The scrub at EndSession surgically removes only this specific
+// path; other pre-session media (different game on a different
+// drive slot) is preserved.
+//
+// Path is matched case-insensitively against ATDiskInterface::GetPath
+// / ATCartridgeEmulator::GetPath / ATCassetteEmulator::GetPath.
+// Pass nullptr or empty to clear (e.g. on session abort before any
+// load happened).
+void RegisterSessionImage(const wchar_t *path);
+
 // True between BeginSession and EndSession.  Used by UI gates to
 // disable Configure System and the Profile chooser while a session
 // is live (the user must not be able to edit the canonical profile).

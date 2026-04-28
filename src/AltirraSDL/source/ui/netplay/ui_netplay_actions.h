@@ -130,4 +130,19 @@ JoinCompat CheckJoinCompat(const std::string& kernelCRC32Hex,
                            const std::string& basicCRC32Hex,
                            char *outMissingCRCHex = nullptr);
 
+// Post a one-shot lobby Delete for an explicit session id + token,
+// resolving the lobby endpoint from `section` (matched against
+// lobby.ini's enabled sections).  Used to clean up orphaned sessions
+// that are not in any HostedGame's lobbyRegistrations — e.g. when a
+// quick Enable/Disable/Enable race lets a stale Create's response
+// land after a fresh Create's response, the de-dup in the Create
+// handler must Delete the displaced session instead of dropping its
+// id+token on the floor (otherwise the lobby keeps it listed for its
+// TTL window, advertising a UDP port no coord listens on).  Safe to
+// call with empty inputs (no-op).  Fire-and-forget — failure here
+// just means the lobby's TTL eventually cleans up.
+void PostLobbyDeleteForSession(const std::string& section,
+                               const std::string& sessionId,
+                               const std::string& token);
+
 } // namespace ATNetplayUI

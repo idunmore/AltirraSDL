@@ -2135,6 +2135,17 @@ uint32 ATSimulator::GetLockedRandomSeed() const {
 
 void ATSimulator::SetLockedRandomSeed(uint32 seed) {
 	mpPrivateData->mLockedRandomSeed = seed;
+
+	// SetLockedRandomSeed(0) is the netplay EndSession exit signal —
+	// release the PIA's deterministic-mix lock so post-session play
+	// gets back its normal wallclock-entropy mixing.  Setting a
+	// non-zero seed (BeginSession path) leaves the flag alone — the
+	// flag is set explicitly later in ReseedNetplayRandomState at
+	// lockstep entry.  Mirrors the symmetry of the netplay-state
+	// fields that survive across ColdReset.
+	if (seed == 0) {
+		mpPrivateData->mFloatingInputs.mbDeterministicSeedMix = false;
+	}
 }
 
 void ATSimulator::ReseedNetplayRandomState(uint32 masterSeed) {
@@ -2156,6 +2167,20 @@ void ATSimulator::ReseedNetplayRandomState(uint32 masterSeed) {
 	mpPrivateData->mFloatingInputs.mRandomSeed = g_ATRandomizationSeeds.mPIAFloatingInputs;
 	memset(mpPrivateData->mFloatingInputs.mFloatTimers, 0,
 		sizeof mpPrivateData->mFloatingInputs.mFloatTimers);
+
+	// Also lock down the PIA's runtime LFSR-mutation path: when the
+	// OS boot code writes PORTACTL/PORTBCTL and bits transition
+	// output -> floating, ATPIAEmulator::ChangePortDirectionInput
+	// XORs GetTick64() into mRandomSeed (pia.cpp).  Each peer enters
+	// lockstep at a different absolute scheduler tick (sim wall-clock
+	// from process start through ColdReset is per-peer), so without
+	// this flag every peer would independently re-randomise the
+	// floating-input LFSR within a few frames of cold-boot, producing
+	// different floating bits on subsequent PIA reads -> different
+	// joystick/console-key results -> CPU + RAM divergence -> desync.
+	// Cleared by ColdReset / SetLockedRandomSeed(0) so non-netplay
+	// use keeps the original wallclock-entropy behaviour.
+	mpPrivateData->mFloatingInputs.mbDeterministicSeedMix = true;
 }
 
 bool ATSimulator::GetPotNoiseEnabled() const {

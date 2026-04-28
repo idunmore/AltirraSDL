@@ -20,6 +20,8 @@
 #include "cpu.h"
 #include "cassette.h"
 #include "disk.h"
+#include "diskinterface.h"
+#include "cartridge.h"
 #include "firmwaremanager.h"
 #include "constants.h"
 #include "uiaccessors.h"
@@ -82,6 +84,25 @@ uint32_t                  g_preProfileId  = 0;
 // state didn't survive the crash anyway.
 vdrefptr<IATSerializable> g_preSnapshot;
 vdrefptr<IATSerializable> g_preSnapshotInfo;
+
+// Path of the media file the netplay handler loaded for this session
+// (.atr / .car / .xex / .cas).  Set by RegisterSessionImage from the
+// kATDeferred_NetplayHostBoot / NetplayJoinerApply handlers right
+// after a successful g_sim.Load.  Cleared in EndSession (after the
+// scrub) and on any path that aborts the session before a load
+// happened (BeginSession failure, snapshot apply failure).
+//
+// At EndSession we walk live-sim disk / cart / cassette slots, unmount
+// any whose path equals this string, then call ATSaveSettings to flush
+// the scrubbed MountedImages back to the user's profile chain.  Without
+// this scrub the netplay-loaded image persists into Profiles\<userId>\
+// Mounted Images by either of two paths: (a) the user already had it
+// loaded pre-session and BeginSession's ATSaveSettings captured it,
+// or (b) the snapshot apply / profile reload re-mounts it after the
+// canonical session ends.  Either way, the user perceives the image
+// as auto-loaded on next launch — which violates the "ephemeral
+// session" expectation.
+VDStringW g_sessionImagePath;
 
 // Categories the netplay profile owns — see netplay_profile.h.
 constexpr ATSettingsCategory kOwnedMask = (ATSettingsCategory)(
@@ -384,6 +405,74 @@ bool ApplyCanonicalProfile(const PerGameOverrides& ov) {
 	return true;
 }
 
+// Walk the live sim's disk / cartridge / cassette slots and unmount
+// any whose path equals g_sessionImagePath.  Then ATSaveSettings
+// (MountedImages) so the scrubbed state is flushed to the user's
+// profile chain — preventing auto-load on next launch.
+//
+// MUST be called AFTER ATSettingsSetTemporaryProfileMode(false) so
+// the save is not silently no-opped by the temporary-mode guard at
+// settings.cpp:1764.  Idempotent — empty path = no-op.  Safe to call
+// against media that wasn't in the live sim (each unmount checks the
+// path first).  Case-insensitive match handles platform differences
+// (macOS / Windows path comparisons drift on case otherwise).
+void ScrubSessionMediaFromUserProfile() {
+	if (g_sessionImagePath.empty()) return;
+
+	const wchar_t *needle = g_sessionImagePath.c_str();
+	bool anyChanged = false;
+
+	for (int i = 0; i < 15; ++i) {
+		ATDiskInterface& diskIf = g_sim.GetDiskInterface(i);
+		const wchar_t *p = diskIf.GetPath();
+		if (p && *p && _wcsicmp(p, needle) == 0) {
+			diskIf.UnloadDisk();
+			g_sim.GetDiskDrive(i).SetEnabled(false);
+			anyChanged = true;
+			g_ATLCNetplay("netplay-profile: scrubbed session image "
+				"from disk slot %d", i);
+		}
+	}
+	for (int i = 0; i < 2; ++i) {
+		ATCartridgeEmulator *cart = g_sim.GetCartridge((uint32)i);
+		if (cart) {
+			const wchar_t *p = cart->GetPath();
+			if (p && *p && _wcsicmp(p, needle) == 0) {
+				g_sim.UnloadCartridge((uint32)i);
+				anyChanged = true;
+				g_ATLCNetplay("netplay-profile: scrubbed session image "
+					"from cartridge slot %d", i);
+			}
+		}
+	}
+	{
+		auto& cas = g_sim.GetCassette();
+		const wchar_t *p = cas.GetPath();
+		if (p && *p && _wcsicmp(p, needle) == 0) {
+			cas.Unload();
+			anyChanged = true;
+			g_ATLCNetplay("netplay-profile: scrubbed session image "
+				"from cassette");
+		}
+	}
+
+	// Always flush MountedImages — even if anyChanged is false the
+	// user might have had stale entries from a prior run that we want
+	// to consolidate.  ATSaveSettings will be a no-op if temp mode is
+	// somehow still on (defensive); EndSession turns it off before
+	// calling here, so the save normally goes through.
+	if (anyChanged) {
+		ATSaveSettings(kATSettingsCategory_MountedImages);
+		// On Linux/macOS/Android the registry is in-memory and only
+		// reaches disk via ATRegistryFlushToDisk.  Force it now so a
+		// subsequent process crash before the next periodic flush
+		// preserves the scrubbed state.  No-op stub on Windows.
+		ATRegistryFlushToDisk();
+	}
+
+	g_sessionImagePath.clear();
+}
+
 } // anonymous
 
 // ---------------------------------------------------------------------------
@@ -430,6 +519,16 @@ void ResolveDefaultFirmwareCRCs(PerGameOverrides& ov) {
 
 bool IsActive() {
 	return g_active;
+}
+
+void RegisterSessionImage(const wchar_t *path) {
+	if (!path || !*path) {
+		g_sessionImagePath.clear();
+		return;
+	}
+	g_sessionImagePath = path;
+	g_ATLCNetplay("netplay-profile: registered session image for "
+		"end-of-session scrub");
 }
 
 bool BeginSession(const PerGameOverrides& ov) {
@@ -502,14 +601,33 @@ bool BeginSession(const PerGameOverrides& ov) {
 
 	EnsureNetplayProfileKey();
 
+	// CRITICAL: update g_ATCurrentProfileId to kNetplayProfileId BEFORE
+	// arming temporary mode.  ATSettingsSwitchProfile (used by EndSession
+	// to restore the user's profile) early-returns if the requested id
+	// equals g_ATCurrentProfileId — so if we leave the in-memory pointer
+	// at `pre`, EndSession's SwitchProfile(pre) becomes a no-op: no
+	// reload of user settings, no ColdReset, and the live sim keeps
+	// wearing the canonical netplay state.  ApplySnapshot then lays the
+	// user's pre-session CPU/RAM atop the canonical kernel ROM,
+	// producing wild execution and a "Program Error" dialog.
+	//
+	// Use ATSettingsLoadProfile(id, mask=0) — the (false, 0) ATExchange
+	// path early-returns at settings.cpp:1670 so no live state is
+	// touched; the ONLY observable side effect is the
+	// g_ATCurrentProfileId assignment (plus a no-op ATReloadPortMenus +
+	// ATUIUpdateSpeedTiming).  ApplyCanonicalProfile below populates the
+	// live sim directly.
+	//
+	// ATSettingsLoadProfile also clears g_ATProfileTemporary; arm temp
+	// mode AFTER it returns.
+	ATSettingsLoadProfile(kNetplayProfileId, (ATSettingsCategory)0);
+
 	// From here on every state mutation is in temporary mode so an
 	// incidental ATSaveSettings (UI close, profile switch shortcut,
 	// app shutdown) doesn't poison the canonical key with live sim
 	// state captured mid-session.
 	ATSettingsSetTemporaryProfileMode(true);
 
-	// Switch the current profile id directly — NOT via
-	// ATSettingsSwitchProfile, which would do a Save+Load round-trip.
 	g_preProfileId = pre;
 	g_active       = true;
 	{
@@ -552,10 +670,17 @@ bool BeginSession(const PerGameOverrides& ov) {
 		}
 		g_preSnapshot     = nullptr;
 		g_preSnapshotInfo = nullptr;
+		// No netplay image was loaded yet (the deferred handler does
+		// the load AFTER BeginSession returns), but clear defensively
+		// in case a stale value lingered from a prior aborted session.
+		g_sessionImagePath.clear();
 		DeleteLockFile();
 		return false;
 	}
 
+	// Reset the session-image tracker.  The deferred handler calls
+	// RegisterSessionImage after a successful Load, so we start clean.
+	g_sessionImagePath.clear();
 	g_sim.SetLockedRandomSeed(kLockedRandomSeed);
 	// Caller is responsible for the subsequent UnloadAll + Load +
 	// ColdReset that brings the game image up — see the rewritten
@@ -605,36 +730,41 @@ void EndSession() {
 	// land).
 	ATSettingsSetTemporaryProfileMode(false);
 
-	// Reapply the pre-session sim snapshot so the user's running
-	// game (CPU, RAM, scheduler tick, paused/running) is fully
-	// restored — not just brought back to a fresh ColdReset of
-	// their pre-session config.  Without this, a user who was
-	// playing a local game when they accepted a join request loses
-	// their progress when the session ends.
-	bool snapshotApplied = false;
-	if (g_preSnapshot) {
-		try {
-			ATStateLoadContext ctx{};
-			ctx.mbAllowKernelMismatch = true;
-			g_sim.ApplySnapshot(*g_preSnapshot, &ctx);
-			g_sim.Resume();
-			snapshotApplied = true;
-		} catch (...) {
-			// Best-effort: if apply fails the user is on a
-			// ColdReset of their pre-session config, which is
-			// still a reasonable place to land — log only.
-			g_ATLCNetplay("netplay-profile: pre-session snapshot "
-				"apply failed; user kept on ColdReset of restored profile");
-		}
-		g_preSnapshot     = nullptr;
-		g_preSnapshotInfo = nullptr;
-	}
-	if (!snapshotApplied) {
-		// No snapshot (capture failed at BeginSession) or apply
-		// threw — at least guarantee the sim is running so the user
-		// doesn't end up on a stuck-paused screen post-session.
-		g_sim.Resume();
-	}
+	// Drop the captured pre-session snapshot.  We deliberately do NOT
+	// ApplySnapshot here even though it would restore the user's
+	// pre-session running game (CPU/RAM/scheduler/mounts).  Field
+	// evidence (2026-04-28): ApplySnapshot on top of the SwitchProfile-
+	// loaded sim leaves the CPU in an inconsistent state — within a
+	// few frames of resume the kernel jumps into zero page (PC=$000B,
+	// illegal opcodes) and the user sees a "Program Error" dialog.
+	// Likely root cause is that ApplySnapshot internally re-runs
+	// SetHardwareMode / SetMemoryMode / SetVideoStandard on top of the
+	// already-ColdReset sim, leaving device timers + scheduler events
+	// inconsistent with the restored CPU/RAM.  Until that interaction
+	// is fully diagnosed and fixed, the safer landing is the clean
+	// SwitchProfile + ColdReset above: user keeps all their settings
+	// (devices, kernel, palette, input maps) but loses their pre-
+	// session running game.  Most users start a fresh session anyway;
+	// the few who were mid-game can re-mount + warm-reset.
+	g_preSnapshot     = nullptr;
+	g_preSnapshotInfo = nullptr;
+
+	// SwitchProfile's ColdReset left the sim paused only if the user's
+	// pre-session profile had a "boot paused" preference; for most
+	// users the sim is running.  Resume defensively to guarantee no
+	// stuck-paused screen post-session.
+	g_sim.Resume();
+
+	// Scrub the netplay-loaded media from BOTH the live sim AND the
+	// user's saved profile chain.  This guarantees ephemeral session
+	// semantics: the .atr / .car / .cas the netplay handler loaded
+	// will not auto-load on next launch, even in the corner case
+	// where the user already had it mounted before joining (in which
+	// case the snapshot apply / profile reload above would have
+	// re-mounted it).  Other pre-session media on different slots is
+	// preserved.  Must run AFTER ATSettingsSetTemporaryProfileMode
+	// (false) so the ATSaveSettings inside the scrub actually writes.
+	ScrubSessionMediaFromUserProfile();
 
 	DeleteLockFile();
 

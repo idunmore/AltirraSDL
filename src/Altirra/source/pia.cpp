@@ -408,6 +408,11 @@ void ATPIAEmulator::ColdReset() {
 	WarmReset();
 }
 
+void ATPIAEmulator::ResetFloatingInputTimers() {
+	if (mpFloatingInputs)
+		memset(mpFloatingInputs->mFloatTimers, 0, sizeof mpFloatingInputs->mFloatTimers);
+}
+
 void ATPIAEmulator::WarmReset() {
 	// need to do this to float inputs
 	SetPortBDirection(0);
@@ -963,11 +968,21 @@ bool ATPIAEmulator::SetPortBDirection(uint8 value) {
 
 			// if we have any bits that are transitioning 1 -> floating, update the PRNG
 			if (newlyFloatingInputs & outputs) {
-				mpFloatingInputs->mRandomSeed ^= (uint32)t64;
-				mpFloatingInputs->mRandomSeed &= 0x7FFFFFFFU;
+				// Wallclock-entropy mix: XORs the absolute scheduler
+				// tick into the LFSR seed.  Suppressed during netplay
+				// (mbDeterministicSeedMix=true) — see comment in
+				// ATPIAFloatingInputs (pia.h).  The LFSR step below
+				// still evolves the seed, so the RNG remains usable
+				// for in-session floating-input randomization while
+				// being reproducible across both peers from the
+				// shared netplay locked seed.
+				if (!mpFloatingInputs->mbDeterministicSeedMix) {
+					mpFloatingInputs->mRandomSeed ^= (uint32)t64;
+					mpFloatingInputs->mRandomSeed &= 0x7FFFFFFFU;
 
-				if (!mpFloatingInputs->mRandomSeed)
-					mpFloatingInputs->mRandomSeed = 1;
+					if (!mpFloatingInputs->mRandomSeed)
+						mpFloatingInputs->mRandomSeed = 1;
+				}
 			}
 
 			for(int i=0; i<8; ++i, (bit += bit)) {

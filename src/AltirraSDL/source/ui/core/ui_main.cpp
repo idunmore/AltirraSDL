@@ -658,7 +658,18 @@ void ATUIPollDeferredActions() {
 					break;
 				}
 
-				g_sim.UnloadAll(ATUIGetBootUnloadStorageMask());
+				// Force-unload ALL pre-session media (disks, carts,
+				// tape) before loading the netplay image.  The
+				// canonical session profile guarantees deterministic
+				// configuration but does NOT touch mounted media —
+				// leaving the user's pre-session disk/cart/tape
+				// loaded alongside the netplay image is a silent
+				// desync source (each peer has different pre-session
+				// media → different SIO traffic / cart-bus state /
+				// hashing).  ATUIGetBootUnloadStorageMask() defaults
+				// to 0 (= unload nothing) for normal Boot Image; for
+				// netplay we need a clean slate every time.
+				g_sim.UnloadAll(kATStorageTypeMask_All);
 
 				ATCartLoadContext cartCtx {};
 				cartCtx.mbReturnOnUnknownMapper = true;
@@ -705,14 +716,32 @@ void ATUIPollDeferredActions() {
 					if (mctx.mbStopAfterImageLoaded)
 						mctx.mbStopAfterImageLoaded = false;
 
-					if (mctx.mbMode5200Required) {
+					// CAREFUL: simulator.cpp:2887 sets mbModeComputerRequired
+					// = true whenever mbStopAfterImageLoaded fired, even when
+					// the hardware mode is ALREADY computer mode (the flag is
+					// overloaded with the early-stop signal).  Same kind of
+					// false-positive can happen for cartridges via :2902.
+					// Treat the flag as a real mismatch ONLY when the live
+					// hardware mode disagrees; otherwise it's a spurious
+					// flag from the early-stop checkpoint and we should just
+					// continue retrying with mbStopAfterImageLoaded cleared.
+					const ATHardwareMode liveHw = g_sim.GetHardwareMode();
+					const bool liveIs5200 = (liveHw == kATHardwareMode_5200);
+
+					if (mctx.mbMode5200Required && !liveIs5200) {
 						failReason = "this game requires 5200 mode — set "
 							"Hardware to 5200 in the hosted game and retry";
 						break;
-					} else if (mctx.mbModeComputerRequired) {
+					} else if (mctx.mbModeComputerRequired && liveIs5200) {
 						failReason = "this game requires computer mode — set "
 							"Hardware to 800/800XL/130XE in the hosted game and retry";
 						break;
+					} else if (mctx.mbMode5200Required || mctx.mbModeComputerRequired) {
+						// False positive — flag was set but hardware mode is
+						// already correct.  Loop iterates again with
+						// mbStopAfterImageLoaded cleared; the next Load goes
+						// past the early-stop checkpoint and succeeds.
+						continue;
 					} else if (mctx.mbMemoryConflictBasic) {
 						mctx.mbStopOnMemoryConflictBasic = false;
 						mctx.mbMemoryConflictBasic       = false;
@@ -739,6 +768,12 @@ void ATUIPollDeferredActions() {
 						    : failReason.c_str());
 					break;
 				}
+
+				// Register the loaded path with the netplay profile
+				// system so EndSession can scrub it from the live
+				// sim AND the user's saved MountedImages — preventing
+				// the netplay image from auto-loading on next launch.
+				ATNetplayProfile::RegisterSessionImage(imagePath.c_str());
 
 				ATAddMRU(imagePath.c_str());
 				g_sim.ColdReset();
@@ -827,11 +862,14 @@ void ATUIPollDeferredActions() {
 					break;
 				}
 
-				// Unload the joiner's pre-session media before Load.
-				// ATNetplayProfile::EndSession brings the user's
-				// pre-session media + devices back via the saved
-				// profile reload.
-				g_sim.UnloadAll(ATUIGetBootUnloadStorageMask());
+				// Force-unload ALL pre-session media (disks, carts,
+				// tape).  ATUIGetBootUnloadStorageMask() defaults to
+				// 0 (= unload nothing); for netplay we MUST wipe
+				// every storage type so peer simulators are bit-
+				// identical on first frame.  ATNetplayProfile::
+				// EndSession brings the user's pre-session media +
+				// devices back via the saved profile reload.
+				g_sim.UnloadAll(kATStorageTypeMask_All);
 
 				VDStringA reason;
 				bool ok = false;
@@ -839,6 +877,11 @@ void ATUIPollDeferredActions() {
 					ATImageLoadContext ctx {};
 					if (g_sim.Load(a.path.c_str(),
 					        kATMediaWriteMode_RO, &ctx)) {
+						// Register loaded path so EndSession scrubs
+						// it from the user's saved MountedImages —
+						// no auto-load on next launch.
+						ATNetplayProfile::RegisterSessionImage(
+							a.path.c_str());
 						g_sim.ColdReset();
 						// Stay paused — lockstep entry in netplay_glue
 						// Resumes both peers together, preventing any

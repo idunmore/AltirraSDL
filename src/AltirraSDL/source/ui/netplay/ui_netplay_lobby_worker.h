@@ -70,6 +70,14 @@ struct LobbyRequest {
 	std::string                   state;       // heartbeat: "" | "waiting" | "playing"
 	uint32_t                      tag = 0;     // caller cookie (round-trip)
 
+	// Coord lifecycle generation snapshot at request-post time.  The
+	// worker echoes this back in LobbyResult::coordGen; the response
+	// handler compares it against HostedGame::coordGen to detect
+	// stale Create responses (the coord that posted the request was
+	// torn down + recreated since then).  See HostedGame::coordGen
+	// for the full rationale.  Only meaningful for op == Create.
+	uint32_t                      coordGen = 0;
+
 	// op == PortMapRefresh: the bound UDP port to renew, plus the
 	// desired lease hint (router may clamp to its own maximum).
 	uint16_t                      portRefreshInternalPort = 0;
@@ -82,6 +90,10 @@ struct LobbyResult {
 	std::string                         error;
 	int                                 httpStatus = 0;  // 0 = network-level failure
 	uint32_t                            tag = 0;
+
+	// Echo of LobbyRequest::coordGen — used by the Create response
+	// handler to detect stale responses from torn-down coords.
+	uint32_t                            coordGen = 0;
 
 	// Populated depending on op:
 	std::vector<ATNetplay::LobbySession> sessions;  // List

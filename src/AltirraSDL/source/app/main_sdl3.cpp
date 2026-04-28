@@ -820,6 +820,14 @@ static void HandleEvents() {
 			ATUIVirtualKeyboard_ReleaseAll(g_sim);
 #ifdef __ANDROID__
 			ATMobileUI_SaveSuspendState(g_sim, g_mobileState);
+#ifdef ALTIRRA_NETPLAY_ENABLED
+			// Restore user's pre-session profile + scrub the netplay-
+			// loaded media BEFORE persist-to-disk so the saved state
+			// reflects the user's normal config, not the canonical
+			// session state.  Same rationale as the desktop shutdown
+			// path.  Idempotent.
+			ATNetplayProfile::EndSession();
+#endif
 			// Persist Machine/Display/Acceleration/Boot/View state plus
 			// the game library cache — they are not held in the registry
 			// until ATSaveSettings runs, and the OS will likely kill the
@@ -868,6 +876,14 @@ static void HandleEvents() {
 				"Altirra: TERMINATING — flushing settings");
 #ifdef __ANDROID__
 			ATMobileUI_SaveSuspendState(g_sim, g_mobileState);
+#endif
+#ifdef ALTIRRA_NETPLAY_ENABLED
+			// Restore user's pre-session profile + scrub the netplay-
+			// loaded media BEFORE persist-to-disk so the saved state
+			// reflects the user's normal config, not the canonical
+			// session state.  Same rationale as the desktop shutdown
+			// path.  Idempotent.
+			ATNetplayProfile::EndSession();
 #endif
 			ATPersistAllForSuspend();
 			g_running = false;
@@ -2615,6 +2631,30 @@ int main(int argc, char *argv[]) {
 
 	// Save window placement before shutdown
 	ATSaveWindowPlacement(g_pWindow);
+
+#ifdef ALTIRRA_NETPLAY_ENABLED
+	// MUST run BEFORE ATPersistAllForSuspend (which saves and flushes
+	// settings to disk).  If a netplay session is still active at app
+	// shutdown:
+	//   * The current profile id is kNetplayProfileId and temporary-
+	//     mode is on, so ATSaveSettings would no-op for category data
+	//     but `Profiles\Current profile` would be flushed pointing at
+	//     the netplay profile — guaranteeing the next launch comes up
+	//     in the empty canonical profile (or worse, RecoverFromCrash
+	//     fires because the lock file is still present).
+	//   * The netplay-loaded media (.atr / .car / .cas) would be live
+	//     in the simulator and end up persisted into the user's
+	//     profile chain MountedImages by the post-cleanup save below
+	//     after the cleanup-hook EndSession reverts back to the user
+	//     profile (turning temp-mode off, leaving the netplay media
+	//     mounted because the snapshot captured it that way).
+	// Calling EndSession HERE — while g_sim is still alive and the
+	// settings save hasn't run yet — does the full restore (profile
+	// reload + snapshot apply + session-media scrub + MountedImages
+	// flush) so ATPersistAllForSuspend captures the user's clean
+	// pre-session state.  Idempotent: no-op if no session is active.
+	ATNetplayProfile::EndSession();
+#endif
 
 	// Save settings before shutdown (must happen before joystick manager
 	// is destroyed — ATSettingsExchangeInput reads joystick transforms

@@ -176,6 +176,26 @@ struct HostedGame {
 	// the original mapping finally expires.
 	uint64_t    natPmpRetryAfterMs = 0;
 
+	// Coord lifecycle generation — bumped on every StartCoord /
+	// StopCoord transition so the lobby Create response handler can
+	// detect stale responses.  Each lobby Create request snapshots
+	// the current value into LobbyRequest::coordGen; when the
+	// response comes back, the handler compares the echoed value
+	// against this field and treats any mismatch as orphan.
+	//
+	// Why this matters: a host that bound ephemeral UDP port X and
+	// posted a Create can be torn down before the Create response
+	// lands (Disable+Enable race, reconcile recycle on a coord that
+	// went terminal, app shutdown).  Without gen gating, the
+	// response registers a session pointing at port X which no coord
+	// listens on; the lobby keeps it visible for its TTL window
+	// (~90s) and joiners that pick it sit in "Connecting…" forever
+	// while the host never sees the join.  With gen gating, the
+	// stale response triggers an immediate lobby Delete + skips the
+	// local register step, collapsing the orphan window from
+	// minutes to one HTTP round-trip.
+	uint32_t    coordGen = 0;
+
 	// Snapshot queuing — set once per session to avoid re-queueing the
 	// boot+serialize work on every ReconcileHostedGames tick.  Cleared when
 	// the coordinator goes terminal.

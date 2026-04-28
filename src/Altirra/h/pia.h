@@ -50,6 +50,22 @@ struct ATPIAFloatingInputs {
 	uint32	mDecayTimeMin;
 	uint32	mDecayTimeRange;
 	uint64	mFloatTimers[8];
+
+	// When true, suppress the absolute-scheduler-tick mix into
+	// mRandomSeed in ChangePortDirectionInput.  Set by netplay at
+	// lockstep entry: both peers cold-boot at different absolute
+	// scheduler tick offsets (each emulator process has its own pre-
+	// session warm-up), so XORing GetTick64() into the LFSR seed
+	// when the OS writes port direction registers during boot
+	// produces divergent floating-input bits on subsequent PIA reads
+	// — the bits feed the joystick/console-key registers, so CPU
+	// state diverges within a few frames and lockstep desyncs.  The
+	// LFSR self-step on the next line still mixes its own state, so
+	// suppressing only the wallclock-entropy add keeps the RNG
+	// quality usable for in-session play while making every peer's
+	// sequence reproducible from the locked netplay seed.  Default
+	// false preserves original behaviour for non-netplay use.
+	bool mbDeterministicSeedMix = false;
 };
 
 class ATPIAEmulator final : public IATDevicePIA {
@@ -107,6 +123,20 @@ public:
 	// independently in the CPLD and doesn't see the floating bits.
 	//
 	void SetPortBFloatingInputs(ATPIAFloatingInputs *inputs);
+
+	// Zero all port-B floating-input decay timers.  The deadlines stored
+	// in mFloatTimers are absolute scheduler ticks — captured into a
+	// savestate they make sense only on the simulator that captured
+	// them.  PostLoadState already zeros them on the snapshot-loading
+	// peer, but the snapshot-CAPTURING peer keeps its absolute
+	// deadlines.  For deterministic netplay both peers must reach
+	// lockstep with the same float-timer state; calling this on the
+	// host at lockstep entry brings it in line with the joiner's
+	// post-load state.  After both peers are zeroed, future
+	// SetPortBDirection() calls re-arm the timers using each peer's
+	// local t64 plus a deterministic decay (locked RNG seed), so the
+	// relative tick at which each bit decays matches across peers.
+	void ResetFloatingInputTimers();
 
 	void GetState(ATPIAState& state) const;
 	void DumpState();

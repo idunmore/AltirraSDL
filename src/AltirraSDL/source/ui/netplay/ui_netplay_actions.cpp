@@ -344,18 +344,29 @@ void PostLobbyCreate(HostedGame& o) {
 
 	const uint32_t tag = OfferTag(o);
 
+	// Bump the coord generation BEFORE posting so the responses we're
+	// about to receive carry the new value.  The response handler
+	// compares this against the offer's then-current coordGen and
+	// treats any mismatch as orphan (immediate Delete + skip
+	// register).  Pre-increment matters: posting then bumping would
+	// race with a torn-down coord whose late Create response carried
+	// the new (post-bump) value and would falsely match.
+	++o.coordGen;
+	const uint32_t coordGenAtPost = o.coordGen;
+
 	for (const auto& L : lobbies) {
 		g_ATLCNetplay("lobby Create posting for \"%s\" -> %s:%u "
-			"(section \"%s\")",
+			"(section \"%s\", gen=%u)",
 			o.gameName.c_str(),
 			L.endpoint.host.c_str(), (unsigned)L.endpoint.port,
-			L.section.c_str());
+			L.section.c_str(), (unsigned)coordGenAtPost);
 
 		LobbyRequest req{};
 		req.op        = LobbyOp::Create;
 		req.endpoint  = L.endpoint;
 		req.createReq = cr;
 		req.tag       = tag;
+		req.coordGen  = coordGenAtPost;
 		GetWorker().Post(std::move(req), L.section);
 	}
 	o.lastHeartbeatMs = 0;    // arm first heartbeat
@@ -364,10 +375,6 @@ void PostLobbyCreate(HostedGame& o) {
 	o.lobbyRegistrations.clear();
 }
 
-// Post a Delete for this offer to every lobby it was registered with,
-// then clear the local state.  Lobbies that never accepted a Create
-// (or whose Create response was lost) have no entry here and are
-// skipped — the lobby's 90 s TTL will garbage-collect them.
 void PostLobbyDelete(HostedGame& o) {
 	auto lobbies = AllEnabledHttpLobbies();
 
@@ -574,6 +581,18 @@ void StartCoordForHostedGame(HostedGame& o) {
 }
 
 void StopCoordForHostedGame(HostedGame& o) {
+	// Bump the coord generation BEFORE PostLobbyDelete so any Create
+	// requests that are still in flight when this teardown runs
+	// (their HTTP responses haven't landed yet) get invalidated when
+	// they eventually return.  Without this bump, a late Create
+	// response would register a session pointing at a torn-down
+	// port; the next StartCoord would post a fresh Create, the
+	// dedup-on-replace logic would Delete the old one, but in the
+	// gap the joiner could see the stale row in the lobby's session
+	// list and target the dead port.  Bumping invalidates the
+	// in-flight Create's gen so its response goes straight to
+	// orphan-Delete.
+	++o.coordGen;
 	PostLobbyDelete(o);
 	ATNetplayGlue::StopHost(o.id.c_str());
 	o.boundPort = 0;
@@ -620,6 +639,40 @@ bool JoinerInSession() {
 // -------------------------------------------------------------------
 // Public
 // -------------------------------------------------------------------
+
+// Public counterpart to the anon-namespace PostLobbyDelete that takes
+// an entire HostedGame.  Used by the lobby Create response handler
+// in ui_netplay.cpp to clean up a session that got displaced by a
+// later Create response (Enable/Disable/Enable race) — the displaced
+// session is no longer in any HostedGame's lobbyRegistrations, so
+// the standard PostLobbyDelete can't reach it.  Without this, the
+// orphan stays listed for the lobby's TTL window, advertising a UDP
+// port no coord listens on, and joiners that pick it up never reach
+// the live host.
+void PostLobbyDeleteForSession(const std::string& section,
+                               const std::string& sessionId,
+                               const std::string& token) {
+	if (section.empty() || sessionId.empty() || token.empty()) return;
+
+	for (const auto& L : AllEnabledHttpLobbies()) {
+		if (L.section != section) continue;
+		LobbyRequest req{};
+		req.op        = LobbyOp::Delete;
+		req.endpoint  = L.endpoint;
+		req.sessionId = sessionId;
+		req.token     = token;
+		GetWorker().Post(std::move(req), section);
+		g_ATLCNetplay("lobby: posted Delete for orphan session %s "
+			"(section \"%s\")", sessionId.c_str(), section.c_str());
+		return;
+	}
+	// Section was removed from lobby.ini between Create and the
+	// orphan-detection: nothing we can do; the lobby's TTL will
+	// eventually evict the session.
+	g_ATLCNetplay("lobby: cannot Delete orphan session %s — "
+		"section \"%s\" no longer in lobby.ini",
+		sessionId.c_str(), section.c_str());
+}
 
 void EnableHostedGame(const std::string& gameId) {
 	HostedGame* o = FindHostedGame(gameId);

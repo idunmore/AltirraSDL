@@ -147,6 +147,31 @@ void ATNetplayUI_Poll(uint64_t nowMs) {
 					ATNetplayUI::FindHostedGameByTag(r.tag);
 				if (!o) return;
 				if (r.ok) {
+					// Generation gate: if the offer's coordGen has
+					// advanced since the request was posted (the coord
+					// that originated this Create has been torn down +
+					// recreated), the just-created lobby session points
+					// at a UDP port no coord listens on.  Post a Delete
+					// to remove it from the lobby immediately and SKIP
+					// the local register step — otherwise a joiner that
+					// browsed the lobby in this window would pick the
+					// orphan, target the dead port, and fail to connect.
+					// Without this gate, the orphan would be visible for
+					// the lobby's TTL window (~90s).
+					if (r.coordGen != o->coordGen) {
+						g_ATLCNetplay("lobby Create OK for \"%s\" "
+							"is STALE (req gen=%u, current gen=%u) "
+							"— sessionId=%s scheduled for orphan Delete",
+							o->gameName.c_str(),
+							(unsigned)r.coordGen,
+							(unsigned)o->coordGen,
+							r.create.sessionId.c_str());
+						ATNetplayUI::PostLobbyDeleteForSession(
+							r.sourceLobby,
+							r.create.sessionId,
+							r.create.token);
+						return;
+					}
 					ATNetplayUI::HostedGame::LobbyRegistration reg;
 					reg.section   = r.sourceLobby;
 					reg.sessionId = r.create.sessionId;
@@ -156,8 +181,17 @@ void ATNetplayUI_Poll(uint64_t nowMs) {
 					bool replaced = false;
 					for (auto& e : o->lobbyRegistrations) {
 						if (e.section == reg.section) {
+							const std::string oldSection   = e.section;
+							const std::string oldSessionId = e.sessionId;
+							const std::string oldToken     = e.token;
+							const std::string newSessionId = reg.sessionId;
 							e = std::move(reg);
 							replaced = true;
+							if (!oldSessionId.empty() &&
+							    oldSessionId != newSessionId) {
+								ATNetplayUI::PostLobbyDeleteForSession(
+									oldSection, oldSessionId, oldToken);
+							}
 							break;
 						}
 					}
@@ -1038,17 +1072,21 @@ void ATNetplayUI_HostBootFailed(const char *gameId, const char *reason) {
 	ATNetplayUI::HostedGame* o = ATNetplayUI::FindHostedGame(gameId);
 	std::string name = o ? o->gameName : std::string("(offer)");
 	if (o) {
-		o->lastError = reason && *reason ? reason : "Host boot failed";
-		// Flip enabled off so ReconcileHostedGames doesn't immediately
-		// re-StartCoord and loop forever.  User must manually
-		// re-enable after fixing whatever's wrong (e.g. install
-		// firmware, adjust hardware mode).
-		o->enabled        = false;
+		o->lastError     = reason && *reason ? reason : "Host boot failed";
 		o->snapshotQueued = false;
 	}
-	// Tear down the coord so the joiner sees the connection drop
-	// instead of hanging in Handshaking / ReceivingSnapshot.
-	ATNetplayGlue::StopHost(gameId);
+	// DisableHostedGame is the canonical full-teardown path: it flips
+	// `enabled` off (preventing ReconcileHostedGames from immediately
+	// re-StartCoord-ing into a forever loop), posts a Delete to every
+	// lobby this offer is registered with, stops the coord, and saves
+	// to registry.  Calling ATNetplayGlue::StopHost directly here was
+	// a leak — without the lobby Delete, the failed session stayed
+	// listed; a subsequent Enable + retry would post a NEW lobby
+	// Create and the original entry would persist as a phantom
+	// "in play" / "waiting" row in the browser until its
+	// server-side liveness window expired (multiple minutes).  Two
+	// failed retries → three rows visible (the original symptom).
+	ATNetplayUI::DisableHostedGame(std::string(gameId));
 
 	char msg[256];
 	std::snprintf(msg, sizeof msg,
