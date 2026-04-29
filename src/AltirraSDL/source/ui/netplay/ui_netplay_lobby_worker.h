@@ -101,6 +101,15 @@ struct LobbyResult {
 	ATNetplay::LobbyStats                stats;     // Stats
 	std::string                          sourceLobby;  // section name
 
+	// op == List: round-trip wall-clock for the GET /v1/sessions
+	// request, in milliseconds.  0 if the call failed at the
+	// transport layer (server unreachable, timeout).  UI surfaces
+	// this in the Browser screen as "Lobby ping: XX ms" so users
+	// can judge whether relay would be acceptable from their
+	// network — a relayed session inherits at least this RTT to the
+	// lobby host.
+	uint32_t                             listLatencyMs = 0;
+
 	// v4 two-sided punch: hints delivered by the lobby on a Heartbeat
 	// response (pre-v4 servers always leave this empty).  The main
 	// thread hands each one to Coordinator::IngestPeerHint().

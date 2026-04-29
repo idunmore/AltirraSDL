@@ -2608,6 +2608,74 @@ void ATAnticEmulator::GetRegisterState(ATAnticRegisterState& state) const {
 	state.mNMIEN	= mNMIEN;
 }
 
+uint32 ATAnticEmulator::GetNetplayDeterminismFingerprint() const {
+	// FNV-1a 32 — same as POKEY's fingerprint and the netplay sim hash.
+	constexpr uint32 kFnvOff = 0x811C9DC5u;
+	constexpr uint32 kFnvP   = 0x01000193u;
+
+	auto fold8 = [](uint32 h, uint8 b) -> uint32 {
+		h ^= b;
+		h *= kFnvP;
+		return h;
+	};
+	auto fold32 = [&](uint32 h, uint32 v) -> uint32 {
+		for (int i = 0; i < 4; ++i)
+			h = fold8(h, (uint8)((v >> (i * 8)) & 0xFFu));
+		return h;
+	};
+
+	uint32 h = kFnvOff;
+
+	// Beam position within the current frame.  Both peers should be at
+	// the same scanline / column on every frame boundary.
+	h = fold32(h, mX);
+	h = fold32(h, mY);
+
+	// Frame anchor as a delta from the current scheduler tick — keeps
+	// the fingerprint stable across absolute-tick rebases.
+	const uint32 t32 = ATSCHEDULER_GETTIME(mpScheduler);
+	h = fold32(h, t32 - mRawFrameStart);
+
+	// Hardware regs reset by ColdReset (line 81-128 in this file).
+	// All of these are set to 0 / a deterministic value at cold reset
+	// and the OS rewrites them deterministically during boot, so they
+	// reliably match across peers from frame 0 onward.
+	h = fold8(h, mDMACTL);
+	h = fold8(h, mCHACTL);
+	h = fold8(h, mHSCROL);
+	h = fold8(h, mVSCROL);
+	h = fold8(h, mPMBASE);
+	h = fold8(h, mCHBASE);
+	h = fold8(h, mNMIEN);
+	h = fold8(h, mNMIST);
+
+	// Display list state — pointer + per-row decode.  mDLIST,
+	// mDLControl, and mRowCounter are all reset by ColdReset.
+	h = fold32(h, mDLIST);
+	h = fold8(h, mDLControl);
+	h = fold32(h, mRowCounter);
+
+	// NOTE: mRawFrame and mPresentedFrame are deliberately NOT folded
+	// in.  Both are diagnostic frame counters that WarmReset
+	// *increments* rather than resets (antic.cpp:155-156), so two
+	// peers with different pre-session activity (host opened the
+	// offer earlier than the joiner connected) carry forward
+	// different counts.  These counters do not affect emulation —
+	// they are read only by GetTimestamp() and the trace channels —
+	// so including them in the fingerprint produces a false-positive
+	// frame-0 desync.
+	//
+	// Similarly mRowCount is excluded: it is set by the display list
+	// mode-instruction decoder during the frame and ColdReset does
+	// not reset it, so it persists across the lockstep entry.  It is
+	// re-set to a deterministic value before being meaningfully read
+	// (mbDLActive is reset to false by ColdReset, gating mRowCount's
+	// use), but its persistent value otherwise differs between peers.
+
+	if (h == 0) h = 1;
+	return h;
+}
+
 void ATAnticEmulator::SetTraceContext(ATTraceContext *context) {
 	mpTraceContext = context;
 

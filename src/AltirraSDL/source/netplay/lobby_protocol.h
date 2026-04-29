@@ -74,6 +74,7 @@ inline constexpr int kMaxRequestBodyBytes = 8 * 1024;
 // -------------------------------------------------------------------
 inline constexpr const char *kPathHealthz         = "/healthz";
 inline constexpr const char *kPathStats           = "/v1/stats";
+inline constexpr const char *kPathMetrics         = "/v1/metrics";
 inline constexpr const char *kPathSessions        = "/v1/sessions";
 inline constexpr const char *kPathSession         = "/v1/session";
 // Dynamic ID suffix; the server pattern-matches on kPathSession + "/"
@@ -163,15 +164,41 @@ inline constexpr int    kPeerHintTtlMs         = 30 * 1000;
 inline constexpr size_t kPeerHintCap           = 8;
 
 // v4 UDP relay-fallback limits (server-side, applies on kReflectorPort).
-// After kRelayFallbackAfterMs of unsuccessful direct punch, each peer
-// sends a single 'ASGR' register packet to the reflector and switches
-// to wrapping its UDP traffic in 'ASDF' frames addressed to the server,
-// which forwards the inner bytes to the other side's observed
-// endpoint.  TTL is intentionally short so crashed peers don't keep
-// relay slots alive indefinitely.
-inline constexpr int kRelayFallbackAfterMs = 10000;
+// Two-stage trigger to keep the perceived join time short while still
+// giving honest direct-punch a fair shot:
+//   T+0           — both peers spray Hello probes at each other
+//   T+kPrearm     — both peers send one 'ASGR' to prime the relay table
+//                   (no payload yet — still trying direct).  Pre-arming
+//                   lets the T+kFallback switch be instant: no extra
+//                   round-trip for ASGR at fallback time.
+//   T+kFallback   — if no NetWelcome has arrived, wrap outbound traffic
+//                   in 'ASDF' frames addressed to the reflector port.
+//                   The server forwards the inner bytes to the other
+//                   peer's observed endpoint (looked up via the table
+//                   primed at T+kPrearm).
+// The fallback budget (6 s) covers the worst case of:
+//   ~1.5 s lobby heartbeat poll until the host learns of the joiner's
+//          peer-hint
+//   ~1 s for both peers to start probes
+//   ~3 s of probe overlap (12 probes at 250 ms intervals) — well past
+//          typical cone–cone NAT punch completion (~200–800 ms once
+//          both sides are blasting).
+// Symmetric-NAT users see the relay engage at T+6 s, not T+10 s, which
+// is the difference between "slow connect" and "stuck".
+// TTL is intentionally short so crashed peers don't keep relay slots
+// alive indefinitely.
+inline constexpr int kRelayPrearmAfterMs   = 3000;
+inline constexpr int kRelayFallbackAfterMs = 6000;
 inline constexpr int kRelayFailTimeoutMs   = 25000;
 inline constexpr int kRelayPeerIdleMs      = 30000;
+// Per-pair token bucket on the relay forward path.  Lockstep runs at
+// 60 Hz in each direction, so a healthy session forwards ~120 pps
+// through the server.  Cap each pair at 240 pps (2x headroom for
+// snapshot bursts and resync chunks); excess packets are silently
+// dropped and accounted to relayDroppedRateLimit.  Keeps a single
+// hostile/buggy peer from amplifying load on the Free-Tier box.
+inline constexpr int kRelayPeerPpsBurst    = 240;
+inline constexpr int kRelayPeerPpsRefill   = 240; // tokens added per second
 
 // Visibility values.
 inline constexpr const char *kVisibilityPublic  = "public";

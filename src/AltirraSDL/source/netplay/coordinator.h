@@ -270,9 +270,20 @@ public:
 	void IngestPeerHint(const uint8_t nonce16[kSessionNonceLen],
 	                    const char* candidatesSemicolonList);
 
+	// Connection mode for the UI.  Direct = UDP punch held; Relay =
+	// packets routed through the lobby reflector after fallback.
+	// The full enum lives in the private section near other v4
+	// relay state — duplicated here as a public alias so the UI can
+	// take the dependency without including any private types.
+	enum class PeerPath : uint8_t { Direct, Relay };
+
 	// True once relay fallback has taken over the UDP path for this
 	// session.  UI can surface a "Relay active" badge after this flips.
 	bool IsRelayActive() const { return mPeerPath == PeerPath::Relay; }
+
+	// Edge-detected by ATNetplayUI_Poll to fire the connection-quality
+	// toast and update the in-session HUD pip.  Const, lock-free.
+	PeerPath GetPeerPath() const noexcept { return mPeerPath; }
 
 	// Copy out our own per-attempt sessionNonce (16 bytes) so the UI
 	// can include it in the peer-hint POST before BeginJoinMulti.
@@ -539,7 +550,7 @@ private:
 
 	// v4 two-sided punch + relay fallback state ---------------------
 
-	enum class PeerPath : uint8_t { Direct, Relay };
+	// (PeerPath enum is declared in the public section above.)
 	PeerPath mPeerPath = PeerPath::Direct;
 
 	bool    mHasRelaySessionId = false;
@@ -577,8 +588,26 @@ private:
 	static constexpr int      kPunchBurstInitialCount = 5;
 	static constexpr uint64_t kPunchSustainIntervalMs = 500;
 	static constexpr uint64_t kPunchSustainDurationMs = 4000;
-	static constexpr uint64_t kRelayFallbackAfterMs   = 10000;
+	// Two-stage relay-fallback timer (kept in sync with the canonical
+	// definitions in lobby_protocol.h):
+	//   T+kRelayPrearmAfterMs   — send one ASGR to prime the lobby
+	//                             RelayTable while still spraying direct
+	//                             probes.  No peer-path change.
+	//   T+kRelayFallbackAfterMs — declare punch lost; flip mPeerPath to
+	//                             Relay and start sending ASDF frames.
+	// The pre-arm avoids paying an extra round-trip for ASGR at fallback
+	// time — the table is already populated, so the first ASDF lands
+	// immediately.  See lobby_protocol.h for the full rationale.
+	static constexpr uint64_t kRelayPrearmAfterMs     = 3000;
+	static constexpr uint64_t kRelayFallbackAfterMs   = 6000;
 	static constexpr uint64_t kRelayFailTimeoutMs     = 25000;
+	// Mid-session resilience: if a peer goes silent during Lockstepping
+	// while we're still on a Direct path, the next router reboot or
+	// transient NAT eviction will kill the session.  Re-arming the relay
+	// (one extra ASGR + flip to Relay) at this threshold keeps the
+	// session alive: the RelayTable's 30 s idle window covers a typical
+	// connectivity hiccup.  Triggers ONLY in Lockstepping.
+	static constexpr uint64_t kMidSessionRelayRescueAfterMs = 5000;
 
 	// Diagnostics: per-candidate inbound counters populated by Poll()
 	// when drained packets are from one of our candidates (joiner
@@ -612,10 +641,22 @@ private:
 	// sustain window.  Called from Poll().
 	void PumpPunchProbes(uint64_t nowMs);
 
-	// Auto-relay fallback evaluator — called from Poll() while in
-	// Handshaking/WaitingForJoiner.  Flips mPeerPath to Relay and
-	// fires the register + a first wrapped Hello via lobby.
+	// Two-stage relay fallback evaluator — called from Poll().
+	//
+	// MaybePrearmRelay: at T+kRelayPrearmAfterMs in Handshaking/
+	//   WaitingForJoiner, send one ASGR so the lobby's RelayTable has
+	//   our endpoint primed.  Does NOT change mPeerPath — direct
+	//   probes continue.  Idempotent (mRelayRegistered guard).
+	// MaybeEngageRelay: at T+kRelayFallbackAfterMs, flip mPeerPath to
+	//   Relay and fire the first wrapped Hello via lobby.  Calls
+	//   SendRelayRegister defensively in case prearm was skipped.
+	// MaybeRescueRelayMidSession: in Lockstepping, if mPeerPath==Direct
+	//   and the peer has been silent past kMidSessionRelayRescueAfterMs,
+	//   re-arm relay so the session survives a transient direct-path
+	//   outage (router reboot, NAT eviction).
+	void MaybePrearmRelay(uint64_t nowMs);
 	void MaybeEngageRelay(uint64_t nowMs);
+	void MaybeRescueRelayMidSession(uint64_t nowMs);
 
 	// Diagnostics.
 	const char* mLastError = "";

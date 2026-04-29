@@ -225,6 +225,17 @@ public:
 
 	void	GetRegisterState(ATPokeyRegisterState& state) const;
 
+	// Returns a 32-bit fingerprint of POKEY's emulation-relevant
+	// internal state — poly counters, 15/64 kHz clock phase, timer
+	// counters & borrows, AUDF/AUDC/AUDCTL, IRQ regs, SKCTL/SKSTAT,
+	// serial in/out shift state, pot scan progress.  Tick-domain
+	// fields are folded as deltas against the current scheduler tick
+	// so the fingerprint is stable regardless of absolute scheduler
+	// alignment.  Used by netplay to detect divergence in subsystem
+	// state on the same frame it occurs, instead of waiting for it
+	// to leak into RAM (which can take 20-30 frames during boot).
+	uint32	GetNetplayDeterminismFingerprint() const;
+
 	void	FlushAudio(bool pushAudio, uint64 timestamp);
 
 	void	SetTraceOutput(IATPokeyTraceOutput *output);

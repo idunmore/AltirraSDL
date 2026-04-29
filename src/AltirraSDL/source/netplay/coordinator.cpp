@@ -550,9 +550,13 @@ void Coordinator::Poll(uint64_t nowMs) {
 		}
 	}
 
-	// v4: drive punch probes and relay fallback.
+	// v4: drive punch probes and relay fallback (two-stage:
+	// pre-arm at T+kRelayPrearmAfterMs then engage at
+	// T+kRelayFallbackAfterMs; mid-session rescue is independent).
 	PumpPunchProbes(nowMs);
+	MaybePrearmRelay(nowMs);
 	MaybeEngageRelay(nowMs);
+	MaybeRescueRelayMidSession(nowMs);
 
 	// Outgoing pumps.  Snapshot sender is shared between the session-
 	// start upload (Phase::SendingSnapshot) and the mid-session resync
@@ -1730,6 +1734,35 @@ void Coordinator::SendRelayRegister() {
 		mRole == Role::Host ? "host" : "joiner");
 }
 
+void Coordinator::MaybePrearmRelay(uint64_t nowMs) {
+	// Phase 1 of the two-stage fallback: send one ASGR so the lobby
+	// has our endpoint primed before the data path actually flips to
+	// relay.  Idempotent — SendRelayRegister no-ops when already
+	// registered.  Does NOT change mPeerPath; direct probing
+	// continues normally.
+	if (mRelayRegistered) return;
+	if (mPeerPath == PeerPath::Relay) return;
+	if (!mHasRelaySessionId || !mLobbyRelayKnown) return;
+	if (mPhaseStartMs == 0) return;
+	if (nowMs - mPhaseStartMs < kRelayPrearmAfterMs) return;
+
+	if (mRole == Role::Joiner && mPhase == Phase::Handshaking) {
+		SendRelayRegister();
+		g_ATLCNetplay("joiner: relay pre-armed at T+%llu ms (still trying direct)",
+			(unsigned long long)(nowMs - mPhaseStartMs));
+		return;
+	}
+	if (mRole == Role::Host && mPhase == Phase::WaitingForJoiner) {
+		// Pre-arm only after a hint has actually arrived — without
+		// one the joiner doesn't know our endpoint either, so the
+		// table entry would be unused.
+		if (!mHostHasSeenHint) return;
+		SendRelayRegister();
+		g_ATLCNetplay("host: relay pre-armed at T+%llu ms (still trying direct)",
+			(unsigned long long)(nowMs - mPhaseStartMs));
+	}
+}
+
 void Coordinator::MaybeEngageRelay(uint64_t nowMs) {
 	if (mPeerPath == PeerPath::Relay) return;
 	if (!mHasRelaySessionId || !mLobbyRelayKnown) return;
@@ -1738,8 +1771,10 @@ void Coordinator::MaybeEngageRelay(uint64_t nowMs) {
 	if (mRole == Role::Joiner && mPhase == Phase::Handshaking) {
 		if (mPhaseStartMs == 0) return;
 		if (nowMs - mPhaseStartMs < kRelayFallbackAfterMs) return;
-		SendRelayRegister();
+		SendRelayRegister();   // idempotent if pre-arm already fired
 		mPeerPath = PeerPath::Relay;
+		g_ATLCNetplay("joiner: punch failed, switching to relay at T+%llu ms",
+			(unsigned long long)(nowMs - mPhaseStartMs));
 		// Fire a wrapped Hello through the lobby so the joiner's
 		// spray immediately reaches the host once the host also
 		// registers.  Subsequent retransmits follow the same path
@@ -1759,9 +1794,38 @@ void Coordinator::MaybeEngageRelay(uint64_t nowMs) {
 		if (mPhaseStartMs == 0) return;
 		if (nowMs - mPhaseStartMs < kRelayFallbackAfterMs) return;
 		if (!mHostHasSeenHint) return;  // no joiner known yet
-		SendRelayRegister();
+		SendRelayRegister();   // idempotent if pre-arm already fired
 		mPeerPath = PeerPath::Relay;
+		g_ATLCNetplay("host: punch failed, switching to relay at T+%llu ms",
+			(unsigned long long)(nowMs - mPhaseStartMs));
 	}
+}
+
+void Coordinator::MaybeRescueRelayMidSession(uint64_t nowMs) {
+	// Mid-session resilience: a router reboot, a transient NAT
+	// eviction, or a brief WAN outage can stall a Direct path during
+	// Lockstepping.  Today such an outage just freezes the session
+	// until the 10-minute peer-silence backstop fires.  Re-arming the
+	// relay (one extra ASGR + flip to Relay) keeps the session alive
+	// because the lobby's RelayTable has a 30 s idle window — long
+	// enough to cover typical hiccups but short enough that crashed
+	// peers don't keep slots forever.
+	if (mPhase != Phase::Lockstepping) return;
+	if (mPeerPath == PeerPath::Relay) return;
+	if (!mHasRelaySessionId || !mLobbyRelayKnown) return;
+
+	// Use the lockstep peer-age (last received peer packet) as the
+	// silence signal — same source the HUD uses for the "(500 ms old)"
+	// indicator.  PeerTimedOut returns true once the lockstep loop's
+	// peer-input gate has been quiet for the threshold.
+	if (!mLoop.PeerTimedOut(nowMs, kMidSessionRelayRescueAfterMs))
+		return;
+
+	SendRelayRegister();
+	mPeerPath = PeerPath::Relay;
+	g_ATLCNetplay("%s: peer silent %llu ms in Lockstepping — re-arming relay",
+		mRole == Role::Host ? "host" : "joiner",
+		(unsigned long long)kMidSessionRelayRescueAfterMs);
 }
 
 void Coordinator::BumpCandidateRx(const Endpoint& from, bool isReject) {

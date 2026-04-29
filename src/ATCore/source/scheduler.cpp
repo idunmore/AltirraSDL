@@ -218,6 +218,41 @@ void ATScheduler::UpdateTick64() {
 	mTick64Floor = GetTick64();
 }
 
+void ATScheduler::RebaseTick64(uint64 newTick) {
+	const uint64 oldTick64 = GetTick64();
+	if (oldTick64 == newTick)
+		return;
+
+	// Shift mTimeBase so ATSCHEDULER_GETTIME (= mTimeBase + mNextEventCounter,
+	// 32-bit wrap) moves from the old 32-bit tick to the new.  mNextEventCounter
+	// is left alone so the "ticks until next event" budget is preserved — events
+	// still fire after the same number of cycles, just measured against a new
+	// absolute clock.
+	const uint32 oldTick32 = mTimeBase + mNextEventCounter;
+	const uint32 deltaLow  = (uint32)newTick - oldTick32;
+	mTimeBase += deltaLow;
+
+	// Re-anchor mTick64Floor to the new 64-bit value.  GetTick64() compares the
+	// low-32 of mTick64Floor against the live 32-bit tick to detect wrap; setting
+	// floor = newTick keeps that comparison meaningful.
+	mTick64Floor = newTick;
+
+	// Shift every active event's absolute deadline by the same delta so the
+	// relative time-to-fire (mNextTime - (mTimeBase + mNextEventCounter)) is
+	// unchanged: both sides moved by deltaLow.
+	for (ATEventLink *node = mActiveEvents.mpNext;
+	     node != &mActiveEvents;
+	     node = node->mpNext)
+	{
+		ATEvent *ev = static_cast<ATEvent *>(node);
+		ev->mNextTime += deltaLow;
+	}
+
+	// Same for the stop time, if active.
+	if (mbStopTimeValid)
+		mStopTime += deltaLow;
+}
+
 uint32 ATScheduler::GetTicksToNextEvent() const {
 	return uint32(0) - mNextEventCounter;
 }

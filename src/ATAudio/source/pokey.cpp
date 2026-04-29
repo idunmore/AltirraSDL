@@ -3290,6 +3290,93 @@ void ATPokeyEmulator::GetRegisterState(ATPokeyRegisterState& state) const {
 	state = mState;
 }
 
+uint32 ATPokeyEmulator::GetNetplayDeterminismFingerprint() const {
+	// FNV-1a 32 — same family used by netplay_simhash.cpp so the
+	// folded result composes cleanly into the master sim hash.
+	constexpr uint32 kFnvOff = 0x811C9DC5u;
+	constexpr uint32 kFnvP   = 0x01000193u;
+
+	auto fold8 = [](uint32 h, uint8 b) -> uint32 {
+		h ^= b;
+		h *= kFnvP;
+		return h;
+	};
+	auto fold32 = [&](uint32 h, uint32 v) -> uint32 {
+		for (int i = 0; i < 4; ++i)
+			h = fold8(h, (uint8)((v >> (i * 8)) & 0xFFu));
+		return h;
+	};
+
+	uint32 h = kFnvOff;
+
+	// Poly LFSR positions, advanced to the current tick.  We
+	// intentionally compute the live counter values without mutating
+	// state — the savestate code does the same thing
+	// (pokey.cpp:3066-3068).
+	const uint32 t32 = ATSCHEDULER_GETTIME(mpScheduler);
+	const uint32 polyDelta = t32 - mLastPolyTime;
+	h = fold32(h, (mPoly9Counter  + polyDelta) % 511);
+	h = fold32(h, (mPoly17Counter + polyDelta) % 131071);
+
+	// 15 kHz / 64 kHz clock phase, expressed as cycles since the
+	// most recent slow-clock tick.  Both values are < their period
+	// (114 / 28) by construction, so this captures phase deterministically.
+	h = fold32(h, t32 - mLast15KHzTime);
+	h = fold32(h, t32 - mLast64KHzTime);
+
+	// NOTE: mPolyShutOffTime is deliberately NOT folded in.  ColdReset
+	// does not reset it (it's only updated when SKCTL transitions out
+	// of poly init mode, pokey.cpp:2860), so two peers with different
+	// pre-session SKCTL activity carry forward different absolute-tick
+	// values across the lockstep-entry rebase.  The field affects
+	// only the RANDOM register's force-mask in init mode (offset > 10
+	// branch returns 0xFF regardless), so divergence in this field
+	// has no observable emulation effect during boot.
+
+	// Timer counters & borrows.  Stored as int but the value range is
+	// non-negative; cast safely to uint32 for the fold.
+	for (int i = 0; i < 4; ++i) {
+		h = fold32(h, (uint32)mCounter[i]);
+		h = fold32(h, (uint32)mCounterBorrow[i]);
+	}
+
+	// Audio control regs.
+	for (int i = 0; i < 4; ++i) {
+		h = fold8(h, mAUDF[i]);
+		h = fold8(h, mAUDC[i]);
+	}
+	h = fold8(h, mAUDCTL);
+
+	// IRQ + serial / keyboard ctrl/status regs.
+	h = fold8(h, mIRQEN);
+	h = fold8(h, mIRQST);
+	h = fold8(h, mSKCTL);
+	h = fold8(h, mSKSTAT);
+
+	// Serial in/out shift state — transient but determinism-relevant.
+	h = fold8(h, mSerialInputShiftRegister);
+	h = fold8(h, mSerialOutputShiftRegister);
+	h = fold8(h, mSerialInputCounter);
+	h = fold8(h, mSerialOutputCounter);
+	h = fold8(h, mbSerOutValid          ? 1 : 0);
+	h = fold8(h, mbSerShiftValid        ? 1 : 0);
+	h = fold8(h, mbSerialWaitingForStartBit ? 1 : 0);
+	h = fold8(h, mbSerInDeferredLoad    ? 1 : 0);
+
+	// Pot scan progress.
+	h = fold8(h, mPotMasterCounter);
+	h = fold8(h, mbPotScanActive ? 1 : 0);
+
+	// Recurse into the slave POKEY (stereo configurations) so its
+	// state contributes too.  Avoid infinite recursion: a slave POKEY
+	// has mpSlave == nullptr and mbIsSlave == true.
+	if (mpSlave && !mbIsSlave)
+		h = fold32(h, mpSlave->GetNetplayDeterminismFingerprint());
+
+	if (h == 0) h = 1;
+	return h;
+}
+
 void ATPokeyEmulator::DumpStatus(ATConsoleOutput& out, bool isSlave) {
 	uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
 

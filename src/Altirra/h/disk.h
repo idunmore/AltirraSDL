@@ -98,6 +98,16 @@ public:
 	void SaveState(IATObjectState **pp) const;
 	void LoadState(const IATObjectState& state);
 
+	// Returns a 32-bit fingerprint of the disk emulator's
+	// emulation-relevant internal state — current rotational counter
+	// (incl. delta from last update), active SIO command + state,
+	// FDC status, current track.  Returns 0 when the drive is
+	// disabled.  Folded into the netplay per-frame simulator-state
+	// hash so .atr-driven SIO-timing divergence (the root cause we
+	// last debugged for World Karate desync at frame 29) shows up at
+	// frame 1 instead of waiting for it to leak into RAM.
+	uint32 GetNetplayDeterminismFingerprint() const;
+
 public:
 	void OnScheduledEvent(uint32 id) override;
 

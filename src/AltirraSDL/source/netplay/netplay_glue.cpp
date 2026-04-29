@@ -14,7 +14,9 @@
 
 #include "simulator.h"
 #include "cpu.h"
+#include "gtia.h"
 #include <at/atcore/logging.h>
+#include <at/atcore/scheduler.h>
 
 extern ATLogChannel g_ATLCNetplay;
 extern ATSimulator g_sim;
@@ -249,6 +251,75 @@ void Poll(uint64_t nowMs) {
 	// is belt-and-braces and cheap (Resume is idempotent).
 	const bool lock = IsLockstepping();
 	if (lock && !ATNetplayInput::IsActive()) {
+		// Align both peers' absolute scheduler tick BEFORE re-anchoring
+		// subsystem state.  Each peer's mScheduler.GetTick64() reflects
+		// the total cycles it has ticked since process launch, so two
+		// peers entering lockstep typically differ by tens of seconds
+		// (whichever side opened the offer has been ticking longer than
+		// the joiner).  POKEY's 15/64 kHz clock phase, mLastPolyTime,
+		// mPolyShutOffTime, ANTIC's mRawFrameStart, and the disk
+		// drive's mLastRotationUpdateCycle are anchored to GetTick64()
+		// at cold-reset; without alignment, those fields land in two
+		// different time domains on the two peers and POKEY serial /
+		// disk SIO byte arrival timing silently drifts.  Empirically:
+		// frame 0 simhash matches (CPU + RAM are bit-identical from
+		// the symmetric cold-boot), then by frame ~29 the OS boot
+		// trajectory has diverged enough to flag a desync (observed
+		// 2026-04-28 with World Karate Championship .atr).
+		//
+		// The fix is two steps that must run together:
+		//   (1) RebaseTick64 on both schedulers so GetTick64() returns
+		//       a known constant on both peers.  Active scheduled
+		//       events are shifted by the same delta so their relative
+		//       fire times are preserved.
+		//   (2) ColdReset so every subsystem re-runs its own ColdReset
+		//       and re-anchors its absolute-tick fields against the
+		//       freshly-rebased clock.  ColdReset is deterministic
+		//       under the locked random seed (set earlier in
+		//       ATNetplayProfile::BeginSession), so both peers'
+		//       freshly-cold-reset state is bit-identical.
+		//
+		// .xex never exercised this bug because the HLE program loader
+		// bypasses POKEY serial / disk SIO entirely.  .atr (which
+		// boots through real OS SIO traffic) is where the divergence
+		// surfaces.
+		constexpr uint64_t kLockedSchedulerTick = 0x10000;  // 64 K cycles ≈ 36 ms
+		if (auto *sch = g_sim.GetScheduler())
+			sch->RebaseTick64(kLockedSchedulerTick);
+		if (auto *sch = g_sim.GetSlowScheduler())
+			sch->RebaseTick64(kLockedSchedulerTick);
+		g_sim.ColdReset();
+		g_ATLCNetplay(
+			"lockstep entry: rebased schedulers to 0x%llx + ColdReset "
+			"(re-anchored subsystem absolute-tick fields)",
+			(unsigned long long)kLockedSchedulerTick);
+
+		// Inhibit GTIA's wall-clock frame-drop logic for the duration
+		// of the netplay session.  Without this, GTIA can drop a frame
+		// on one peer (when its display present-queue is lagged from
+		// pre-session activity) while the other peer keeps it, and the
+		// lockstep counter — gated on IsFramePending() — falls one emu
+		// frame behind on the dropping peer.  schedTick mismatch +
+		// CPU/POKEY divergence at frame 0 even though both peers ran
+		// the same emu code (observed 2026-04-28 in same-machine
+		// two-instance test, with host's lag counter accumulated from
+		// pre-session UI activity).
+		g_sim.GetGTIA().SetFrameDropInhibited(true);
+
+		// Drop any in-flight render frame and any frame still queued
+		// at the display.  ColdReset() above resets registers / palette
+		// tables but does NOT touch GTIA's mpFrame / mpDst / display
+		// queue — so a peer carrying a partially-rendered frame from
+		// pre-session activity completes that carry-over frame quickly
+		// after Resume, IsFramePending() flips early, and the lockstep
+		// frame-0 simhash is captured one full PAL frame ahead of a
+		// peer that started with no carry-over.  Symptom: schedTick
+		// differs by exactly 35568 cycles (= 312 × 114, one PAL frame)
+		// at frame 0 with RAM and ANTIC bit-identical, observed
+		// 2026-04-29 on the same-machine two-instance test after the
+		// SetFrameDropInhibited fix landed.
+		g_sim.GetGTIA().DiscardInFlightFrame();
+
 		if (g_sim.IsPaused()) {
 			g_ATLCNetplay("lockstep entry: sim was paused, resuming");
 			g_sim.Resume();
@@ -328,6 +399,8 @@ void Poll(uint64_t nowMs) {
 	} else if (!lock && ATNetplayInput::IsActive()) {
 		ATNetplayInput::EndSession();
 		g_ATLCNetplay("input: EndSession");
+		// Restore GTIA's normal wall-clock frame-drop behaviour.
+		g_sim.GetGTIA().SetFrameDropInhibited(false);
 	}
 
 	// Post-resync resume: the sim was paused inside DriveResyncIO() so
@@ -820,6 +893,32 @@ bool IsResyncing(uint32_t* outReceived, uint32_t* outExpected,
 	if (collect(g_joiner.get())) return true;
 	for (auto& s : g_hosts) if (collect(s.coord.get())) return true;
 	return false;
+}
+
+// Translate the coordinator's binary PeerPath into the glue's
+// 3-valued enum (None | Direct | Relay).  Caller has already
+// checked that `c` exists.
+static PeerPath ToGluePeerPath(const ATNetplay::Coordinator& c) {
+	return c.GetPeerPath() == ATNetplay::Coordinator::PeerPath::Relay
+		? PeerPath::Relay
+		: PeerPath::Direct;
+}
+
+PeerPath JoinerPeerPath() {
+	if (!g_joiner) return PeerPath::None;
+	return ToGluePeerPath(*g_joiner);
+}
+
+PeerPath HostPeerPath(const char* gameId) {
+	HostSlot* h = FindHost(gameId);
+	if (!h || !h->coord) return PeerPath::None;
+	return ToGluePeerPath(*h->coord);
+}
+
+PeerPath ActivePeerPath() {
+	ATNetplay::Coordinator *c = ActiveLockstep();
+	if (!c) return PeerPath::None;
+	return ToGluePeerPath(*c);
 }
 
 uint64_t MsSinceLastPeerPacket(uint64_t nowMs) {

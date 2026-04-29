@@ -55,6 +55,21 @@ enum class Phase : uint8_t {
 	Resyncing,
 };
 
+// PeerPath mirror of ATNetplay::Coordinator::PeerPath.  Surfaced to the
+// UI so the connecting screen and in-session HUD can show whether the
+// session is on the direct UDP path or has fallen back to relay
+// (higher latency, slightly less bandwidth headroom).
+//   None    — no coordinator exists / not yet relevant
+//   Direct  — UDP punch holds; both peers are talking peer-to-peer
+//   Relay   — packets are routed through the lobby reflector
+// Edge transitions are detected by ATNetplayUI_Poll to fire toasts
+// and update the persistent connection-mode pip in the in-session HUD.
+enum class PeerPath : uint8_t {
+	None = 0,
+	Direct,
+	Relay,
+};
+
 // True iff any coordinator (host or joiner) is in a non-terminal phase.
 bool IsActive();
 
@@ -228,6 +243,21 @@ bool IsDesynced(int64_t* outFrame);
 // no coordinator is lockstepping or no packet has arrived yet.
 uint64_t MsSinceLastPeerPacket(uint64_t nowMs);
 
+// Connection mode for the joiner coordinator (Direct vs Relay).
+// Returns PeerPath::None when no joiner exists.  Read in the
+// connecting screen (RenderWaiting) and the in-session HUD (HUD pip).
+PeerPath JoinerPeerPath();
+
+// Connection mode for the host offer identified by `gameId`
+// (PeerPath::None when no such offer exists).
+PeerPath HostPeerPath(const char* gameId);
+
+// Active-coordinator convenience: returns the PeerPath of whichever
+// coordinator is currently lockstepping (host or joiner) so the
+// in-session HUD has a single source of truth without caring which
+// side the local user is on.  PeerPath::None when none is locksteping.
+PeerPath ActivePeerPath();
+
 // True iff any coordinator is currently running a mid-session state
 // transfer (Phase::Resyncing).  When this returns true, the HUD
 // should render a "Resynchronizing…" overlay and swallow user input
@@ -336,6 +366,10 @@ namespace ATNetplayGlue {
     inline uint32_t CurrentFrame()                  { return 0; }
     inline uint32_t CurrentInputDelay()             { return 0; }
     inline uint64_t MsSinceLastPeerPacket(uint64_t) { return UINT64_MAX / 2; }
+    enum class PeerPath : uint8_t { None = 0, Direct, Relay };
+    inline PeerPath JoinerPeerPath()                { return PeerPath::None; }
+    inline PeerPath HostPeerPath(const char*)       { return PeerPath::None; }
+    inline PeerPath ActivePeerPath()                { return PeerPath::None; }
     inline const char* LockstepOfferId()            { return ""; }
     using SessionEndCleanupFn = void(*)();
     inline void SetSessionEndCleanupHook(SessionEndCleanupFn) {}

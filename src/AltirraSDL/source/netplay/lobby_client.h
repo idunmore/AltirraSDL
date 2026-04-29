@@ -137,6 +137,12 @@ public:
 	// never called).  Used by the UI to distinguish rate-limit 429,
 	// auth 401/403, server 5xx etc. for friendly error text.
 	int         LastStatus() const { return mLastStatus; }
+	// Wall-clock elapsed for the most recent List() call, in
+	// milliseconds (0 if never called or the call failed at the
+	// transport layer).  Surfaced in the Browser screen as a
+	// "Lobby ping" indicator; relayed sessions go through the same
+	// host so this is also a lower bound on relayed RTT.
+	uint32_t    LastListLatencyMs() const { return mLastListLatencyMs; }
 
 	// Returns true on HTTP 201.  On failure, LastError() holds the reason.
 	bool Create(const LobbyCreateRequest& req, LobbyCreateResponse& out);
@@ -190,6 +196,7 @@ private:
 	LobbyEndpoint mEp;
 	std::string   mLastError;
 	int           mLastStatus = 0;
+	uint32_t      mLastListLatencyMs = 0;
 };
 
 } // namespace ATNetplay

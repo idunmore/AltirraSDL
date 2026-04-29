@@ -269,6 +269,60 @@ void RenderBrowser() {
 		ImGui::PopStyleColor();
 	}
 
+	// Lobby ping indicator — renders inline after the status text.
+	// Helps users gauge whether relay would be acceptable from their
+	// current network: a relayed session inherits at least the lobby
+	// RTT, so 200 ms means at minimum 200 ms peer-to-peer.
+	//
+	// Thresholds: <=80 ms green / 81-150 amber / 151-300 amber-warn /
+	// >300 red / no sample yet gray.  Pip + colour map to the same
+	// StatusColorGood/Warn/Bad palette used in the in-session HUD so
+	// the visual language is consistent across screens.
+	{
+		ImGui::SameLine(0, Dp(16));
+		ImGui::AlignTextToFramePadding();
+		const uint32_t lat = br.lobbyLatencyMs;
+		const int      n   = br.lobbyLatencySampleCount;
+		ImVec4 pipCol;
+		const char* label = nullptr;
+		char buf[48];
+		if (n == 0) {
+			pipCol = ImVec4(0.55f, 0.58f, 0.65f, 1.0f);
+			label = "Lobby: pinging…";
+		} else if (lat <= 80) {
+			pipCol = ImVec4(0.40f, 0.92f, 0.45f, 1.0f);
+			std::snprintf(buf, sizeof buf, "Lobby: %u ms", (unsigned)lat);
+			label = buf;
+		} else if (lat <= 150) {
+			pipCol = ImVec4(0.95f, 0.85f, 0.40f, 1.0f);
+			std::snprintf(buf, sizeof buf, "Lobby: %u ms", (unsigned)lat);
+			label = buf;
+		} else if (lat <= 300) {
+			pipCol = ImVec4(1.00f, 0.78f, 0.30f, 1.0f);
+			std::snprintf(buf, sizeof buf, "Lobby: %u ms (relay slow)",
+				(unsigned)lat);
+			label = buf;
+		} else {
+			pipCol = ImVec4(1.00f, 0.42f, 0.42f, 1.0f);
+			std::snprintf(buf, sizeof buf, "Lobby: %u ms (relay poor)",
+				(unsigned)lat);
+			label = buf;
+		}
+		ImGui::PushStyleColor(ImGuiCol_Text, pipCol);
+		ImGui::TextUnformatted("\xe2\x97\x8f");  // U+25CF BLACK CIRCLE
+		ImGui::PopStyleColor();
+		ImGui::SameLine(0, Dp(4));
+		ImGui::PushStyleColor(ImGuiCol_Text, ATMobileCol(p.textMuted));
+		ImGui::TextUnformatted(label);
+		ImGui::PopStyleColor();
+		if (ImGui::IsItemHovered()) {
+			ImGui::SetTooltip(
+				"Round-trip time to the lobby server.\n"
+				"Relay sessions go through the same host, so this is "
+				"the floor of relayed peer-to-peer latency.");
+		}
+	}
+
 	ImGui::Spacing();
 	ImGui::Separator();
 	ImGui::Spacing();
@@ -781,6 +835,26 @@ void RenderWaiting() {
 		std::snprintf(waitText, sizeof waitText,
 			"(%llus waiting)", (unsigned long long)wait);
 		ATTouchMutedText(waitText);
+	}
+
+	// Connection-mode hint.  Once direct punch has been declared lost
+	// and the joiner has engaged relay (PeerPath::Relay), surface
+	// that explicitly so the user understands the slight latency
+	// bump they'll see in-session.  Phrased as informational, not
+	// a failure — relay IS the working connection.
+	if (!joinFailed
+	    && ATNetplayGlue::JoinerPeerPath() == ATNetplayGlue::PeerPath::Relay) {
+		ImGui::Spacing();
+		const ATMobilePalette &p = ATMobileGetPalette();
+		ImGui::PushStyleColor(ImGuiCol_Text,
+			ImVec4(1.00f, 0.78f, 0.30f, 1.0f));   // amber pip
+		ImGui::TextUnformatted("\xe2\x97\x8f");
+		ImGui::PopStyleColor();
+		ImGui::SameLine(0, Dp(6));
+		ImGui::PushStyleColor(ImGuiCol_Text, ATMobileCol(p.textMuted));
+		ImGui::TextUnformatted(
+			"Direct connection unavailable — using relay.");
+		ImGui::PopStyleColor();
 	}
 
 	ImGui::Spacing();

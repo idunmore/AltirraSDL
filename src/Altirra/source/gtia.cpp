@@ -815,6 +815,37 @@ void ATGTIAEmulator::ColdReset() {
 	mpRenderer->ColdReset();
 }
 
+void ATGTIAEmulator::DiscardInFlightFrame() {
+	// Drop any partially-rendered frame and the destination cursor.
+	// SetVBXE() does the same dance when reconfiguring the renderer;
+	// we expose it here as a public netplay-entry primitive.
+	mpDst = nullptr;
+	mpFrame = nullptr;
+	mbWaitingForFrame = false;
+
+	// Reset display-lag accounting so the wall-clock drop heuristic
+	// (when not inhibited) doesn't fire spuriously on the first frame
+	// after re-entry due to stale lag accumulated before the gap.
+	mDisplayLagCounter = 0;
+
+	// Clear the raw-frame view used by video taps / artifacting feed.
+	mRawFrame.data = nullptr;
+
+	// Drop the recycled "this frame was dropped, reuse it next time"
+	// slot too — otherwise the next BeginFrame's drop path can grab
+	// it and skip allocating a fresh buffer.
+	mpDroppedFrame = nullptr;
+
+	// Flush any frame already queued at the display (PostBuffer'd but
+	// not yet consumed by Present) so IsFramePending() is false for
+	// both peers at re-entry.  The lockstep frame counter is gated on
+	// IsFramePending(); a stale queued frame on one peer would let it
+	// declare "frame done" on the very next iteration while the peer
+	// without one runs a full frame to its first Post.
+	if (mpDisplay)
+		mpDisplay->FlushBuffers();
+}
+
 void ATGTIAEmulator::SetVBXE(ATVBXEEmulator *vbxe) {
 	if (mpVBXE)
 		mpVBXE->SetDefaultPalette(nullptr, nullptr);
@@ -1853,17 +1884,24 @@ bool ATGTIAEmulator::BeginFrame(uint32 frameNumber, uint32 y, bool force, bool d
 	// a frame even if we aren't displaying it
 	const bool alwaysNeedFrame = !mVideoTaps.IsEmpty();
 
-	// grab a frame if we are not being asked to drop it
-	if (mpDisplay->GetVSyncStatus().mPresentQueueTime > g_ATCVDisplayDropLagThreshold) {
-		++mDisplayLagCounter;
+	// grab a frame if we are not being asked to drop it.  Skip the
+	// wall-clock-based lag check entirely when frame-drop is
+	// inhibited (netplay): real-time presentation jitter must not
+	// influence emulation frame production, or one peer can drop a
+	// frame the other peer keeps and they end up permanently one
+	// emu frame apart in the lockstep counter.
+	if (!mbFrameDropInhibited) {
+		if (mpDisplay->GetVSyncStatus().mPresentQueueTime > g_ATCVDisplayDropLagThreshold) {
+			++mDisplayLagCounter;
 
-		if (mDisplayLagCounter > g_ATCVDisplayDropCountThreshold) {
+			if (mDisplayLagCounter > g_ATCVDisplayDropCountThreshold) {
+				mDisplayLagCounter = 0;
+				if (!alwaysNeedFrame)
+					drop = true;
+			}
+		} else
 			mDisplayLagCounter = 0;
-			if (!alwaysNeedFrame)
-				drop = true;
-		}
-	} else
-		mDisplayLagCounter = 0;
+	}
 
 	if (!drop || alwaysNeedFrame) {
 		const bool isFramePending = mpDisplay->GetQueuedFrames() > 1;

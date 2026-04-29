@@ -6,7 +6,10 @@
 
 #include "simulator.h"
 #include "cpu.h"
+#include "antic.h"
+#include "disk.h"
 #include "savestateio.h"
+#include <at/ataudio/pokey.h>
 #include <at/atcore/scheduler.h>
 #include <at/atcore/serializable.h>
 #include <vd2/system/file.h>
@@ -69,12 +72,16 @@ uint32_t HashRamBank(const uint8_t *mem, size_t base, size_t len) {
 } // anonymous
 
 uint32_t ComputeSimStateHash(ATSimulator& sim) {
-	// Hash CPU regs + full 64 KB of raw memory.  Intentionally narrow:
-	// if the sim diverges in device state without it leaking back into
-	// RAM or the CPU within a few frames, we'll still miss it — but
-	// the cheap hash is what we pay every frame, so we trade recall
-	// against cost.  ComputeSimStateHashBreakdown is the fat catch-all
-	// and runs only on desync.
+	// Hash CPU regs + full 64 KB of raw memory + scheduler tick + per-
+	// subsystem device fingerprints (POKEY / ANTIC / disk drives).
+	//
+	// Including device-internal state lets the lockstep desync detector
+	// catch divergences on the same frame they occur, instead of having
+	// to wait for them to leak into RAM via a hardware register read
+	// (which can take 20-30 frames during boot — exactly the World
+	// Karate Championship frame-29 desync signature).  The extra cost
+	// is sub-microsecond per frame compared to the ~50 µs the 64 KB
+	// RAM hash already pays.
 	uint32_t h = kFnv1a32Offset;
 
 	// CPU regs
@@ -91,6 +98,34 @@ uint32_t ComputeSimStateHash(ATSimulator& sim) {
 	const uint8_t *mem = sim.GetRawMemory();
 	if (mem) {
 		FnvFoldBuf(h, mem, 0x10000);
+	}
+
+	// Scheduler tick (low 32 bits of GetTick64()).  After the lockstep-
+	// entry rebase + ColdReset both peers' absolute schedulers are
+	// aligned, so this advances identically frame-by-frame.  Folding
+	// it into the hash catches any future regression where the two
+	// peers' scheduler clocks drift apart by even one cycle per frame.
+	if (auto *sch = sim.GetScheduler())
+		FnvFoldU32(h, (uint32_t)(sch->GetTick64() & 0xFFFFFFFFu));
+
+	// POKEY internal state — poly counters, 15/64 kHz clock phase,
+	// timer counters, AUDF/AUDC/CTL, IRQ regs, SKCTL/SKSTAT, serial
+	// shift state, pot scan progress.  This is the most likely source
+	// of "looks identical but boots differently" divergence in
+	// .atr-driven boots, since OS SIO traffic exercises POKEY serial
+	// timing heavily before the boot loader has copied data into RAM.
+	FnvFoldU32(h, sim.GetPokey().GetNetplayDeterminismFingerprint());
+
+	// ANTIC internal state — beam position, frame anchor delta, NMIST,
+	// DMACTL.  Catches any beam-position / DMA-pattern drift before
+	// it manifests as a video glitch.
+	FnvFoldU32(h, sim.GetAntic().GetNetplayDeterminismFingerprint());
+
+	// Per-drive disk emulator state (rotational counter, active SIO
+	// command).  Only enabled drives contribute non-zero values, so
+	// a non-disk session pays only the function-call cost per drive.
+	for (int i = 0; i < 15; ++i) {
+		FnvFoldU32(h, sim.GetDiskDrive(i).GetNetplayDeterminismFingerprint());
 	}
 
 	// FNV-1a never produces the 0 value from non-empty input in a way
@@ -113,27 +148,23 @@ void ComputeSimStateHashBreakdown(ATSimulator& sim, SimHashBreakdown& out) {
 		out.ramBank3 = HashRamBank(mem, 0xC000, 0x4000);
 	}
 
-	// NOTE (2026-04-20): The GTIA / ANTIC / POKEY `GetRegisterState`
-	// accessors return a debugger-facing **mirror** (e.g.
-	// POKEY::mState.mReg) which is only updated on CPU-side register
-	// WRITES (ATPokeyEmulator::WriteByte, pokey.cpp:2562), NOT by
-	// LoadState.  After a savestate load, the mirror still carries
-	// whatever the LOADING process had written since boot — which on
-	// two peers that started independently means two different mirror
-	// contents even though actual emulation state (mAUDF, mAUDC,
-	// mAUDCTL, polynomial counters, ANTIC DMA schedule, etc.) is
-	// byte-identical.
+	// Device fingerprints.  Earlier versions hashed the debugger
+	// register MIRROR (ATPokeyRegisterState etc.), which is updated
+	// only on CPU-side register writes — that produced false positives
+	// after savestate apply because the mirror carried per-process
+	// pre-session writes even when emulation state was bit-identical.
+	// We now route these through new GetNetplayDeterminismFingerprint()
+	// methods that hash the genuine emu-internal fields (poly counters,
+	// timer state, beam position, etc.) and fold tick-domain fields as
+	// deltas, so the values are stable across absolute-tick rebases
+	// and meaningful for divergence diagnosis.
 	//
-	// If we hash the mirror, the breakdown shouts "POKEY diverged!"
-	// and we waste a lockstep session chasing a ghost.  We leave the
-	// fields in the breakdown struct at 0 so the log format stays
-	// stable, and note the truth here: the authoritative signals for
-	// determinism are cpuRegs, the four RAM banks, and the scheduler
-	// tick delta.  A future upgrade can hash the genuine emu-internal
-	// device fields directly; for today's diagnostic that's overkill.
-	out.gtiaRegs = 0;
-	out.anticRegs = 0;
-	out.pokeyRegs = 0;
+	// gtiaRegs is currently unused on the wire — leave at zero until
+	// a GTIA fingerprint method exists.  anticRegs and pokeyRegs carry
+	// the new device state.
+	out.gtiaRegs  = 0;
+	out.anticRegs = sim.GetAntic().GetNetplayDeterminismFingerprint();
+	out.pokeyRegs = sim.GetPokey().GetNetplayDeterminismFingerprint();
 
 	// Scheduler tick — progresses in fixed cycle counts per frame in a
 	// deterministic sim, so a mismatch here means one peer ran more /

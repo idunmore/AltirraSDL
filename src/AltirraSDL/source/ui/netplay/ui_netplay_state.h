@@ -25,6 +25,7 @@
 #include <vector>
 
 #include "netplay/lobby_client.h"
+#include "netplay/netplay_glue.h"     // ATNetplayGlue::PeerPath
 #include "netplay/platform_notify.h"
 
 #include "constants.h"  // ATHardwareMode, ATMemoryMode, ATVideoStandard
@@ -453,6 +454,14 @@ struct Session {
 	uint16_t       boundPort = 0;        // local UDP port the host is on
 	uint64_t       lastHeartbeatMs = 0;  // monotonic ms of last OK heartbeat
 	ATNetplay::LobbyEndpoint lobbyEndpoint;  // which lobby we announced to
+
+	// -- Connection mode tracking -----------------------------------
+	// Mirror of the active coordinator's PeerPath.  Edge-detected by
+	// ATNetplayUI_Poll: on Direct→Relay or Relay→Direct transition we
+	// fire a toast.  Persisted between polls so a state change is
+	// detectable across frames.  Mode == None when no coordinator is
+	// active (cleared on session end).
+	ATNetplayGlue::PeerPath connectionMode = ATNetplayGlue::PeerPath::None;
 };
 
 struct Browser {
@@ -491,6 +500,16 @@ struct Browser {
 	int         letterFilter = -1;
 	float       savedScrollY = 0.0f;
 	bool        restoreScrollPending = false;
+
+	// Lobby reachability ping — RTT of the most recent List() call,
+	// smoothed with an EWMA (alpha = 0.3) so a single jittery sample
+	// doesn't dominate the indicator.  0 with sampleCount==0 means
+	// "never measured"; the UI shows a "pinging…" pill until the
+	// first sample lands.  Updated from the LobbyOp::List result
+	// handler in ATNetplayUI_Poll.
+	uint32_t    lobbyLatencyMs           = 0;
+	uint32_t    lobbyLatencyLastSampleMs = 0;
+	int         lobbyLatencySampleCount  = 0;
 };
 
 // Cross-window lobby reachability signal.  Every lobby HTTP op

@@ -125,10 +125,49 @@ bool IsEndpoint(const std::string& s) {
 	return port > 0 && port < 65536;
 }
 
-// Forward declaration: v4 relay-table pruning helper.  The real
-// class + accessor are defined below (after the Store / Sweeper
-// plumbing) but Sweeper::Run() needs to call Prune() periodically.
+// Forward declarations: the v4 relay table is defined below
+// (after Store/Sweeper) but earlier code refers to it:
+//   - Sweeper::Run() prunes idle entries periodically
+//   - Install()'s /v1/metrics handler reports the live pair count
+class RelayTable;
+RelayTable& Relay();
 int RelayPruneNow(int64_t nowMs);
+size_t RelaySizeNow();
+
+// -----------------------------------------------------------------
+// Lifetime counters (exposed via /v1/metrics)
+// -----------------------------------------------------------------
+//
+// Lock-free atomics so the hot relay path never blocks on /metrics
+// readers.  Reset to zero on process restart — the lobby is single-
+// container deployed and restarted manually, so a 30-day rolling
+// window is unnecessary; the operator just looks at "since uptime".
+//
+// The egress soft cap (8.5 TB) is intentionally lower than the Oracle
+// Always-Free 10 TB monthly limit so the operator gets a warning in
+// the container log before hitting the actual cliff.  No automatic
+// refusal — relay degradation is a human decision.
+constexpr uint64_t kEgressSoftCapBytes = 8'500'000'000'000ULL;
+constexpr uint64_t kEgressHardCapBytes = 10'000'000'000'000ULL;
+constexpr int64_t  kEgressWarnIntervalMs = 60 * 60 * 1000; // 1 h
+
+struct LobbyCounters {
+	std::atomic<uint64_t> requestsTotal{0};
+	std::atomic<uint64_t> requestsRateLimited{0};
+	std::atomic<uint64_t> relayPacketsIn{0};
+	std::atomic<uint64_t> relayPacketsOut{0};
+	std::atomic<uint64_t> relayBytesIn{0};
+	std::atomic<uint64_t> relayBytesOut{0};
+	std::atomic<uint64_t> relayDroppedNoPeer{0};
+	std::atomic<uint64_t> relayDroppedRateLimit{0};
+	std::atomic<uint64_t> relayDroppedAuth{0};
+	std::atomic<uint64_t> relayRegistersTotal{0};
+	std::atomic<uint64_t> reflectorRequestsTotal{0};
+	int64_t  startedAtMs    = 0;       // set once at startup
+	std::atomic<int64_t> lastEgressWarnMs{0};
+};
+
+LobbyCounters gLC;
 
 // -----------------------------------------------------------------
 // Session store
@@ -707,6 +746,10 @@ void WriteErr(httplib::Response& res, int code, const std::string& msg) {
 void LogReq(const std::string& ip, const std::string& method,
             const std::string& path, int code, size_t nbytes,
             int64_t durMs) {
+	gLC.requestsTotal.fetch_add(1, std::memory_order_relaxed);
+	if (code == 429)
+		gLC.requestsRateLimited.fetch_add(1, std::memory_order_relaxed);
+
 	JsonBuilder b;
 	b.raw('{');
 	b.key("ts");     b.str(IsoNow()); b.raw(',');
@@ -801,6 +844,71 @@ void Install(httplib::Server& srv, Store& store) {
 			b.key(Field::kWaitingCount); b.num(st.waiting);  b.raw(',');
 			b.key(Field::kPlayingCount); b.num(st.playing);  b.raw(',');
 			b.key(Field::kHostCount);    b.num(st.hosts);
+			b.raw('}');
+			res.status = 200;
+			res.set_content(std::move(b.s), "application/json");
+		});
+
+	// /v1/metrics — operator-facing telemetry.  Public read-only,
+	// matches /v1/stats access policy.  Cumulative since process
+	// start; on container restart the counters reset (the lobby
+	// is single-instance so no aggregation is needed).
+	//
+	// "limits.egress_*" surfaces the Oracle Always-Free 10 TB monthly
+	// outbound cap and the in-process soft warning threshold (8.5 TB)
+	// so a dashboard can colour-code without hard-coding the values.
+	srv.Get(kPathMetrics,
+		[&store](const httplib::Request&, httplib::Response& res) {
+			Store::Stats st = store.ComputeStats();
+			int64_t now = NowMs();
+			int64_t up  = (gLC.startedAtMs > 0)
+				? (now - gLC.startedAtMs) / 1000 : 0;
+			JsonBuilder b;
+			b.raw('{');
+			b.key("schema_version");  b.num(1);     b.raw(',');
+			b.key("uptime_seconds");  b.num((long long)up); b.raw(',');
+			b.key("sessions");        b.raw('{');
+				b.key("total");   b.num(st.sessions); b.raw(',');
+				b.key("waiting"); b.num(st.waiting);  b.raw(',');
+				b.key("playing"); b.num(st.playing);  b.raw(',');
+				b.key("hosts");   b.num(st.hosts);
+			b.raw('}');                              b.raw(',');
+			b.key("relay");           b.raw('{');
+				b.key("active_pairs");
+				b.num((long long)RelaySizeNow());                b.raw(',');
+				b.key("registers_total");
+				b.num((long long)gLC.relayRegistersTotal.load()); b.raw(',');
+				b.key("packets_in_total");
+				b.num((long long)gLC.relayPacketsIn.load());     b.raw(',');
+				b.key("packets_out_total");
+				b.num((long long)gLC.relayPacketsOut.load());    b.raw(',');
+				b.key("bytes_in_total");
+				b.num((long long)gLC.relayBytesIn.load());       b.raw(',');
+				b.key("bytes_out_total");
+				b.num((long long)gLC.relayBytesOut.load());      b.raw(',');
+				b.key("dropped_no_peer");
+				b.num((long long)gLC.relayDroppedNoPeer.load()); b.raw(',');
+				b.key("dropped_rate_limit");
+				b.num((long long)gLC.relayDroppedRateLimit.load()); b.raw(',');
+				b.key("dropped_auth");
+				b.num((long long)gLC.relayDroppedAuth.load());
+			b.raw('}');                              b.raw(',');
+			b.key("reflector");       b.raw('{');
+				b.key("requests_total");
+				b.num((long long)gLC.reflectorRequestsTotal.load());
+			b.raw('}');                              b.raw(',');
+			b.key("http");            b.raw('{');
+				b.key("requests_total");
+				b.num((long long)gLC.requestsTotal.load());      b.raw(',');
+				b.key("rate_limited_total");
+				b.num((long long)gLC.requestsRateLimited.load());
+			b.raw('}');                              b.raw(',');
+			b.key("limits");          b.raw('{');
+				b.key("egress_soft_cap_bytes");
+				b.num((long long)kEgressSoftCapBytes);           b.raw(',');
+				b.key("egress_hard_cap_bytes");
+				b.num((long long)kEgressHardCapBytes);
+			b.raw('}');
 			b.raw('}');
 			res.status = 200;
 			res.set_content(std::move(b.s), "application/json");
@@ -1022,6 +1130,27 @@ private:
 			mStore.ExpireOnce(now);
 			mStore.Rate().Prune(now, kRateBucketKeepMillis);
 			RelayPruneNow(now);
+
+			// Egress soft-cap warning: emit at most one per hour while
+			// over.  Operator decides whether to disable relay or
+			// upgrade Oracle billing.  The relay continues forwarding
+			// — no automatic refusal.
+			uint64_t bytesOut =
+				gLC.relayBytesOut.load(std::memory_order_relaxed);
+			if (bytesOut > kEgressSoftCapBytes) {
+				int64_t lastWarn =
+					gLC.lastEgressWarnMs.load(std::memory_order_relaxed);
+				if (now - lastWarn > kEgressWarnIntervalMs) {
+					gLC.lastEgressWarnMs.store(
+						now, std::memory_order_relaxed);
+					std::fprintf(stderr,
+						"warn: relay egress %llu bytes exceeds soft cap "
+						"%llu (Oracle Free Tier 10TB monthly hard cap)\n",
+						(unsigned long long)bytesOut,
+						(unsigned long long)kEgressSoftCapBytes);
+					std::fflush(stderr);
+				}
+			}
 		}
 	}
 	Store&                   mStore;
@@ -1092,6 +1221,34 @@ struct RelayEndpoint {
 struct RelayPair {
 	RelayEndpoint host;
 	RelayEndpoint joiner;
+
+	// Per-pair forward-path token bucket (separate from per-IP rate
+	// cap on the reflector socket).  Caps a single hostile/buggy peer
+	// at kRelayPeerPpsBurst packets/s with steady refill.  Lockstep
+	// payloads are ~70 pps per direction; cap allows headroom for
+	// snapshot bursts.
+	double  tokens     = (double)kRelayPeerPpsBurst;
+	int64_t lastFillMs = 0;
+
+	// Returns true if a forward token is available; consumes it.
+	// Refill is continuous: tokens += elapsed_ms * refill / 1000.
+	bool TryForward(int64_t nowMs) {
+		if (lastFillMs == 0) {
+			lastFillMs = nowMs;
+		} else {
+			int64_t elapsed = nowMs - lastFillMs;
+			if (elapsed > 0) {
+				tokens += (double)elapsed *
+					(double)kRelayPeerPpsRefill / 1000.0;
+				if (tokens > (double)kRelayPeerPpsBurst)
+					tokens = (double)kRelayPeerPpsBurst;
+				lastFillMs = nowMs;
+			}
+		}
+		if (tokens < 1.0) return false;
+		tokens -= 1.0;
+		return true;
+	}
 };
 
 class RelayTable {
@@ -1113,6 +1270,16 @@ public:
 		slot.lastSeenMs = nowMs;
 	}
 
+	// Result of an ASDF lookup.
+	enum class ForwardResult {
+		kForward,         // outOther populated; caller should sendto()
+		kNoPeer,          // no other side registered (or expired)
+		kRateLimited,     // per-pair token bucket exhausted
+	};
+
+	// Test-friendly variant: looks up the peer without consuming a
+	// forward token.  Used by unit tests; production hot path goes
+	// through LookupAndConsumeForward.
 	bool LookupOther(const uint8_t sid[16], uint8_t senderRole,
 	                 const sockaddr_in& from, int64_t nowMs,
 	                 sockaddr_in& outOther) {
@@ -1131,6 +1298,31 @@ public:
 		if (nowMs - other.lastSeenMs > kRelayPeerIdleMs) return false;
 		outOther = other.addr;
 		return true;
+	}
+
+	ForwardResult LookupAndConsumeForward(
+		const uint8_t sid[16], uint8_t senderRole,
+		const sockaddr_in& from, int64_t nowMs,
+		sockaddr_in& outOther)
+	{
+		std::lock_guard<std::mutex> lk(mMu);
+		auto it = mByKey.find(MakeKey(sid));
+		if (it == mByKey.end()) return ForwardResult::kNoPeer;
+		auto& pair = it->second;
+		RelayEndpoint& me    = (senderRole == kRelayRoleHost)
+			? pair.host : pair.joiner;
+		RelayEndpoint& other = (senderRole == kRelayRoleHost)
+			? pair.joiner : pair.host;
+		me.known      = true;
+		me.addr       = from;
+		me.lastSeenMs = nowMs;
+		if (!other.known) return ForwardResult::kNoPeer;
+		if (nowMs - other.lastSeenMs > kRelayPeerIdleMs)
+			return ForwardResult::kNoPeer;
+		if (!pair.TryForward(nowMs))
+			return ForwardResult::kRateLimited;
+		outOther = other.addr;
+		return ForwardResult::kForward;
 	}
 
 	bool IsRegisteredFromSource(const uint8_t sid[16], uint8_t role,
@@ -1183,6 +1375,10 @@ RelayTable& Relay() {
 
 int RelayPruneNow(int64_t nowMs) {
 	return Relay().Prune(nowMs);
+}
+
+size_t RelaySizeNow() {
+	return Relay().Size();
 }
 
 }  // anonymous
@@ -1278,9 +1474,14 @@ void RunReflector(uint16_t port, std::atomic<bool>& stop) {
 			uint8_t sid[16];
 			std::memcpy(sid, buf + 4, 16);
 			uint8_t role = buf[20];
-			if (role != kRelayRoleHost && role != kRelayRoleJoiner)
+			if (role != kRelayRoleHost && role != kRelayRoleJoiner) {
+				gLC.relayDroppedAuth.fetch_add(
+					1, std::memory_order_relaxed);
 				continue;
+			}
 			Relay().Register(sid, role, from, nowMs);
+			gLC.relayRegistersTotal.fetch_add(
+				1, std::memory_order_relaxed);
 			continue;  // one-shot register, no reply
 		}
 		if (buf[0] == 'A' && buf[1] == 'S' &&
@@ -1289,20 +1490,47 @@ void RunReflector(uint16_t port, std::atomic<bool>& stop) {
 			uint8_t sid[16];
 			std::memcpy(sid, buf + 4, 16);
 			uint8_t role = buf[20];
-			if (role != kRelayRoleHost && role != kRelayRoleJoiner)
+			if (role != kRelayRoleHost && role != kRelayRoleJoiner) {
+				gLC.relayDroppedAuth.fetch_add(
+					1, std::memory_order_relaxed);
 				continue;
+			}
+			gLC.relayPacketsIn.fetch_add(
+				1, std::memory_order_relaxed);
+			gLC.relayBytesIn.fetch_add(
+				(uint64_t)n, std::memory_order_relaxed);
 			sockaddr_in other{};
-			if (!Relay().LookupOther(sid, role, from, nowMs, other))
+			auto r = Relay().LookupAndConsumeForward(
+				sid, role, from, nowMs, other);
+			if (r == RelayTable::ForwardResult::kNoPeer) {
+				gLC.relayDroppedNoPeer.fetch_add(
+					1, std::memory_order_relaxed);
 				continue;
+			}
+			if (r == RelayTable::ForwardResult::kRateLimited) {
+				gLC.relayDroppedRateLimit.fetch_add(
+					1, std::memory_order_relaxed);
+				continue;
+			}
 			// Forward the inner bytes (after our 24-B header).
 			// Per-IP rate cap bypass: registered peer, live slot.
-			::sendto(s, (const char*)(buf + kWireRelayHeaderSize),
-				(int)(n - (int)kWireRelayHeaderSize), 0,
+			int innerLen = n - (int)kWireRelayHeaderSize;
+			int sent = ::sendto(s,
+				(const char*)(buf + kWireRelayHeaderSize),
+				innerLen, 0,
 				(const sockaddr*)&other, sizeof other);
+			if (sent > 0) {
+				gLC.relayPacketsOut.fetch_add(
+					1, std::memory_order_relaxed);
+				gLC.relayBytesOut.fetch_add(
+					(uint64_t)sent, std::memory_order_relaxed);
+			}
 			continue;
 		}
 		if (buf[0] != 'A' || buf[1] != 'S' ||
 		    buf[2] != 'D' || buf[3] != 'R') continue;
+		gLC.reflectorRequestsTotal.fetch_add(
+			1, std::memory_order_relaxed);
 
 		// Per-IP rate check.
 		int64_t nowSec = nowMs / 1000;
@@ -1361,6 +1589,7 @@ int main(int argc, char **argv) {
 
 	Config cfg = LoadConfig();
 	Store  store(cfg);
+	gLC.startedAtMs = NowMs();
 	Sweeper sweeper(store);
 	sweeper.Start();
 

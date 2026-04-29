@@ -132,6 +132,28 @@ public:
 	uint64	GetTick64() const;
 	void	UpdateTick64();
 
+	// Re-anchor the scheduler so GetTick64() returns newTick.  Shifts
+	// mTimeBase, mTick64Floor, every active event's mNextTime, and the
+	// stop time by the same 32-bit delta.  Time-to-event for all
+	// scheduled events is preserved (mNextTime - currentTime is
+	// unchanged).
+	//
+	// Used by netplay to align both peers' absolute scheduler tick at
+	// lockstep entry.  Many subsystems anchor private fields to
+	// GetTick64() / ATSCHEDULER_GETTIME (POKEY mLast15KHzTime /
+	// mLast64KHzTime / mLastPolyTime / mPolyShutOffTime; ANTIC
+	// mRawFrameStart; ATDiskEmulator mLastRotationUpdateCycle; PIA
+	// mFloatTimers).  If two peers enter lockstep with different
+	// absolute ticks, those private fields land in different time
+	// domains and POKEY serial / disk SIO byte arrival timing
+	// silently drifts even though CPU and RAM agree at frame 0.
+	//
+	// IMPORTANT: this only rebases scheduler-owned state.  The caller
+	// must follow up with a state-rebuild step (typically ColdReset)
+	// so every subsystem re-anchors its absolute-tick fields against
+	// the new clock.
+	void	RebaseTick64(uint64 newTick);
+
 	uint32	GetTicksToNextEvent() const;
 
 	// Sets the rate at which the scheduler counts, in ticks per second. The scheduler

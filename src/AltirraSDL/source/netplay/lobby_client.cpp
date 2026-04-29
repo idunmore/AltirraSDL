@@ -15,6 +15,7 @@
 #include "http_minimal.h"
 
 #include <cctype>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -394,12 +395,22 @@ bool LobbyClient::List(std::vector<LobbySession>& out) {
 	hr.path      = "/v1/sessions";
 	hr.timeoutMs = mEp.timeoutMs;
 
+	// RTT measurement.  Wraps the synchronous request only; we don't
+	// charge JSON parse time to "lobby latency" since that's local
+	// CPU work the operator can't do anything about.  Reset to 0 on
+	// transport failure so the UI shows "pinging…" until the next
+	// successful poll instead of a stale value.
+	const auto t0 = std::chrono::steady_clock::now();
 	HttpResponse resp;
 	HttpRequestSync(hr, resp); mLastStatus = resp.status;
+	const auto t1 = std::chrono::steady_clock::now();
 	if (resp.status != 200) {
+		mLastListLatencyMs = 0;
 		FormatHttpError(mLastError, resp);
 		return false;
 	}
+	mLastListLatencyMs = (uint32_t)std::chrono::duration_cast<
+		std::chrono::milliseconds>(t1 - t0).count();
 	JsonCursor c{(const char*)resp.body.data(),
 	             (const char*)resp.body.data() + resp.body.size()};
 	c.skipWs();

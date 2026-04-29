@@ -175,6 +175,14 @@ public:
 
 	void	GetRegisterState(ATAnticRegisterState& state) const;
 
+	// Returns a 32-bit fingerprint of ANTIC's emulation-relevant
+	// internal state — beam position, frame anchor (as delta), DMA
+	// state, NMI regs, display-list pointer.  Folded into the netplay
+	// per-frame simulator-state hash to detect device-internal
+	// divergence on the same frame it occurs, instead of waiting for
+	// a hardware register read to leak it into RAM.
+	uint32	GetNetplayDeterminismFingerprint() const;
+
 	void	SetTraceContext(ATTraceContext *context);
 
 private:

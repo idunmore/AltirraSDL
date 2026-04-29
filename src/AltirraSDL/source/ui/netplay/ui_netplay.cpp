@@ -371,6 +371,28 @@ void ATNetplayUI_Poll(uint64_t nowMs) {
 				return;
 			}
 			if (r.op != ATNetplayUI::LobbyOp::List) return;
+			// Lobby ping update: List() round-trip stamped by the
+			// worker.  EWMA with alpha = 0.3 so single-sample jitter
+			// doesn't dominate the indicator but a real shift is
+			// visible within a few polls.  On transport failure
+			// (listLatencyMs == 0) we leave the previous EWMA alone
+			// — the Browser screen will surface the failure via the
+			// status line; collapsing the indicator to 0 would
+			// confuse "lobby slow" with "lobby unreachable".
+			if (r.listLatencyMs > 0) {
+				if (st.browser.lobbyLatencySampleCount == 0) {
+					st.browser.lobbyLatencyMs = r.listLatencyMs;
+				} else {
+					// Fixed-point EWMA: avoid float just for one update.
+					// new = old*0.7 + sample*0.3
+					uint64_t blended =
+						(uint64_t)st.browser.lobbyLatencyMs * 7 +
+						(uint64_t)r.listLatencyMs           * 3;
+					st.browser.lobbyLatencyMs = (uint32_t)(blended / 10);
+				}
+				st.browser.lobbyLatencyLastSampleMs = (uint32_t)r.listLatencyMs;
+				++st.browser.lobbyLatencySampleCount;
+			}
 			if (!r.ok) {
 				// The lobby banner already paints the friendly error;
 				// keep the browser status line informative but
@@ -483,6 +505,45 @@ void ATNetplayUI_Poll(uint64_t nowMs) {
 
 	// Drive the multi-offer state machine.
 	ATNetplayUI::ReconcileHostedGames(nowMs);
+
+	// Connection-mode edge detection.  Whichever coordinator is the
+	// active one (joiner during SnapshotReady/Lockstepping or the
+	// host offer that has a peer in lockstep) reports its current
+	// PeerPath; we cache the last value in Session::connectionMode
+	// and fire a toast on transitions.  Important UX:
+	//   None → Direct  → silent (the existing "Connected" toast in
+	//                    RenderInSessionHUD already covers this)
+	//   None → Relay   → "Connected via relay (extra latency)"
+	//   Direct → Relay → "Direct connection lost — using relay"
+	//                    (mid-session rescue path)
+	//   Relay → Direct → "Direct connection restored" (rare but nice)
+	// The toast is one-shot per transition; the persistent indicator
+	// is the HUD pip rendered by RenderInSessionHUD.
+	{
+		using PP = ATNetplayGlue::PeerPath;
+		PP cur  = ATNetplayGlue::ActivePeerPath();
+		PP prev = st.session.connectionMode;
+		if (cur != prev) {
+			st.session.connectionMode = cur;
+			using TS = ATNetplayUI::ToastSeverity;
+			if (prev == PP::None && cur == PP::Relay) {
+				ATNetplayUI::PushToast(
+					"Connected via relay — extra latency expected.",
+					TS::Warning, 5000);
+			} else if (prev == PP::Direct && cur == PP::Relay) {
+				ATNetplayUI::PushToast(
+					"Direct connection lost — switched to relay.",
+					TS::Warning, 5000);
+			} else if (prev == PP::Relay && cur == PP::Direct) {
+				ATNetplayUI::PushToast(
+					"Direct connection restored.",
+					TS::Success, 3000);
+			}
+			// None → Direct intentionally silent: the
+			// "Connected — you are playing online." toast in
+			// RenderInSessionHUD already covers the happy path.
+		}
+	}
 
 	// Joiner flow: when we receive SnapshotReady, write the game-file
 	// bytes to a cache path and enqueue a cold-boot deferred action.
@@ -907,6 +968,37 @@ void RenderInSessionHUD() {
 		labelValue("Peer", peerBuf);
 		ImGui::SameLine(0, 12);
 		labelValue("Delay", delayBuf);
+
+		// Connection-mode pip: green "D" for Direct, amber "R" for
+		// Relay.  Lets the user attribute mid-session stutter to
+		// the right cause (relay adds an extra hop's worth of
+		// latency) without opening any menu.  Hover for a tooltip
+		// that spells out "Direct UDP" / "Via lobby reflector".
+		{
+			ImGui::SameLine(0, 12);
+			using PP = ATNetplayGlue::PeerPath;
+			PP path = ATNetplayGlue::ActivePeerPath();
+			ImVec4 col;
+			const char* glyph;
+			const char* tip;
+			if (path == PP::Relay) {
+				col   = ImVec4(1.00f, 0.78f, 0.30f, 1.0f);
+				glyph = "R";
+				tip   = "Routed via lobby reflector (extra latency).";
+			} else {
+				col   = StatusColorGood();
+				glyph = "D";
+				tip   = "Direct UDP path (lowest latency).";
+			}
+			ImGui::PushStyleColor(ImGuiCol_Text, HudTextMuted());
+			ImGui::TextUnformatted("Path");
+			ImGui::PopStyleColor();
+			ImGui::SameLine(0, 4);
+			ImGui::PushStyleColor(ImGuiCol_Text, col);
+			ImGui::TextUnformatted(glyph);
+			ImGui::PopStyleColor();
+			if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+		}
 
 		// Compact Disconnect — no longer full-width, just enough to
 		// read the label.  Sits on the metrics row's right edge with

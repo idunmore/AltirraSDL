@@ -87,6 +87,10 @@ void LobbyWorker::ThreadMain() {
 		switch (q.req.op) {
 			case LobbyOp::List:
 				out.ok = client.List(out.sessions);
+				// LobbyClient stamps the GET RTT regardless of HTTP
+				// status; copy it through so the UI can render
+				// "Lobby ping: 45 ms" even on a partial parse.
+				out.listLatencyMs = client.LastListLatencyMs();
 				break;
 			case LobbyOp::Create: {
 				// v3 NAT traversal: right before posting Create, probe

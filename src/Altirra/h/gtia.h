@@ -267,6 +267,33 @@ public:
 	void Init(IATGTIAEmulatorConnections *);
 	void ColdReset();
 
+	// When set, GTIA's BeginFrame() skips the wall-clock-based
+	// "drop frame on display lag" path.  Used by netplay so both
+	// peers produce the same number of presented frames per emu
+	// frame regardless of real-time presentation jitter — the
+	// lockstep frame counter is gated on IsFramePending(), so a
+	// dropped frame on one peer puts it permanently one emu frame
+	// ahead of the other.
+	void SetFrameDropInhibited(bool inhibited) {
+		mbFrameDropInhibited = inhibited;
+		if (inhibited) mDisplayLagCounter = 0;
+	}
+	bool IsFrameDropInhibited() const { return mbFrameDropInhibited; }
+
+	// Drop any in-flight render frame and any frame already queued on
+	// the display.  ColdReset() does NOT do this — it resets registers
+	// and palette tables but leaves mpFrame / mpDst / mbWaitingForFrame
+	// alone, and never touches the display's pending-frame queue.  For
+	// netplay we need both peers to enter lockstep with a clean
+	// "no frame in flight, no frame queued" state so the first
+	// BeginFrame after Resume runs a full ANTIC frame on both sides;
+	// otherwise a peer carrying a partially-rendered frame from
+	// pre-session activity completes it quickly after Resume,
+	// IsFramePending() flips early, and that peer's lockstep frame 0
+	// is captured one full PAL frame ahead of the peer that started
+	// from a clean slate.
+	void DiscardInFlightFrame();
+
 	ATVBXEEmulator *GetVBXE() const { return mpVBXE; }
 	void SetVBXE(ATVBXEEmulator *);
 	void SetUIRenderer(IATUIRenderer *);
@@ -626,6 +653,7 @@ protected:
 	bool	mbVsyncEnabled = false;
 	bool	mbVsyncAdaptiveEnabled = false;
 	sint32	mDisplayLagCounter = 0;
+	bool	mbFrameDropInhibited = false;
 	ATMonitorMode	mMonitorMode = ATMonitorMode::Color;
 	ATVideoDeinterlaceMode mDeinterlaceMode = ATVideoDeinterlaceMode::None;
 	bool	mbBlendMode = false;

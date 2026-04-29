@@ -455,6 +455,63 @@ void ATDiskEmulator::LoadState(const IATObjectState& state0) {
 	mpSIOInterface->LoadActiveCommandState(state.mpActiveCommand);
 }
 
+uint32 ATDiskEmulator::GetNetplayDeterminismFingerprint() const {
+	if (!mbEnabled)
+		return 0;
+
+	constexpr uint32 kFnvOff = 0x811C9DC5u;
+	constexpr uint32 kFnvP   = 0x01000193u;
+
+	auto fold8 = [](uint32 h, uint8 b) -> uint32 {
+		h ^= b;
+		h *= kFnvP;
+		return h;
+	};
+	auto fold32 = [&](uint32 h, uint32 v) -> uint32 {
+		for (int i = 0; i < 4; ++i)
+			h = fold8(h, (uint8)((v >> (i * 8)) & 0xFFu));
+		return h;
+	};
+
+	uint32 h = kFnvOff;
+
+	// Live rotational counter (advances by delta-since-last-update,
+	// so deterministic relative to cold reset).  This is the field
+	// that drives accurate-sector-timing — the divergence vector that
+	// caused the .atr boot desync at frame 29.  Reset() (line ~199)
+	// seeds mRotationalCounter from g_ATRandomizationSeeds.mDiskStartPos
+	// (locked under the netplay random seed), so both peers start with
+	// the same offset.
+	h = fold32(h, GetUpdatedRotationalCounter());
+	h = fold32(h, mRotations);
+
+	// Active SIO command — mActiveCommand is reset to 0 by AbortCommand
+	// in Reset() (line 216).  When a command IS active both peers see
+	// the same sequence of SIO bytes (lockstep guarantees inputs match)
+	// so it stays in sync.
+	h = fold8(h, mActiveCommand);
+
+	// FDC status + mechanical position — both set deterministically by
+	// Reset() based on the emulation mode.
+	h = fold8(h, mFDCStatus);
+	h = fold32(h, (uint32)mCurrentTrack);
+
+	// Active transfer length — reset to 0 by Reset() (line 196).
+	h = fold32(h, mTransferLength);
+
+	// NOTE: mActiveCommandState, mActiveCommandSector, mOriginalCommand,
+	// and mOriginalDevice are deliberately NOT folded in.  Reset() does
+	// not clear them (they're only overwritten when a new SIO command
+	// arrives), so two peers with different pre-session SIO activity
+	// would carry forward different values and trip a false-positive
+	// frame-0 desync.  These fields are inert until the next command
+	// — at which point they're rewritten from the SIO command frame,
+	// which is byte-identical on both peers under lockstep.
+
+	if (h == 0) h = 1;
+	return h;
+}
+
 void ATDiskEmulator::OnScheduledEvent(uint32 id) {
 	if (id == kATDiskEventMotorOff) {
 		mpMotorOffEvent = nullptr;
