@@ -257,13 +257,22 @@ void ATUIPollDeferredActions() {
 #ifdef ALTIRRA_NETPLAY_ENABLED
 				// Block File→Boot Image / File→Open Image (and the
 				// underlying drag-and-drop / mobile file-browser
-				// paths that fire the same deferred actions) while a
-				// netplay session is active.  Loading a new image
-				// would UnloadAll + Load + ColdReset on this peer
-				// only, instantly desyncing.  The netplay-internal
-				// boot path uses kATDeferred_NetplayHostBoot /
-				// NetplayJoinerApply so it is unaffected.
-				if (ATNetplayGlue::IsActive()) {
+				// paths that fire the same deferred actions) once a
+				// peer is actively engaging — Handshaking onward —
+				// because loading a new image then would UnloadAll +
+				// Load + ColdReset on this peer only, instantly
+				// desyncing.  The netplay-internal boot path uses
+				// kATDeferred_NetplayHostBoot / NetplayJoinerApply so
+				// it is unaffected.
+				//
+				// We deliberately do NOT block while a host coord is
+				// still in WaitingForJoiner — at that stage no peer
+				// is involved, so the user can keep playing or
+				// switch games freely until somebody connects.  Once
+				// a peer arrives, the host's deferred chain re-loads
+				// the offer's gamePath via kATDeferred_NetplayHostBoot,
+				// so any locally-swapped image is harmlessly replaced.
+				if (ATNetplayGlue::IsSessionEngaged()) {
 					extern ATLogChannel g_ATLCNetplay;
 					g_ATLCNetplay("blocked Boot/Open Image during "
 						"netplay session");
@@ -1563,6 +1572,10 @@ void ATUIRenderFrame(ATSimulator &sim, VDVideoDisplaySDL3 &display,
 	if (state.showInputMappings)     ATUIRenderInputMappings(sim, state);
 	if (state.showInputSetup)        ATUIRenderInputSetup(sim, state);
 	if (state.showAboutDialog)       ATUIRenderAboutDialog(state);
+	if (state.showDebugLog) {
+		extern void ATUIRenderDebugLogDialog(ATUIState &state);
+		ATUIRenderDebugLogDialog(state);
+	}
 	if (state.showProfiles)          ATUIRenderProfiles(sim, state);
 	if (state.showCommandLineHelp)   ATUIRenderCommandLineHelpDialog(state);
 	if (state.showChangeLog)         ATUIRenderChangeLogDialog(state);

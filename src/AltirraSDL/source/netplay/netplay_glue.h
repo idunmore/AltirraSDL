@@ -73,6 +73,18 @@ enum class PeerPath : uint8_t {
 // True iff any coordinator (host or joiner) is in a non-terminal phase.
 bool IsActive();
 
+// True iff a peer interaction is in flight — i.e. some coordinator is
+// past WaitingForJoiner (Handshaking onward, excluding terminal phases).
+// Use this — NOT IsActive() — to gate user actions that would disrupt
+// an in-progress connection (e.g. Boot/Open Image on the host side).
+// A host that has only published an offer and is still in
+// WaitingForJoiner returns false here, so the user can keep playing
+// (or switch images) until somebody actually starts connecting.  Once
+// a joiner sends Hello, the host's coord transitions to Handshaking
+// and this predicate flips to true; from that point the snapshot path
+// (kATDeferred_NetplayHostBoot) takes over the loaded image anyway.
+bool IsSessionEngaged();
+
 // True iff some coordinator is in the lockstep phase.  At most one
 // coordinator can be in this phase per the activity state machine.
 bool IsLockstepping();
@@ -351,6 +363,7 @@ void HostIngestPeerHint(const char* gameId,
 
 namespace ATNetplayGlue {
     inline bool     IsActive()                      { return false; }
+    inline bool     IsSessionEngaged()              { return false; }
     inline bool     IsLockstepping()                { return false; }
     inline void     Poll(uint64_t)                  {}
     inline bool     CanAdvanceThisTick()            { return true; }

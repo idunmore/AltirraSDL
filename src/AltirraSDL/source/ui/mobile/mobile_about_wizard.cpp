@@ -187,6 +187,16 @@ void RenderMobileAbout(ATSimulator &sim, ATUIState &uiState,
 		ATTouchEndDragScroll();
 		ImGui::EndChild();
 
+		// Debug Log button — opens the in-app log viewer.  On Android,
+		// stderr is gated behind an adb pairing the user typically
+		// doesn't have, so this is the only path to read NETPLAY /
+		// disk / audio channel output for diagnostics.  Modal-sheet
+		// styled so it reads as a secondary action below Close.
+		if (ATTouchButton("Debug Log", ImVec2(-1, dp(48.0f)))) {
+			uiState.showDebugLog = true;
+		}
+		ImGui::Dummy(ImVec2(0, dp(8.0f)));
+
 		// Close button pinned to the bottom — Accent variant so it
 		// reads as the primary action and matches the rest of Gaming
 		// Mode's visual language.

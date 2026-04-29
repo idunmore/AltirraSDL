@@ -204,8 +204,19 @@ void ATUIRenderAboutDialog(ATUIState &state) {
 	ImGui::TextDisabled("Commit: %s", ALTIRRA_BUILD_COMMIT);
 
 	ImGui::Spacing();
+	// Two-button row: "Debug Log..." opens the in-app log viewer (the
+	// only way to read NETPLAY / disk / audio channel output on
+	// Android, where stderr is unreachable); "OK" closes.
 	float buttonWidth = 80.0f;
-	ImGui::SetCursorPosX(ImGui::GetWindowWidth() - buttonWidth - ImGui::GetStyle().WindowPadding.x);
+	float pad = ImGui::GetStyle().WindowPadding.x;
+	float spacing = ImGui::GetStyle().ItemSpacing.x;
+	float debugBtnW = 110.0f;
+	ImGui::SetCursorPosX(ImGui::GetWindowWidth()
+		- buttonWidth - spacing - debugBtnW - pad);
+	if (ImGui::Button("Debug Log...", ImVec2(debugBtnW, 0))) {
+		state.showDebugLog = true;
+	}
+	ImGui::SameLine();
 	if (ImGui::Button("OK", ImVec2(buttonWidth, 0)))
 		state.showAboutDialog = false;
 

@@ -43,6 +43,7 @@ target_sources(AltirraSDL PRIVATE
     source/app/main_android_bridge.cpp
     source/app/commandline_sdl3.cpp
     source/app/crash_report.cpp
+    source/app/debug_log.cpp
     source/app/android_platform.cpp
     source/app/services_sdl3.cpp
     source/app/ui_file_dialog_sdl3.cpp

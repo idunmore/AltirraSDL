@@ -1318,20 +1318,16 @@ int main(int argc, char *argv[]) {
 		return 1;
 	}
 
-	// Route ATLogChannel output (atcore/logging.h) to stderr so netplay
-	// and other subsystem traces are visible in the terminal.  The core
-	// library defaults to no-op sinks — without wiring these, channels
-	// that users explicitly enable (via menus or toggled on by default,
-	// like NETPLAY) emit nothing.
-	ATLogSetWriteCallbacks(
-		[](ATLogChannel *ch, const char *s) {
-			std::fprintf(stderr, "[%s] %s\n", ch->GetName(), s);
-		},
-		[](ATLogChannel *ch, const char *fmt, va_list ap) {
-			std::fprintf(stderr, "[%s] ", ch->GetName());
-			std::vfprintf(stderr, fmt, ap);
-			std::fputc('\n', stderr);
-		});
+	// Route ATLogChannel output (atcore/logging.h) to stderr AND into
+	// the in-app ring buffer so netplay and other subsystem traces are
+	// visible in the terminal *and* readable from the in-app Debug Log
+	// viewer (Help > About > Debug Log) — essential on Android where
+	// stderr is unreachable.  ATDebugLogInstall() registers chained
+	// callbacks that fan out to both sinks.
+	{
+		extern void ATDebugLogInstall();
+		ATDebugLogInstall();
+	}
 
 	// On Android, always keep the screen on.  On desktop, this is handled
 	// by ATUIApplyModeStyle() when entering Gaming Mode.

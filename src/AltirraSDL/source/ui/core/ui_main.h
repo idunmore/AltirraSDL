@@ -26,6 +26,7 @@ struct ATUIState {
 	bool showDiskManager = false;
 	bool showCassetteControl = false;
 	bool showAboutDialog = false;
+	bool showDebugLog = false;
 	bool showAdjustColors = false;
 	bool showDisplaySettings = false;
 	bool showCartridgeMapper = false;

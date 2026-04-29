@@ -196,6 +196,25 @@ bool IsActive() {
 	return false;
 }
 
+bool IsSessionEngaged() {
+	// "Engaged" = some coord is past the host's WaitingForJoiner phase,
+	// i.e. a peer is actively handshaking / receiving snapshot / playing.
+	// Host coords that are still merely advertising the offer
+	// (WaitingForJoiner) don't count — the user can keep playing locally
+	// or switch images until somebody actually tries to connect.
+	using P = CoordPhase;
+	auto engagedPhase = [](P p) {
+		return !IsTerminal(p)
+		    && p != P::Idle
+		    && p != P::WaitingForJoiner;
+	};
+	if (g_joiner && engagedPhase(g_joiner->GetPhase())) return true;
+	for (auto& s : g_hosts) {
+		if (s.coord && engagedPhase(s.coord->GetPhase())) return true;
+	}
+	return false;
+}
+
 bool IsLockstepping() {
 	if (g_joiner &&
 	    g_joiner->GetPhase() == CoordPhase::Lockstepping) return true;

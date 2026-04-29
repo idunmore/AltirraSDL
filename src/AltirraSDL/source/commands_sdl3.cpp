@@ -199,18 +199,20 @@ static void CmdDeselect() {
 // =========================================================================
 
 static void CmdBootImage() {
-	// Loading a new game during a netplay session would UnloadAll +
-	// Load + ColdReset on this peer only, instantly desyncing.
-	// Block the dialog opener; the deferred-action handler
-	// (ui_main.cpp kATDeferred_BootImage) also has a backstop check
-	// for paths that bypass this command (drag-and-drop, mobile
-	// file browser).
-	if (ATNetplayGlue::IsActive()) return;
+	// Loading a new game during an engaged netplay session would
+	// UnloadAll + Load + ColdReset on this peer only, instantly
+	// desyncing.  Use IsSessionEngaged() — NOT IsActive() — so a
+	// host that's still merely advertising the offer (no peer
+	// connecting yet) can keep swapping games freely.  The
+	// deferred-action handler (ui_main.cpp kATDeferred_BootImage)
+	// has the same backstop for paths that bypass this command
+	// (drag-and-drop, mobile file browser).
+	if (ATNetplayGlue::IsSessionEngaged()) return;
 	ATUIShowBootImageDialog(g_pWindow);
 }
 
 static void CmdOpenImage() {
-	if (ATNetplayGlue::IsActive()) return;
+	if (ATNetplayGlue::IsSessionEngaged()) return;
 	ATUIShowOpenImageDialog(g_pWindow);
 }
 
