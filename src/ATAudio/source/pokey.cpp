@@ -263,6 +263,13 @@ void ATPokeyEmulator::ColdReset() {
 	mPotLastTimeFast = ATSCHEDULER_GETTIME(mpScheduler);
 	mPotLastTimeSlow = mPotLastTimeFast;
 	mbPotScanActive = false;
+	// Reset the pot scan master counter too.  Without this, ColdReset
+	// preserves whatever value a previously-completed scan left here
+	// (typically 228 = end-of-slow-scan), which then diverges from a
+	// snapshot-loaded peer (LoadState explicitly zeros it).  Observed
+	// 2026-04-29: netplay frame-0 POKEY hash mismatch with potC=228
+	// on host vs potC=0 on joiner being the sole differing field.
+	mPotMasterCounter = 0;
 
 	if (mbCommandLineState) {
 		mbCommandLineState = false;
