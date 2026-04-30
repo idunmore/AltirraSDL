@@ -289,6 +289,36 @@ public:
 	// Create returns empty id on capacity failure.
 	Session Create(const Session& in) {
 		std::lock_guard<std::mutex> lk(mMu);
+
+		// Identity-based dedup: when the same host (hostHandle) is
+		// re-creating a session for the same cart (cartName), expire
+		// the prior entry so the public list doesn't show a ghost
+		// alongside the live one.  The scenario that motivated this:
+		// client crashed / killed / lost network → no clean Delete
+		// reached us → user reconnects → both old and new sessions
+		// are visible until TTL.  Replacing on (hostHandle, cartName)
+		// collapses that to one entry.
+		//
+		// Conditions:
+		//   - hostHandle non-empty (legacy clients without a handle
+		//     are exempt — we'd otherwise collapse all of them).
+		//   - cartName non-empty (same reason).
+		// Collisions across genuinely different users with identical
+		// nicknames are rare and the cost (loser is evicted from the
+		// list) is acceptable; nicknames are user identity in this
+		// protocol.  No token check here: this is a server-side
+		// housekeeping step, not a per-request action.
+		if (!in.hostHandle.empty() && !in.cartName.empty()) {
+			for (auto it = mItems.begin(); it != mItems.end();) {
+				if (it->second.hostHandle == in.hostHandle &&
+				    it->second.cartName   == in.cartName) {
+					it = mItems.erase(it);
+				} else {
+					++it;
+				}
+			}
+		}
+
 		if ((int)mItems.size() >= mCfg.maxSessions) return Session{};
 		Session s    = in;
 		s.id         = NewUUIDv4();

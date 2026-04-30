@@ -30,8 +30,15 @@ namespace ATLobby {
 inline constexpr int kProtocolVersion = 2;
 
 // Session TTL in seconds.  Clients should heartbeat well inside this
-// window; 30 s is the configured cadence on the client side.
-inline constexpr int kSessionTTLSeconds = 90;
+// window; 30 s is the configured cadence on the client side.  60 s
+// allows exactly one missed heartbeat before eviction — long enough
+// to absorb a brief network blip but short enough that an actual
+// host crash / kill / loss-of-power leaves the session listed for
+// at most ~90 s (60 s TTL + 30 s sweep cadence) instead of ~120 s.
+// Combined with server-side dedup-on-Create (same hostHandle +
+// cartName replaces the prior session), this is what keeps the
+// public list from accumulating ghost entries.
+inline constexpr int kSessionTTLSeconds = 60;
 
 // Rate limit (per source IP).  Token bucket: `kRateBurst` tokens
 // capacity, one token refilled every `kRateRefillMillis` ms.

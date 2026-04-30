@@ -162,6 +162,76 @@ void TestCreateAndList() {
 		"list contains created id");
 }
 
+// Identity dedup on Create: when the same host (hostHandle) re-
+// creates a session for the same cart (cartName), the prior entry
+// must be evicted so the public list doesn't show two rows for one
+// game.  This handles the user-visible failure where a host crashed
+// or lost network without sending a clean Delete, then reconnected
+// — the lobby would otherwise show both old and new entries until
+// the old one's TTL elapsed.  The new entry must come through with
+// a fresh sessionId; the old one must no longer appear in /v1/sessions.
+// Sessions with empty hostHandle or empty cartName are exempt (we'd
+// otherwise collapse all anonymous / no-cart legacy clients into one).
+void TestCreateDedupReplacesPriorSession() {
+	++g_testsRun;
+	Fixture f;
+	auto c = f.client();
+	auto r1 = c.Post(kPathSession,
+		MakeCreateBody("Archon", "alice", "1.2.3.4:1"),
+		"application/json");
+	T_EXPECT_EQ_INT(r1 ? r1->status : 0, 201, "first create 201");
+	std::string id1, tok1; int ttl1 = 0;
+	T_EXPECT(ReadCreateRespJson(r1->body, id1, tok1, ttl1),
+		"parse first create");
+
+	// Same hostHandle + cartName from the same client = dedup target.
+	auto r2 = c.Post(kPathSession,
+		MakeCreateBody("Archon", "alice", "1.2.3.4:2"),
+		"application/json");
+	T_EXPECT_EQ_INT(r2 ? r2->status : 0, 201, "second create 201");
+	std::string id2, tok2; int ttl2 = 0;
+	T_EXPECT(ReadCreateRespJson(r2->body, id2, tok2, ttl2),
+		"parse second create");
+	T_EXPECT(id1 != id2, "second id is fresh");
+
+	auto list = c.Get(kPathSessions);
+	T_EXPECT(list && list->status == 200, "list 200");
+	T_EXPECT(list->body.find(id1) == std::string::npos,
+		"old id evicted from list");
+	T_EXPECT(list->body.find(id2) != std::string::npos,
+		"new id present in list");
+
+	// Different cartName from the same host: the prior entry stays.
+	auto r3 = c.Post(kPathSession,
+		MakeCreateBody("Joust", "alice", "1.2.3.4:3"),
+		"application/json");
+	T_EXPECT_EQ_INT(r3 ? r3->status : 0, 201, "third create 201");
+	std::string id3, tok3; int ttl3 = 0;
+	T_EXPECT(ReadCreateRespJson(r3->body, id3, tok3, ttl3),
+		"parse third create");
+	auto list2 = c.Get(kPathSessions);
+	T_EXPECT(list2 && list2->status == 200, "list2 200");
+	T_EXPECT(list2->body.find(id2) != std::string::npos,
+		"second id still present (different cart)");
+	T_EXPECT(list2->body.find(id3) != std::string::npos,
+		"third id present");
+
+	// Different hostHandle, same cart: the prior entry stays.
+	auto r4 = c.Post(kPathSession,
+		MakeCreateBody("Joust", "bob", "5.6.7.8:1"),
+		"application/json");
+	T_EXPECT_EQ_INT(r4 ? r4->status : 0, 201, "fourth create 201");
+	std::string id4, tok4; int ttl4 = 0;
+	T_EXPECT(ReadCreateRespJson(r4->body, id4, tok4, ttl4),
+		"parse fourth create");
+	auto list3 = c.Get(kPathSessions);
+	T_EXPECT(list3 && list3->status == 200, "list3 200");
+	T_EXPECT(list3->body.find(id3) != std::string::npos,
+		"alice's Joust still present");
+	T_EXPECT(list3->body.find(id4) != std::string::npos,
+		"bob's Joust present");
+}
+
 // The list endpoint must echo every machine-spec field the host
 // supplied on create — kernelCRC32 / basicCRC32 / hardwareMode /
 // videoStandard / memoryMode — and must also include the keys (as
@@ -547,6 +617,7 @@ void TestOriginBlockedOnPost() {
 int RunAll() {
 	TestHealthz();
 	TestCreateAndList();
+	TestCreateDedupReplacesPriorSession();
 	TestListEchoesMachineFields();
 	TestCreateValidation();
 	TestHeartbeatBadToken();
