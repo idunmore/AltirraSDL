@@ -536,23 +536,25 @@ void RenderSettings(ATSimulator &sim, ATUIState &uiState,
 		}
 
 #ifdef ALTIRRA_NETPLAY_ENABLED
-		// Online Play emoticons — when on, an extra speech-bubble
-		// button appears next to the hamburger during a netplay
-		// session and pressing it opens the icon picker.  When off,
-		// the on-screen button is hidden and the keyboard/gamepad
-		// shortcuts (F1 / R3) become the only way to send.  Greyed
-		// out when "Show Touch Controls" is off because the button
-		// piggybacks on the touch chrome — see touch_controls.cpp.
+		// Online Play emoticons — when on, the user can send icons
+		// during a netplay session via F1 / R3 / on-screen button.
+		// The on-screen speech-bubble button only appears when "Show
+		// Touch Controls" above is also on (the button piggybacks on
+		// the touch chrome — see touch_controls.cpp).  Always
+		// togglable so the user can disable sending entirely even
+		// when playing with a gamepad and touch controls hidden.
 		{
-			if (!mobileState.showTouchControls)
-				ImGui::BeginDisabled();
 			bool showEmotes = ATEmoteNetplay::GetSendEnabled();
 			if (ATTouchToggle("Show Emoticons", &showEmotes)) {
 				ATEmoteNetplay::SetSendEnabled(showEmotes);
 				ATPersistMobileEdit(kATSettingsCategory_Environment);
 			}
-			if (!mobileState.showTouchControls)
-				ImGui::EndDisabled();
+			if (!mobileState.showTouchControls) {
+				ATTouchMutedText(
+					"On-screen emoticon button needs \"Show Touch "
+					"Controls\" enabled to appear.  F1 / R3 still "
+					"open the picker when this option is on.");
+			}
 		}
 #endif
 

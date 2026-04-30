@@ -839,7 +839,58 @@ void DesktopWaiting() {
 		return;
 	}
 
-	ImGui::Text("Connecting — loading the game state…");
+	// Phase-aware status label.  The previous unconditional
+	// "Connecting — loading the game state…" was misleading during
+	// Handshaking — at that point the host hasn't even clicked
+	// Allow yet, no game state is being loaded, we're just waiting
+	// for the host to approve the join.  Mirrors the Gaming Mode
+	// labels in ui_netplay_screens.cpp DesktopWaiting equivalent.
+	{
+		const char *label = "Contacting host…";
+		switch (jp) {
+			case ATNetplayGlue::Phase::Handshaking:
+				label = st.session.joinTarget.requiresCode
+					? "Verifying join code with host…"
+					: "Waiting for host to allow you in…";
+				break;
+			case ATNetplayGlue::Phase::ReceivingSnapshot:
+				label = "Downloading game from host…";
+				break;
+			case ATNetplayGlue::Phase::SnapshotReady:
+				label = "Starting game…";
+				break;
+			case ATNetplayGlue::Phase::Lockstepping:
+				label = "Connected — starting game…";
+				break;
+			default: break;
+		}
+		ImGui::Text("%s", label);
+	}
+
+	// Elapsed-wait counter so a joiner whose host is slow to Allow
+	// doesn't stare at a static label forever.  Same source as the
+	// Gaming Mode screen.
+	if (st.session.joinStartedMs != 0) {
+		const uint64_t nowMs = (uint64_t)SDL_GetTicks();
+		const uint64_t wait = nowMs > st.session.joinStartedMs
+			? (nowMs - st.session.joinStartedMs) / 1000 : 0;
+		ImGui::SameLine();
+		ImGui::TextDisabled("(%llus)", (unsigned long long)wait);
+	}
+
+	// Direct vs relay path indicator — useful diagnostic when a
+	// session takes longer than expected to come up.
+	if (ATNetplayGlue::JoinerPeerPath() ==
+	    ATNetplayGlue::PeerPath::Relay) {
+		ImGui::PushStyleColor(ImGuiCol_Text,
+			ImVec4(1.00f, 0.78f, 0.30f, 1.0f));   // amber pip
+		ImGui::TextUnformatted("\xe2\x97\x8f");
+		ImGui::PopStyleColor();
+		ImGui::SameLine(0, 6);
+		ImGui::TextDisabled(
+			"Direct connection unavailable — using relay.");
+	}
+
 	ImGui::Spacing();
 
 	ImGui::Text("Host: %s", st.session.joinTarget.hostHandle.empty()
