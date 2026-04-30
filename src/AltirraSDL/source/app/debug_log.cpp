@@ -10,6 +10,7 @@
 #include <mutex>
 
 #include <imgui.h>
+#include <SDL3/SDL.h>
 
 #include <vd2/system/VDString.h>
 #include <at/atcore/logging.h>
@@ -43,6 +44,34 @@ LogRing& Ring() {
 ATLogWriteFn  s_chainWrite  = nullptr;
 ATLogWriteVFn s_chainWriteV = nullptr;
 
+// Per-channel timestamp prefix.  The user asked for sub-second relative
+// timestamps on every NETPLAY log line so the post-Accept handshake /
+// snapshot transfer phases can be timed without having to add manual
+// sprintfs at every g_ATLCNetplay call site.  Other channels stay
+// untouched — those are emulator-internal and already noisy enough.
+//
+// Reference: app start (first call to FormatRelTimestamp).  Format:
+// "[T+sss.mmm] " — seconds and milliseconds since reference.  The
+// six-character seconds field is enough for a 27-hour session before
+// the field overflows to seven characters; nothing breaks past that,
+// the column just widens.
+bool ChannelWantsTimestamp(const ATLogChannel *ch) {
+	if (!ch) return false;
+	const char *name = ch->GetName();
+	return name && strcmp(name, "NETPLAY") == 0;
+}
+
+void FormatRelTimestamp(char *out, size_t cap) {
+	static uint64_t s_startMs = 0;
+	const uint64_t now = (uint64_t)SDL_GetTicks();
+	if (s_startMs == 0) s_startMs = now;
+	const uint64_t rel = now - s_startMs;
+	const uint64_t sec = rel / 1000;
+	const uint32_t ms  = (uint32_t)(rel % 1000);
+	std::snprintf(out, cap, "[T+%llu.%03u] ",
+		(unsigned long long)sec, ms);
+}
+
 void Append(const char *channelName, const char *text) {
 	if (!text) text = "";
 
@@ -72,7 +101,20 @@ void Append(const char *channelName, const char *text) {
 }
 
 void CaptureWrite(ATLogChannel *ch, const char *s) {
-	Append(ch ? ch->GetName() : nullptr, s);
+	const char *name = ch ? ch->GetName() : nullptr;
+	if (ChannelWantsTimestamp(ch)) {
+		char ts[32];
+		FormatRelTimestamp(ts, sizeof ts);
+		VDStringA pref;
+		pref.append_sprintf("%s%s", ts, s ? s : "");
+		Append(name, pref.c_str());
+		// Bypass the stderr chain — it doesn't know about the prefix
+		// and would emit the un-stamped line.  Inline the stderr
+		// write instead.
+		std::fprintf(stderr, "[%s] %s\n", name ? name : "?", pref.c_str());
+		return;
+	}
+	Append(name, s);
 	if (s_chainWrite)
 		s_chainWrite(ch, s);
 }
@@ -85,12 +127,30 @@ void CaptureWriteV(ATLogChannel *ch, const char *fmt, va_list ap) {
 	int n = vsnprintf(stack, sizeof stack, fmt, ap_copy);
 	va_end(ap_copy);
 
+	const char *name = ch ? ch->GetName() : nullptr;
+	const bool wantTs = ChannelWantsTimestamp(ch);
+	char ts[32] = "";
+	if (wantTs) FormatRelTimestamp(ts, sizeof ts);
+
+	auto deliver = [&](const char *line) {
+		if (wantTs) {
+			VDStringA pref;
+			pref.append_sprintf("%s%s", ts, line ? line : "");
+			Append(name, pref.c_str());
+			// Stderr inline (bypass the un-stamped chain).
+			std::fprintf(stderr, "[%s] %s\n",
+				name ? name : "?", pref.c_str());
+		} else {
+			Append(name, line);
+		}
+	};
+
 	if (n < 0) {
 		// Encoding error — record the raw format string so the user
 		// at least sees something landed.
-		Append(ch ? ch->GetName() : nullptr, fmt ? fmt : "(vformat error)");
+		deliver(fmt ? fmt : "(vformat error)");
 	} else if ((size_t)n < sizeof stack) {
-		Append(ch ? ch->GetName() : nullptr, stack);
+		deliver(stack);
 	} else {
 		VDStringA big;
 		big.resize((size_t)n + 1);
@@ -98,11 +158,12 @@ void CaptureWriteV(ATLogChannel *ch, const char *fmt, va_list ap) {
 		vsnprintf(&big[0], big.size(), fmt, ap_copy);
 		va_end(ap_copy);
 		big.resize((size_t)n);
-		Append(ch ? ch->GetName() : nullptr, big.c_str());
+		deliver(big.c_str());
 	}
 
-	// Chain so stderr / logcat still sees the line.
-	if (s_chainWriteV)
+	// Chain so stderr / logcat still sees the line — but only when we
+	// haven't already written it inline above (NETPLAY case).
+	if (!wantTs && s_chainWriteV)
 		s_chainWriteV(ch, fmt, ap);
 }
 

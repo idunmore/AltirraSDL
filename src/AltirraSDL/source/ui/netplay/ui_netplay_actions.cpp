@@ -8,6 +8,8 @@
 #include "ui_netplay.h"
 #include "ui_netplay_widgets.h"
 
+#include <SDL3/SDL.h>
+
 #include "netplay/netplay_glue.h"
 #include "netplay/netplay_profile.h"
 #include "netplay/lobby_config.h"
@@ -1267,6 +1269,15 @@ void StartJoiningAction() {
 		Navigate(Screen::Error);
 		return;
 	}
+
+	// Reset the joiner-side waiting clock for THIS attempt.  The
+	// per-tick reset in the actions loop only fires on the
+	// non-active → active edge, which doesn't happen on a "Try
+	// Again" because the previous attempt may still be sitting in a
+	// terminal-but-non-None phase (Failed) when the user clicks
+	// retry.  Stamping here unconditionally guarantees the on-screen
+	// "(Ns)" elapsed counter starts from zero on every fresh Start.
+	st.session.joinStartedMs = (uint64_t)SDL_GetTicks();
 
 	// v4 two-sided punch: arm the relay context and POST our own
 	// candidates to the lobby so the host can fire outbound NetPunch
