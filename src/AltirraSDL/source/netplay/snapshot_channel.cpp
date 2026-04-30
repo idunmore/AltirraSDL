@@ -15,66 +15,104 @@ namespace ATNetplay {
 void SnapshotSender::Begin(const uint8_t* data, size_t bytes) {
 	mData = data;
 	mBytes = bytes;
-	mCurrentChunk = 0;
-	mAttempts = 0;
-	mLastSendMs = 0;
-	mSentAtLeastOnce = false;
+	mLowestUnacked = 0;
+	mNextNew = 0;
+	mAckedCount = 0;
 
 	if (bytes == 0 || data == nullptr) {
 		mTotalChunks = 0;
+		mAcked.clear();
+		mLastSendMs.clear();
+		mAttempts.clear();
 		mStatus = Status::Done;   // nothing to send → immediately done
 		return;
 	}
 
 	mTotalChunks = (uint32_t)((bytes + kSnapshotChunkSize - 1) / kSnapshotChunkSize);
+	mAcked.assign(mTotalChunks, 0u);
+	mLastSendMs.assign(mTotalChunks, 0ull);
+	mAttempts.assign(mTotalChunks, 0u);
 	mStatus = Status::Sending;
 }
 
 bool SnapshotSender::NextOutgoing(NetSnapChunk& out, uint64_t nowMs) {
 	if (mStatus != Status::Sending) return false;
 
-	// Decide whether it's time to send (or re-send) the current chunk.
-	// Two cases fire: the first attempt (never sent before) or the
-	// retry timer has elapsed.
-	const bool firstAttempt = !mSentAtLeastOnce;
-	const bool retryDue = mSentAtLeastOnce &&
-	                      (nowMs - mLastSendMs) >= kRetryIntervalMs;
-	if (!firstAttempt && !retryDue) return false;
+	// Strategy: prefer never-sent chunks at the head of the window
+	// (fastest path to fill the pipe).  Fall back to retransmitting
+	// the oldest un-acked chunk whose retry timer has expired.
+	// Window covers [mLowestUnacked, mLowestUnacked + kWindowSize).
+	const uint32_t windowEnd =
+		mLowestUnacked + kWindowSize > mTotalChunks
+		? mTotalChunks
+		: mLowestUnacked + kWindowSize;
 
-	if (mAttempts >= kMaxAttemptsPerChunk) {
-		mStatus = Status::Failed;
-		return false;
+	uint32_t pick = mTotalChunks;  // sentinel: nothing to send
+
+	// Pass 1: emit the next never-sent chunk if we have window slack.
+	if (mNextNew < windowEnd && mNextNew < mTotalChunks) {
+		pick = mNextNew;
+	} else {
+		// Pass 2: oldest un-acked chunk whose retry timer expired.
+		// Only iterate over the active window, not the whole vector.
+		for (uint32_t i = mLowestUnacked; i < windowEnd; ++i) {
+			if (mAcked[i]) continue;
+			if (mLastSendMs[i] == 0) continue; // never-sent (covered above
+			                                   //  but possible if mNextNew
+			                                   //  hasn't reached i yet —
+			                                   //  not in this window-full
+			                                   //  branch by construction)
+			if ((nowMs - mLastSendMs[i]) < kRetryIntervalMs) continue;
+			if (mAttempts[i] >= (uint8_t)kMaxAttemptsPerChunk) {
+				// This chunk has burned its retry budget.  Mark the
+				// transfer Failed so the coordinator surfaces an
+				// error to the user.  Stop after the first such
+				// chunk — additional probing won't recover.
+				mStatus = Status::Failed;
+				return false;
+			}
+			pick = i;
+			break;   // oldest one wins; no need to scan further
+		}
 	}
 
-	// Compute byte range for the current chunk.
-	const uint64_t start = (uint64_t)mCurrentChunk * (uint64_t)kSnapshotChunkSize;
+	if (pick >= mTotalChunks) return false;
+
+	// Compute byte range.
+	const uint64_t start = (uint64_t)pick * (uint64_t)kSnapshotChunkSize;
 	uint64_t end = start + (uint64_t)kSnapshotChunkSize;
 	if (end > (uint64_t)mBytes) end = (uint64_t)mBytes;
 	const uint32_t payloadLen = (uint32_t)(end - start);
 
 	out = NetSnapChunk{};
 	out.magic = kMagicChunk;
-	out.chunkIdx = mCurrentChunk;
+	out.chunkIdx = pick;
 	out.totalChunks = mTotalChunks;
 	out.payloadLen = payloadLen;
 	out.payload = mData + start;
 
-	mLastSendMs = nowMs;
-	mSentAtLeastOnce = true;
-	++mAttempts;
+	mLastSendMs[pick] = nowMs ? nowMs : 1; // 0 is reserved for "never sent"
+	if (mAttempts[pick] < 255) ++mAttempts[pick];
+	if (pick == mNextNew && mNextNew < mTotalChunks) ++mNextNew;
 	return true;
 }
 
 void SnapshotSender::OnAckReceived(uint32_t chunkIdx) {
 	if (mStatus != Status::Sending) return;
-	// Stale ACK for a chunk we already moved past — ignore.
-	if (chunkIdx != mCurrentChunk) return;
+	if (chunkIdx >= mTotalChunks) return;
+	if (mAcked[chunkIdx]) return;   // duplicate ACK — ignore
 
-	++mCurrentChunk;
-	mAttempts = 0;
-	mSentAtLeastOnce = false;
+	mAcked[chunkIdx] = 1u;
+	++mAckedCount;
 
-	if (mCurrentChunk >= mTotalChunks) {
+	// Slide the trailing edge forward across any contiguous run of
+	// ACKed chunks.  A future ACK that fills the gap will trigger
+	// another slide.
+	while (mLowestUnacked < mTotalChunks && mAcked[mLowestUnacked]) {
+		++mLowestUnacked;
+	}
+
+	if (mAckedCount >= mTotalChunks) {
 		mStatus = Status::Done;
 	}
 }

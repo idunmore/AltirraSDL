@@ -1400,18 +1400,17 @@ void Coordinator::HandleSnapAck(const NetSnapAck& a) {
 void Coordinator::PumpSnapshotSender(uint64_t nowMs) {
 	if (!mPeerKnown) return;
 	NetSnapChunk c;
+	// Fill the SnapshotSender's sliding window each Poll tick.  The
+	// sender returns false once the window is full (enough chunks
+	// in flight, none yet eligible for retry) — that is our natural
+	// stop signal.  Up to kWindowSize chunks per tick is bounded
+	// by the window, so a runaway loop is impossible.  This is the
+	// change that turns 220 ms × N-chunk stop-and-wait into a
+	// 2-3 RTT batched transfer over relay.
 	while (mSnapTx.NextOutgoing(c, nowMs)) {
 		size_t n = EncodeSnapChunk(c, mTxBuf, sizeof mTxBuf);
 		if (n == 0) break;
 		WrapAndSend(mTxBuf, n, mPeer);
-		// Emit ONE packet per Poll() to avoid flooding — the retry
-		// timer (500 ms) paces subsequent re-sends naturally.  We
-		// need to break after the first emission to match that
-		// pacing intent; without this, NextOutgoing would re-fire
-		// for the same chunk on the very next iteration if nowMs
-		// increments within the loop's view (it doesn't, but the
-		// intent is clearer with an explicit break).
-		break;
 	}
 
 	// Surface SnapTx retry-budget exhaustion HERE, not only in
@@ -1964,19 +1963,54 @@ void Coordinator::FailWith(const char* msg) {
 
 void Coordinator::SetRelayContext(const uint8_t sessionIdBytes16[16],
                                   const char* lobbyHostPort) {
-	mHasRelaySessionId = false;
-	mLobbyRelayKnown   = false;
-	if (!sessionIdBytes16 || !lobbyHostPort || !*lobbyHostPort) return;
+	// IDEMPOTENT — safe to call every Poll tick.  Caller (the action
+	// loop in ui_netplay_actions.cpp) does call this per-tick after
+	// the relay-first hoist, so any work done here multiplies by the
+	// frame rate.  Cheap fast path: if the new args match the cached
+	// state, do nothing — no Resolve(), no log line.
+	const bool emptyInput =
+		(!sessionIdBytes16 || !lobbyHostPort || !*lobbyHostPort);
+	if (emptyInput) {
+		// Empty input means "tear down".  Only act if we currently
+		// have something to tear down — otherwise the per-tick caller
+		// would generate spurious state churn.
+		if (mHasRelaySessionId || mLobbyRelayKnown) {
+			mHasRelaySessionId = false;
+			mLobbyRelayKnown   = false;
+		}
+		return;
+	}
+
+	const bool sessionIdMatches =
+		mHasRelaySessionId &&
+		std::memcmp(mRelaySessionId, sessionIdBytes16, 16) == 0;
+	const bool lobbyStrMatches =
+		mLobbyRelayKnown &&
+		mLobbyHostPortCached == lobbyHostPort;
+
+	if (sessionIdMatches && lobbyStrMatches) {
+		// No change — nothing to do, nothing to log.
+		return;
+	}
+
+	// At least one input differs from the cached state.  Re-resolve
+	// the lobby endpoint (a numeric "ip:port" form skips DNS, but
+	// hostnames may not — we cache the result either way) and
+	// update the flags atomically (single-threaded coord, no race).
 	std::memcpy(mRelaySessionId, sessionIdBytes16, 16);
 	mHasRelaySessionId = true;
+
 	Endpoint ep;
 	if (Transport::Resolve(lobbyHostPort, ep)) {
 		mLobbyRelayEndpoint = ep;
 		mLobbyRelayKnown = true;
+		mLobbyHostPortCached = lobbyHostPort;
 		char fmt[64];
 		ep.Format(fmt, sizeof fmt);
 		g_ATLCNetplay("relay context set: lobby=%s (auto-fallback armed)", fmt);
 	} else {
+		mLobbyRelayKnown = false;
+		mLobbyHostPortCached.clear();
 		g_ATLCNetplay("relay context: failed to resolve \"%s\"", lobbyHostPort);
 	}
 }

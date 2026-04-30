@@ -134,6 +134,13 @@ static void testTailChunkIsShort() {
 }
 
 static void testRetryOnDroppedAck() {
+	// With sliding-window semantics the sender prefers to keep the
+	// pipe full of new chunks while waiting for an ACK on an in-
+	// flight one.  A "dropped ACK" therefore manifests as: the
+	// sender keeps emitting fresh chunks until the window is full
+	// or the buffer ends, and only retransmits the un-acked chunk
+	// after kRetryIntervalMs has elapsed.  Use a 3-chunk transfer
+	// (fits inside the window so the test is window-size-agnostic).
 	auto data = makePattern(kSnapshotChunkSize * 3);  // 3 chunks
 	SnapshotSender tx;
 	tx.Begin(data.data(), data.size());
@@ -141,39 +148,43 @@ static void testRetryOnDroppedAck() {
 	SnapshotReceiver rx;
 	rx.Begin(3, (uint32_t)data.size());
 
-	// Send chunk 0 normally.
 	uint64_t now = 100;
 	NetSnapChunk pkt;
+
+	// Send chunk 0 normally.
 	CHECK(tx.NextOutgoing(pkt, now));
 	CHECK(pkt.chunkIdx == 0);
 	rx.OnChunk(pkt);
 	tx.OnAckReceived(0);
 
-	// Send chunk 1 but "lose" the ACK — don't call OnAckReceived.
+	// Send chunk 1 but "lose" the ACK.
 	CHECK(tx.NextOutgoing(pkt, now + 100));
 	CHECK(pkt.chunkIdx == 1);
-	// Simulate the ACK going missing: receiver saw it, tx did not.
-	rx.OnChunk(pkt);
+	rx.OnChunk(pkt);  // receiver got it
+	// (no OnAckReceived for 1 — simulate dropped ACK)
 
-	// Before retry interval elapses, sender has nothing to emit.
-	CHECK(!tx.NextOutgoing(pkt, now + 200));
-
-	// Past the retry interval, sender re-emits chunk 1.
-	CHECK(tx.NextOutgoing(pkt, now + 100 + SnapshotSender::kRetryIntervalMs + 1));
-	CHECK(pkt.chunkIdx == 1);  // still chunk 1
-	// Receiver sees a duplicate — still valid, ignored as already-filled.
-	CHECK(rx.OnChunk(pkt));
-	CHECK(rx.ReceivedChunks() == 2);  // not double-counted
-
-	// This time the ACK gets through.
-	tx.OnAckReceived(1);
-
-	// Proceed to chunk 2.
-	CHECK(tx.NextOutgoing(pkt, now + 1000));
+	// Window-aware: with chunk 1 still un-acked, the sender will
+	// happily emit chunk 2 next (keeps the pipe full).
+	CHECK(tx.NextOutgoing(pkt, now + 200));
 	CHECK(pkt.chunkIdx == 2);
 	rx.OnChunk(pkt);
 	tx.OnAckReceived(2);
 
+	// All never-sent chunks are out, chunk 1 is the only in-flight
+	// un-acked one, and its retry timer hasn't expired.  Nothing
+	// to send right now.
+	CHECK(!tx.NextOutgoing(pkt, now + 300));
+
+	// Past the retry interval, sender re-emits chunk 1.
+	CHECK(tx.NextOutgoing(pkt,
+		now + 100 + SnapshotSender::kRetryIntervalMs + 1));
+	CHECK(pkt.chunkIdx == 1);  // resend of the un-acked one
+	CHECK(rx.OnChunk(pkt));    // receiver sees a duplicate, still valid
+	CHECK(rx.ReceivedChunks() == 3);  // unchanged — chunk 1 already counted
+
+	// ACK gets through this time.  Out-of-order ACK across chunk 2
+	// already worked above.
+	tx.OnAckReceived(1);
 	CHECK(tx.GetStatus() == SnapshotSender::Status::Done);
 	CHECK(rx.IsComplete());
 }

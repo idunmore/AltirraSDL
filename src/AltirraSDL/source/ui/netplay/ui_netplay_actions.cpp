@@ -985,6 +985,39 @@ void ReconcileHostedGames(uint64_t nowMs) {
 			ATNetplayGlue::HostSetPromptAccept(o.id.c_str(), true);
 		}
 
+		// Push the relay context to the coordinator EVERY tick (not
+		// only when the heartbeat is due).  Reason: the Create-result
+		// handler in ui_netplay.cpp stamps `lastHeartbeatMs = nowMs`
+		// the moment the lobby registration is received, which makes
+		// the heartbeat-due block below skip its first iteration for
+		// up to 30 s.  Hoisting the SetRelayContext call out of that
+		// block lets MaybePrearmRelay see mLobbyRelayKnown=true on
+		// the very first Poll tick after Create returns — that is
+		// what makes "relay-first" actually relay-first instead of
+		// waiting another 30 s for the next heartbeat.  The call is
+		// idempotent (it just memcpy's sessionId + resolves the
+		// lobby endpoint), so per-tick frequency is harmless.
+		if (coordRunning && !o.lobbyRegistrations.empty()) {
+			auto lobbiesNow = AllEnabledHttpLobbies();
+			for (const auto& reg : o.lobbyRegistrations) {
+				if (reg.sessionId.empty() || reg.token.empty())
+					continue;
+				const ATNetplay::LobbyEndpoint *ep = nullptr;
+				for (const auto& L : lobbiesNow) {
+					if (L.section == reg.section) { ep = &L.endpoint; break; }
+				}
+				if (!ep) continue;
+				char lobbyHostPort[128];
+				std::snprintf(lobbyHostPort, sizeof lobbyHostPort,
+					"%s:%u", ep->host.c_str(),
+					(unsigned)ATLobby::kReflectorPortDefault);
+				ATNetplayGlue::HostSetRelayContext(
+					o.id.c_str(),
+					reg.sessionId.c_str(),
+					lobbyHostPort);
+			}
+		}
+
 		// Periodic heartbeat to every lobby this offer is registered
 		// with.  A slow/dead lobby here doesn't block the others
 		// because each Heartbeat request is independent.
@@ -1023,22 +1056,9 @@ void ReconcileHostedGames(uint64_t nowMs) {
 					}
 					if (!ep) continue;
 
-					// v4 two-sided punch: keep the coordinator's
-					// relay context fresh so the auto-fallback can
-					// engage against THIS lobby if a later joiner
-					// attempt times out.  Idempotent — the coord
-					// just memcpy's the sessionId + resolves the
-					// lobby endpoint on each call.
-					{
-						char lobbyHostPort[128];
-						std::snprintf(lobbyHostPort, sizeof lobbyHostPort,
-							"%s:%u", ep->host.c_str(),
-							(unsigned)ATLobby::kReflectorPortDefault);
-						ATNetplayGlue::HostSetRelayContext(
-							o.id.c_str(),
-							reg.sessionId.c_str(),
-							lobbyHostPort);
-					}
+					// v4 two-sided punch: relay context is now
+					// pushed every tick from the hoisted block
+					// above, so we don't need to refresh it here.
 					LobbyRequest req{};
 					req.op          = LobbyOp::Heartbeat;
 					req.endpoint    = *ep;

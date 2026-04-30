@@ -557,6 +557,10 @@ private:
 	uint8_t mRelaySessionId[16] = {};
 	bool    mLobbyRelayKnown = false;
 	Endpoint mLobbyRelayEndpoint;
+	// Cached "host:port" string we last successfully resolved, used
+	// by SetRelayContext to short-circuit per-tick re-entry without
+	// re-running Transport::Resolve() or re-emitting a log line.
+	std::string mLobbyHostPortCached;
 	bool    mRelayRegistered = false;
 	uint64_t mRelayRegisteredMs = 0;
 
