@@ -316,8 +316,20 @@ void Coordinator::Poll(uint64_t nowMs) {
 			if (!PeekMagic(mRxBuf, n, magic)) continue;
 			// Peer is visible through the lobby — if we were not
 			// already in Relay mode, switch now so our responses
-			// travel back the same path.
+			// travel back the same path.  Also register with the
+			// relay so the lobby will deliver our outgoing ASDF
+			// frames; without this, WrapAndSend wraps the packet
+			// but the lobby drops it because we have no entry in
+			// its RelayTable.  Idempotent — SendRelayRegister
+			// no-ops once registered.  Observed 2026-04-29 on
+			// same-machine two-instance test: joiner pre-armed
+			// and switched to relay-only at T+6s, host received
+			// the wrapped Hello (auto-flipped here), but its
+			// snapshot chunks all dropped at the lobby because
+			// it never registered, leaving the session frozen
+			// in SendingSnapshot.
 			mPeerPath = PeerPath::Relay;
+			SendRelayRegister();
 		}
 
 		BumpCandidateRx(from, magic == kMagicReject);
@@ -1073,6 +1085,28 @@ void Coordinator::PumpSnapshotSender(uint64_t nowMs) {
 		// intent is clearer with an explicit break).
 		break;
 	}
+
+	// Surface SnapTx retry-budget exhaustion HERE, not only in
+	// HandleSnapAck.  NextOutgoing() flips the status to Failed once
+	// kMaxAttemptsPerChunk re-sends elapse without an ack — but if
+	// zero acks ever arrived (the path one-way, e.g. host direct +
+	// joiner relay-only), HandleSnapAck never fires and the session
+	// hangs in SendingSnapshot indefinitely.  Detecting the failed
+	// status here drives a clean FailWith so the UI surfaces an error
+	// and the user isn't left wondering why nothing happened.
+	if (mSnapTx.GetStatus() == SnapshotSender::Status::Failed) {
+		const bool sessionStart = (mPhase == Phase::SendingSnapshot);
+		const bool midResync    = (mPhase == Phase::Resyncing &&
+		                            mRole == Role::Host);
+		if (sessionStart) {
+			FailWith("snapshot upload failed (no chunk acks received)");
+		} else if (midResync) {
+			SendBye(kByeDesyncDetected);
+			mPhase = Phase::Desynced;
+			mLastError = "resync payload upload failed (no acks)";
+			g_ATLCNetplay("host: resync transfer failed (no acks) — terminating session");
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -1752,10 +1786,20 @@ void Coordinator::MaybePrearmRelay(uint64_t nowMs) {
 			(unsigned long long)(nowMs - mPhaseStartMs));
 		return;
 	}
-	if (mRole == Role::Host && mPhase == Phase::WaitingForJoiner) {
+	if (mRole == Role::Host &&
+	    (mPhase == Phase::WaitingForJoiner ||
+	     mPhase == Phase::Handshaking ||
+	     mPhase == Phase::SendingSnapshot)) {
 		// Pre-arm only after a hint has actually arrived — without
 		// one the joiner doesn't know our endpoint either, so the
-		// table entry would be unused.
+		// table entry would be unused.  Extended to cover Handshaking
+		// and SendingSnapshot so a host that accepted the joiner
+		// quickly (manual Allow click within ~3s of Hello) still
+		// pre-arms before the joiner's own fallback timer flips them
+		// to relay-only.  Without this, the joiner ends up relay-only
+		// while the host is still direct-only, the host's snapshot
+		// chunks travel out but no acks come back, and the session
+		// hangs in SendingSnapshot until the user gives up.
 		if (!mHostHasSeenHint) return;
 		SendRelayRegister();
 		g_ATLCNetplay("host: relay pre-armed at T+%llu ms (still trying direct)",
@@ -1789,8 +1833,15 @@ void Coordinator::MaybeEngageRelay(uint64_t nowMs) {
 	// Host-side: if a hint has been received and we still have no
 	// peer after the fallback window, register with the lobby too so
 	// joiner-sent ASDF frames reach us.  Without both sides being
-	// registered the lobby drops ASDF silently.
-	if (mRole == Role::Host && mPhase == Phase::WaitingForJoiner) {
+	// registered the lobby drops ASDF silently.  Extended to cover
+	// Handshaking and SendingSnapshot for the same reason as the
+	// pre-arm case above — joiner-side fallback runs on a 6 s timer
+	// from the joiner's mPhaseStartMs and is independent of how
+	// quickly the host accepts the join.
+	if (mRole == Role::Host &&
+	    (mPhase == Phase::WaitingForJoiner ||
+	     mPhase == Phase::Handshaking ||
+	     mPhase == Phase::SendingSnapshot)) {
 		if (mPhaseStartMs == 0) return;
 		if (nowMs - mPhaseStartMs < kRelayFallbackAfterMs) return;
 		if (!mHostHasSeenHint) return;  // no joiner known yet
