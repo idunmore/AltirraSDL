@@ -78,3 +78,16 @@ const std::vector<ATAndroidVolume>& ATAndroid_GetStorageVolumes();
 // Invalidate the cached volume list so the next
 // ATAndroid_GetStorageVolumes() call re-queries the Java side.
 void ATAndroid_InvalidateStorageVolumes();
+
+// Toggle Android immersive mode — hide / show the status bar and
+// navigation bar so the emulator canvas occupies the entire physical
+// screen.  Swiping from the top or bottom edge transiently reveals
+// the bars while immersive is on.  No-op on non-Android builds.
+//
+// On API 30+ uses WindowInsetsController + setDecorFitsSystemWindows;
+// on older devices falls back to setSystemUiVisibility with
+// IMMERSIVE_STICKY.  After toggling, the safe-area insets reported by
+// ATAndroid_GetSafeInsets() will change on the next layout pass —
+// callers should invalidate via ATAndroid_InvalidateSafeInsets() so
+// the UI re-queries them.
+void ATAndroid_SetImmersiveMode(bool enabled);

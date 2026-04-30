@@ -130,8 +130,12 @@ extern "C" void ATWasmSyncFSOut();
 #include <pthread.h>
 #include <unistd.h>
 #include <fcntl.h>
-#include "android_platform.h"
 #endif
+
+// Header is safe to include on all platforms — the .cpp provides
+// no-op stubs for non-Android targets so the call sites don't need
+// to be guarded.
+#include "android_platform.h"
 
 ATSimulator g_sim;
 extern ATUIKeyboardOptions g_kbdOpts;
@@ -861,6 +865,11 @@ static void HandleEvents() {
 			ATAndroid_InvalidateSafeInsets();
 			ATAndroid_InvalidateStorageVolumes();
 			ATMobileUI_InvalidateFileBrowser();
+			// Re-apply immersive mode — Android can reset the system UI
+			// flags when the activity is recreated (e.g. coming back
+			// from a permission dialog or another fullscreen app), so
+			// the bars would reappear without this re-call.
+			ATAndroid_SetImmersiveMode(g_mobileState.fullScreenImmersive);
 #endif
 			break;
 
@@ -1701,6 +1710,11 @@ int main(int argc, char *argv[]) {
 		g_mobileState.layoutConfig.contentScale = cs;
 		LOG_INFO("Main", "Touch controls content scale: %.2f", cs);
 	}
+
+	// Apply the persisted immersive-mode choice now so the user lands
+	// in the same fullscreen state they had at last close.  Safe no-op
+	// on non-Android builds.
+	ATAndroid_SetImmersiveMode(g_mobileState.fullScreenImmersive);
 
 	// Register device extended commands (copy/paste, explore disk, mount VHD, etc.)
 	extern void ATRegisterDeviceXCmds(ATDeviceManager& dm);

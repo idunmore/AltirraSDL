@@ -284,7 +284,8 @@ bool ATTouchControls_HandleEvent(const SDL_Event &ev, const ATTouchLayout &layou
 				s_menuMouseActive = true;
 				return true;
 			}
-			if (ATNetplayGlue::IsLockstepping()
+			if (showControls
+				&& ATNetplayGlue::IsLockstepping()
 				&& ATEmoteNetplay::GetSendEnabled()
 				&& layout.btnEmote.Contains(mx, my))
 			{
@@ -338,10 +339,11 @@ bool ATTouchControls_HandleEvent(const SDL_Event &ev, const ATTouchLayout &layou
 		}
 
 		// --- EMOTE BUTTON ---
-		// Only active during netplay lockstep with Send Emotes enabled.
-		// Opens immediately on DOWN — the picker replaces the button so
-		// there is no scroll-under risk for the release event.
-		if (ATNetplayGlue::IsLockstepping()
+		// Only active during netplay lockstep with Send Emotes enabled
+		// AND the touch chrome visible — same gate as the renderer
+		// above, so a hidden button can never receive a phantom tap.
+		if (showControls
+			&& ATNetplayGlue::IsLockstepping()
 			&& ATEmoteNetplay::GetSendEnabled()
 			&& layout.btnEmote.Contains(px, py))
 		{
@@ -749,8 +751,12 @@ void ATTouchControls_Render(const ATTouchLayout &layout, const ATTouchLayoutConf
 	}
 
 	// --- Online Play emote button (only during active netplay + send
-	//     toggle on) ---
-	if (ATNetplayGlue::IsLockstepping() && ATEmoteNetplay::GetSendEnabled()) {
+	//     toggle on + the rest of the touch chrome is visible) ---
+	// Tied to `showControls` so the user toggling "Show Touch
+	// Controls" off in mobile settings hides the emote button along
+	// with the joystick / fire / console keys — matches the user's
+	// expectation that "controls off" means a clean emulator canvas.
+	if (showControls && ATNetplayGlue::IsLockstepping() && ATEmoteNetplay::GetSendEnabled()) {
 		const ATTouchRect &e = layout.btnEmote;
 		DrawButton(dl, e, "", btnConsole, textColor, false);
 		// Speech-bubble glyph drawn procedurally so we don't depend on

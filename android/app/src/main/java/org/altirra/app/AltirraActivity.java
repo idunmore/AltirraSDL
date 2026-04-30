@@ -10,6 +10,10 @@ import android.os.Environment;
 import android.os.storage.StorageManager;
 import android.os.storage.StorageVolume;
 import android.provider.Settings;
+import android.view.View;
+import android.view.Window;
+import android.view.WindowInsets;
+import android.view.WindowInsetsController;
 
 import java.io.File;
 import java.util.List;
@@ -152,6 +156,71 @@ public class AltirraActivity extends SDLActivity {
      * Called from native (JNI) to populate the file browser shortcut
      * bar with SD card / USB drive entries.
      */
+    /**
+     * Toggle Android's immersive mode.  When enabled, the system status
+     * bar and navigation bar are hidden and the emulator canvas
+     * occupies the entire physical screen.  Swiping from the top or
+     * bottom edge transiently reveals them, then they auto-hide again
+     * (BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE on API 30+, IMMERSIVE_STICKY
+     * on older devices).
+     *
+     * Called from native via JNI when the user toggles the "Full
+     * Screen" setting in Gaming Mode.  Must be invoked on the UI
+     * thread; we marshal via runOnUiThread so the JNI caller can be on
+     * any thread.
+     */
+    public void setImmersiveMode(final boolean enabled) {
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                applyImmersiveMode(enabled);
+            }
+        });
+    }
+
+    private void applyImmersiveMode(boolean enabled) {
+        Window window = getWindow();
+        if (window == null) return;
+
+        if (Build.VERSION.SDK_INT >= 30) {
+            // API 30+ uses WindowInsetsController and decor-fits-system-
+            // windows = false to draw under the bars.  This is the
+            // modern, non-deprecated path.
+            window.setDecorFitsSystemWindows(!enabled);
+            WindowInsetsController controller = window.getInsetsController();
+            if (controller != null) {
+                if (enabled) {
+                    controller.hide(WindowInsets.Type.statusBars()
+                                  | WindowInsets.Type.navigationBars());
+                    controller.setSystemBarsBehavior(
+                        WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+                } else {
+                    controller.show(WindowInsets.Type.statusBars()
+                                  | WindowInsets.Type.navigationBars());
+                }
+            }
+        } else {
+            // Pre-30: legacy setSystemUiVisibility flags.  Sticky-immersive
+            // means the bars come back transiently on a swipe gesture
+            // and auto-hide.  Same UX as the modern API above.
+            View decor = window.getDecorView();
+            if (decor == null) return;
+            int flags;
+            if (enabled) {
+                flags = View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                      | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                      | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                      | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                      | View.SYSTEM_UI_FLAG_FULLSCREEN
+                      | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY;
+            } else {
+                flags = View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                      | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN;
+            }
+            decor.setSystemUiVisibility(flags);
+        }
+    }
+
     public String getStorageVolumes() {
         StorageManager sm = (StorageManager) getSystemService(Context.STORAGE_SERVICE);
         if (sm == null) return "";

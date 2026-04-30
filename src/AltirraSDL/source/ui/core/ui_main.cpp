@@ -1618,6 +1618,47 @@ void ATUIRenderFrame(ATSimulator &sim, VDVideoDisplaySDL3 &display,
 	{
 		uint64_t nowMs = SDL_GetTicks();
 		ATEmoteNetplay::Process(nowMs);
+
+		// In Gaming Mode the emulator canvas is wrapped by a custom
+		// touch chrome (top bar with console buttons + bottom-right
+		// fire / hamburger).  ImGui's WorkPos doesn't know about it,
+		// so the inbound icon would land underneath the START button
+		// and the outbound icon underneath FIRE A.  Push both anchors
+		// in by the chrome height taken from the touch layout — the
+		// layout has already been recomputed by ATMobileUI_Render
+		// earlier in the frame.
+		if (ATUIIsGamingMode()) {
+			extern ATMobileUIState g_mobileState;
+			const ATTouchLayout &lay = g_mobileState.layout;
+			ATEmoteOverlay::SafeArea sa{};
+			// Top-left inbound: drop below the lowest console-button
+			// row (chromeTopBottomPx already accounts for both rows
+			// in portrait when the layout had to spill over).  We
+			// compare against vp->WorkPos so we only push if the
+			// chrome actually pokes into the work area.
+			const ImGuiViewport *vp = ImGui::GetMainViewport();
+			float chromeBottom = lay.chromeTopBottomPx;
+			if (chromeBottom > vp->WorkPos.y)
+				sa.topPx = chromeBottom - vp->WorkPos.y + 8.0f;
+			// Bottom-right outbound: lift above the fire buttons so
+			// the confirmation icon doesn't sit on top of FIRE A.
+			float fireTop = lay.btnFireA.y0;
+			if (lay.btnFireB.y0 > 0.0f && lay.btnFireB.y0 < fireTop)
+				fireTop = lay.btnFireB.y0;
+			float vpBottom = vp->WorkPos.y + vp->WorkSize.y;
+			if (fireTop > 0.0f && fireTop < vpBottom)
+				sa.bottomPx = vpBottom - fireTop + 8.0f;
+			// Right-side fire column also pushes the outbound icon
+			// inward so it doesn't tuck under fire buttons.
+			float fireLeft = lay.btnFireA.x0;
+			if (lay.btnFireB.x0 > 0.0f && lay.btnFireB.x0 < fireLeft)
+				fireLeft = lay.btnFireB.x0;
+			float vpRight = vp->WorkPos.x + vp->WorkSize.x;
+			if (fireLeft > 0.0f && fireLeft < vpRight)
+				sa.rightPx = vpRight - fireLeft + 8.0f;
+			ATEmoteOverlay::SetSafeArea(sa);
+		}
+
 		ATEmoteOverlay::Render(nowMs);
 		ATEmotePicker::Render();
 	}

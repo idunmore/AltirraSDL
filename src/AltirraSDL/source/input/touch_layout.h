@@ -61,6 +61,13 @@ struct ATTouchLayout {
 	ATTouchRect fireZone;      // Right thumb area
 	ATTouchRect displayArea;   // Emulator output
 
+	// Pixel y-coordinate just below the bottom of the topBar / second
+	// row of console buttons — the lowest "occupied" pixel in the
+	// chrome at the top of the screen.  Overlays (e.g. inbound emote
+	// icons that anchor top-left) push their final position to at
+	// least this Y so they don't sit underneath the console buttons.
+	float chromeTopBottomPx = 0.0f;
+
 	// Button positions (pixel coordinates, calculated from zones + screen size)
 	// Console keys
 	ATTouchRect btnStart;

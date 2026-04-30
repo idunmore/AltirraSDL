@@ -101,6 +101,16 @@ struct ATMobileUIState {
 	// / fire / console controls while keeping the menu icon visible
 	// (e.g. demoscene viewing).  Default: visible.
 	bool showHamburgerMenu = true;
+
+	// --- Full-screen immersive mode (mobile) ---
+	// When true, the OS status bar and navigation bar are hidden so the
+	// emulator canvas occupies the entire physical screen — same UX as
+	// a video player going fullscreen.  Swiping from the top or bottom
+	// edge transiently reveals them; they auto-hide on idle.
+	// Implemented via JNI to AltirraActivity.setImmersiveMode() — no-op
+	// on non-Android builds (where windowed mode is already handled by
+	// the platform).
+	bool fullScreenImmersive = false;
 };
 
 // Initialize mobile UI (call once at startup, after ImGui init)

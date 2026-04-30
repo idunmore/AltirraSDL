@@ -456,6 +456,35 @@ bool ATAndroid_OpenManageStorageSettings() {
 	return true;
 }
 
+void ATAndroid_SetImmersiveMode(bool enabled) {
+	JNIEnv *env = GetEnv();
+	jobject activity = GetActivity();
+	if (!env || !activity) return;
+
+	jclass activityClass = env->GetObjectClass(activity);
+	if (!activityClass) {
+		CheckAndClearException(env, "imm: GetObjectClass");
+		return;
+	}
+	JLocal _acls(env, activityClass);
+
+	jmethodID mid = env->GetMethodID(activityClass,
+		"setImmersiveMode", "(Z)V");
+	if (!mid) {
+		CheckAndClearException(env, "setImmersiveMode mid");
+		LOGW("AltirraActivity.setImmersiveMode missing");
+		return;
+	}
+	env->CallVoidMethod(activity, mid, (jboolean)(enabled ? JNI_TRUE : JNI_FALSE));
+	if (CheckAndClearException(env, "setImmersiveMode call")) return;
+
+	// The system bar visibility change will trigger a window-insets
+	// callback; flush our cached insets so the next GetSafeInsets()
+	// pulls the updated values.
+	ATAndroid_InvalidateSafeInsets();
+	LOGI("Immersive mode %s", enabled ? "enabled" : "disabled");
+}
+
 #else // !__ANDROID__
 
 ATSafeInsets ATAndroid_GetSafeInsets() { return ATSafeInsets{}; }
@@ -465,6 +494,7 @@ bool ATAndroid_HasStoragePermission() { return true; }
 const char *ATAndroid_GetPublicDownloadsDir() { return ""; }
 bool ATAndroid_OpenManageStorageSettings() { return false; }
 void ATAndroid_Vibrate(int) {}
+void ATAndroid_SetImmersiveMode(bool) {}
 
 namespace {
 std::vector<ATAndroidVolume> g_emptyVolumes;

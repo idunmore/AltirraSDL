@@ -100,6 +100,7 @@ static void LoadMobileConfig(ATMobileUIState &mobileState) {
 	mobileState.showTouchControls = key.getBool("ShowTouchControls", false);
 #endif
 	mobileState.showHamburgerMenu = key.getBool("ShowHamburgerMenu", true);
+	mobileState.fullScreenImmersive = key.getBool("FullScreenImmersive", false);
 }
 
 void SaveMobileConfig(const ATMobileUIState &mobileState) {  // shared via mobile_internal.h
@@ -125,6 +126,7 @@ void SaveMobileConfig(const ATMobileUIState &mobileState) {  // shared via mobil
 		key.setInt("InterfaceScale", mobileState.interfaceScale);
 		key.setBool("ShowTouchControls", mobileState.showTouchControls);
 		key.setBool("ShowHamburgerMenu", mobileState.showHamburgerMenu);
+		key.setBool("FullScreenImmersive", mobileState.fullScreenImmersive);
 	}
 	// Persist immediately — registry-only writes are lost if the user
 	// swipes the app away from recents before it backgrounds properly.

@@ -42,6 +42,11 @@ struct Slot {
 Slot gInbound;
 Slot gOutbound;
 
+// Per-frame safe-area override.  Cleared at the end of each Render
+// pass so a caller that forgets to set it on the next frame falls
+// back to the viewport work area.
+SafeArea gSafeArea;
+
 float Smoothstep(float t) {
 	if (t <= 0.0f) return 0.0f;
 	if (t >= 1.0f) return 1.0f;
@@ -77,8 +82,19 @@ void RenderSlot(Slot &slot, Side side, uint64_t nowMs) {
 		return;
 
 	const ImGuiViewport *vp = ImGui::GetMainViewport();
-	const ImVec2 workPos  = vp->WorkPos;
-	const ImVec2 workSize = vp->WorkSize;
+	// Apply the per-frame safe-area override to the viewport work
+	// area.  Mobile pushes the inbound icon below its custom top bar
+	// (console buttons) and the outbound icon above its bottom touch
+	// controls; Desktop leaves the override at zero so we anchor flush
+	// against the menu-bar / window edge as before.
+	const float extraTop    = gSafeArea.topPx    > 0.0f ? gSafeArea.topPx    : 0.0f;
+	const float extraBottom = gSafeArea.bottomPx > 0.0f ? gSafeArea.bottomPx : 0.0f;
+	const float extraLeft   = gSafeArea.leftPx   > 0.0f ? gSafeArea.leftPx   : 0.0f;
+	const float extraRight  = gSafeArea.rightPx  > 0.0f ? gSafeArea.rightPx  : 0.0f;
+	const ImVec2 workPos(vp->WorkPos.x + extraLeft,
+	                     vp->WorkPos.y + extraTop);
+	const ImVec2 workSize(vp->WorkSize.x - extraLeft - extraRight,
+	                      vp->WorkSize.y - extraTop  - extraBottom);
 
 	// Height ~15% of work area, clamped for phone + 4K.
 	float displayH = workSize.y * 0.15f;
@@ -158,9 +174,17 @@ void Clear() {
 	gOutbound.iconId = -1;
 }
 
+void SetSafeArea(const SafeArea &area) {
+	gSafeArea = area;
+}
+
 void Render(uint64_t nowMs) {
 	RenderSlot(gInbound,  Side::InboundTopLeft,     nowMs);
 	RenderSlot(gOutbound, Side::OutboundBottomRight, nowMs);
+	// Reset for the next frame so a caller that only wants to set
+	// the safe area conditionally (e.g. only on mobile) doesn't keep
+	// its values around when the condition stops holding.
+	gSafeArea = SafeArea{};
 }
 
 } // namespace ATEmoteOverlay

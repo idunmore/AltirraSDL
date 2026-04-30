@@ -44,6 +44,7 @@
 #include "options.h"
 #ifdef ALTIRRA_NETPLAY_ENABLED
 #include "../netplay/ui_netplay_state.h"
+#include "../emotes/emote_netplay.h"
 #endif
 
 #ifndef ALTIRRA_NO_SDL3_IMAGE
@@ -534,6 +535,27 @@ void RenderSettings(ATSimulator &sim, ATUIState &uiState,
 			SaveMobileConfig(mobileState);
 		}
 
+#ifdef ALTIRRA_NETPLAY_ENABLED
+		// Online Play emoticons — when on, an extra speech-bubble
+		// button appears next to the hamburger during a netplay
+		// session and pressing it opens the icon picker.  When off,
+		// the on-screen button is hidden and the keyboard/gamepad
+		// shortcuts (F1 / R3) become the only way to send.  Greyed
+		// out when "Show Touch Controls" is off because the button
+		// piggybacks on the touch chrome — see touch_controls.cpp.
+		{
+			if (!mobileState.showTouchControls)
+				ImGui::BeginDisabled();
+			bool showEmotes = ATEmoteNetplay::GetSendEnabled();
+			if (ATTouchToggle("Show Emoticons", &showEmotes)) {
+				ATEmoteNetplay::SetSendEnabled(showEmotes);
+				ATPersistMobileEdit(kATSettingsCategory_Environment);
+			}
+			if (!mobileState.showTouchControls)
+				ImGui::EndDisabled();
+		}
+#endif
+
 		// Dependent controls — only meaningful when touch controls are visible
 		if (!mobileState.showTouchControls)
 			ImGui::BeginDisabled();
@@ -754,6 +776,22 @@ void RenderSettings(ATSimulator &sim, ATUIState &uiState,
 		}
 
 		ATTouchSection("Display");
+
+#ifdef __ANDROID__
+		// Full Screen — hides the OS status bar and navigation bar so
+		// the emulator canvas occupies the entire physical screen,
+		// like a video player going fullscreen.  Swipe from the top or
+		// bottom edge to transiently reveal them; they auto-hide on
+		// idle.  Persisted and re-applied at startup.
+		if (ATTouchToggle("Full Screen", &mobileState.fullScreenImmersive)) {
+			ATAndroid_SetImmersiveMode(mobileState.fullScreenImmersive);
+			SaveMobileConfig(mobileState);
+		}
+		ATTouchMutedText(
+			"Hide the system status bar and navigation bar so the "
+			"emulator fills the whole screen.  Swipe from the top or "
+			"bottom edge to bring them back temporarily.");
+#endif
 
 		// Filter mode
 		{

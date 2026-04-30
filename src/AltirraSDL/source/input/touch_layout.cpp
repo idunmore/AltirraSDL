@@ -134,6 +134,12 @@ void ATTouchLayout_Update(ATTouchLayout &layout, int screenW, int screenH,
 			topCenterY + menuBtnSize + dp(8.0f),
 			menuBtnSize, menuBtnSize);
 
+		// In landscape the chrome ends at the bottom of the top bar —
+		// the emote button sits below the bar in empty space, so the
+		// inbound overlay doesn't have to push past it (it anchors
+		// top-LEFT, the emote is top-RIGHT).
+		layout.chromeTopBottomPx = topBarY1;
+
 		// Fire buttons (right side, stacked vertically)
 		float fireCenterX = (float)screenW - insetR - fireASize * 0.5f - dp(24.0f);
 		float fireSpacing = dp(16.0f);
@@ -147,35 +153,89 @@ void ATTouchLayout_Update(ATTouchLayout &layout, int screenW, int screenH,
 		float topBarY0 = insetT;
 		float topBarY1 = insetT + topBarH;
 		float topBarY0N = topBarY0 / screenH;
-		float topBarY1N = topBarY1 / screenH;
 		float insetLN = insetL / screenW;
 		float insetRN = 1.0f - insetR / screenW;
 		float insetBN = 1.0f - insetB / screenH;
+
+		// Hamburger + emote sit on the right edge of the top bar; they
+		// always stay there regardless of how many console buttons fit.
+		// The emote button sits directly below the hamburger, exactly
+		// like the landscape layout, so the user has a consistent place
+		// to find it across orientations.
+		float topCenterY = insetT + topBarH * 0.5f;
+		float menuRightEdge = (float)screenW - insetR - dp(12.0f);
+		layout.btnMenu = MakeButton(
+			menuRightEdge - menuBtnSize * 0.5f,
+			topCenterY, menuBtnSize, menuBtnSize);
+
+		// Reserve room on the right for the menu button (and a small
+		// gap) when laying out the console buttons; if a button would
+		// collide with the menu it gets pushed to a second row instead.
+		float consoleAreaLeft  = insetL + dp(12.0f);
+		float consoleAreaRight = menuRightEdge - menuBtnSize - dp(12.0f);
+
+		// Console keys (top, left-aligned).  We try a single row first;
+		// if all four buttons don't fit between the left inset and the
+		// hamburger column, the overflow drops to a second row that
+		// sits just below the top bar.
+		float consoleSpacing = consoleBtnW + dp(6.0f);
+		float requiredRow1W  = consoleSpacing * 4 - dp(6.0f);  // 4 buttons + 3 gaps
+		bool  twoRows = (consoleAreaLeft + requiredRow1W) > consoleAreaRight;
+
+		float row1CenterY = topCenterY;
+		float row2CenterY = topBarY1 + dp(4.0f) + consoleBtnH * 0.5f;
+		float consoleStartX = consoleAreaLeft + consoleBtnW * 0.5f;
+
+		if (!twoRows) {
+			layout.btnStart  = MakeButton(consoleStartX,                     row1CenterY, consoleBtnW, consoleBtnH);
+			layout.btnSelect = MakeButton(consoleStartX + consoleSpacing,    row1CenterY, consoleBtnW, consoleBtnH);
+			layout.btnOption = MakeButton(consoleStartX + consoleSpacing * 2, row1CenterY, consoleBtnW, consoleBtnH);
+			layout.btnWarp   = MakeButton(consoleStartX + consoleSpacing * 3, row1CenterY, consoleBtnW, consoleBtnH);
+		} else {
+			// Two rows of two: START / SELECT on the top row,
+			// OPTION / FAST-FORWARD on the second row.  Keeps the most-
+			// pressed buttons (START, SELECT) easy to find on the bar
+			// the user already saw in the previous layout.
+			layout.btnStart  = MakeButton(consoleStartX,                  row1CenterY, consoleBtnW, consoleBtnH);
+			layout.btnSelect = MakeButton(consoleStartX + consoleSpacing, row1CenterY, consoleBtnW, consoleBtnH);
+			layout.btnOption = MakeButton(consoleStartX,                  row2CenterY, consoleBtnW, consoleBtnH);
+			layout.btnWarp   = MakeButton(consoleStartX + consoleSpacing, row2CenterY, consoleBtnW, consoleBtnH);
+		}
+
+		// Pixel Y just below whichever row of console buttons sits
+		// lowest in the chrome.  The inbound emote overlay clamps to
+		// at-or-below this so it doesn't sit on top of the buttons.
+		float chromeBottom = twoRows
+			? (row2CenterY + consoleBtnH * 0.5f + dp(4.0f))
+			: topBarY1;
+		layout.chromeTopBottomPx = chromeBottom;
+
+		// Emote button — directly below the hamburger, same column,
+		// same width, ~8dp vertical gap.  Visible (when active) in
+		// portrait too so the player can send icons without rotating
+		// the device.  Pushed below any console-button second row when
+		// that row pokes deeper than the hamburger.
+		float emoteCenterY = topCenterY + menuBtnSize + dp(8.0f);
+		float emoteTop     = emoteCenterY - menuBtnSize * 0.5f;
+		if (twoRows && emoteTop < chromeBottom)
+			emoteCenterY = chromeBottom + menuBtnSize * 0.5f + dp(4.0f);
+		layout.btnEmote = MakeButton(
+			menuRightEdge - menuBtnSize * 0.5f,
+			emoteCenterY, menuBtnSize, menuBtnSize);
+
+		// Display + control zones live below the chrome so the
+		// emulator output never gets occluded by a second console row.
+		float displayTopPx = chromeBottom;
+		float displayTopN  = displayTopPx / screenH;
 
 		// Controls occupy the bottom ~32% of the usable area.
 		float controlsTopPx = (float)screenH - insetB - usableH * 0.32f;
 		float controlsTopN = controlsTopPx / screenH;
 
-		// Normalized zones
-		layout.topBar       = { insetLN, topBarY0N, insetRN, topBarY1N };
+		layout.topBar       = { insetLN, topBarY0N, insetRN, displayTopN };
 		layout.joystickZone = { insetLN, controlsTopN, insetLN + 0.50f, insetBN };
 		layout.fireZone     = { insetRN - 0.40f, controlsTopN, insetRN, insetBN };
-		layout.displayArea  = { insetLN, topBarY1N, insetRN, controlsTopN };
-
-		// Console keys (top, left-aligned)
-		float topCenterY = insetT + topBarH * 0.5f;
-		float consoleStartX = insetL + dp(12.0f) + consoleBtnW * 0.5f;
-		float consoleSpacing = consoleBtnW + dp(6.0f);
-
-		layout.btnStart  = MakeButton(consoleStartX, topCenterY, consoleBtnW, consoleBtnH);
-		layout.btnSelect = MakeButton(consoleStartX + consoleSpacing, topCenterY, consoleBtnW, consoleBtnH);
-		layout.btnOption = MakeButton(consoleStartX + consoleSpacing * 2, topCenterY, consoleBtnW, consoleBtnH);
-		layout.btnWarp   = MakeButton(consoleStartX + consoleSpacing * 3, topCenterY, consoleBtnW, consoleBtnH);
-
-		// Hamburger icon (top-right)
-		layout.btnMenu = MakeButton(
-			(float)screenW - insetR - dp(12.0f) - menuBtnSize * 0.5f,
-			topCenterY, menuBtnSize, menuBtnSize);
+		layout.displayArea  = { insetLN, displayTopN, insetRN, controlsTopN };
 
 		// Fire buttons (bottom-right, stacked)
 		float fireCenterX = (float)screenW - insetR - fireASize * 0.5f - dp(32.0f);

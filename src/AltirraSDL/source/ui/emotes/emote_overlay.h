@@ -31,6 +31,21 @@ void ShowOutbound(int iconId, uint64_t nowMs);
 // netplay teardown.
 void Clear();
 
+// Per-frame override for the safe area used to anchor the inbound
+// (top-left) and outbound (bottom-right) overlays.  Default is
+// `ImGuiViewport::WorkPos`/`WorkSize` which already accounts for any
+// menu bar but is unaware of Gaming-Mode's custom touch chrome (top
+// bar with console buttons + bottom touch controls).  Mobile sets
+// these each frame so the overlays don't sit underneath the chrome.
+// Reset to zero each frame at the start of `Render` if not pushed.
+struct SafeArea {
+	float topPx    = 0.0f;  // extra inset below the viewport top
+	float bottomPx = 0.0f;  // extra inset above the viewport bottom
+	float leftPx   = 0.0f;
+	float rightPx  = 0.0f;
+};
+void SetSafeArea(const SafeArea &area);
+
 // Render both overlays if active.  Safe to call every frame.
 void Render(uint64_t nowMs);
 
@@ -41,9 +56,16 @@ void Render(uint64_t nowMs);
 // Inline no-op stubs for builds without the netplay module (e.g. WASM).
 // See netplay_glue.h for the rationale.
 namespace ATEmoteOverlay {
+    struct SafeArea {
+        float topPx    = 0.0f;
+        float bottomPx = 0.0f;
+        float leftPx   = 0.0f;
+        float rightPx  = 0.0f;
+    };
     inline void Show(int, uint64_t)         {}
     inline void ShowOutbound(int, uint64_t) {}
     inline void Clear()                     {}
+    inline void SetSafeArea(const SafeArea&) {}
     inline void Render(uint64_t)            {}
 } // namespace ATEmoteOverlay
 
