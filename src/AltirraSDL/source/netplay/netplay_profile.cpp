@@ -29,6 +29,12 @@
 #include "gtia.h"
 #include "gtiatypes.h"
 
+// SDL3 must be visible before ui_mobile.h (which references SDL_Event
+// in its public API).  We don't actually consume any SDL types here,
+// but the header transitively requires the declaration.
+#include <SDL3/SDL.h>
+#include "ui/mobile/ui_mobile.h"  // ATMobileUIState, ATMobileUIScreen, g_mobileState
+
 #include <at/atcore/serializable.h>
 #include <at/atio/image.h>           // ATStateLoadContext
 #include <vd2/system/refcount.h>
@@ -57,6 +63,7 @@ extern void ATRegistryFlushToDisk();
 extern ATSimulator g_sim;
 extern ATLogChannel g_ATLCNetplay;
 extern VDStringA ATGetConfigDir();
+extern ATMobileUIState g_mobileState;  // main_sdl3.cpp:197
 
 // Forward to ui_netplay_state.cpp's cached CRC32 helper.  Declared
 // here at file scope (NOT inside ATNetplayProfile) so the linker
@@ -84,6 +91,26 @@ uint32_t                  g_preProfileId  = 0;
 // state didn't survive the crash anyway.
 vdrefptr<IATSerializable> g_preSnapshot;
 vdrefptr<IATSerializable> g_preSnapshotInfo;
+
+// Pre-session Gaming Mode UI state.  Captured at BeginSession before
+// any live mutation, used ONLY on the BeginSession failure-cleanup
+// path (success EndSession deliberately forces gameLoaded=false +
+// currentScreen=GameBrowser, since the pre-session running game is
+// not currently restored — see netplay_profile.cpp:733-748 comment
+// block on the documented-unsafe ApplySnapshot deferral).
+//
+// Without this restore, post-EndSession the Gaming Mode router
+// (ui_mobile.cpp:695-702) sees None+gameLoaded==true and renders the
+// emulator view on top of a freshly-cold-reset sim, producing a
+// "phantom single player" screen.  Reported 2026-05-02 in the same
+// session that surfaced the mbSerInDeferredLoad determinism bug.
+//
+// Harmless on Desktop builds: g_mobileState is a single global with
+// no ifdef guard (main_sdl3.cpp:197), and Desktop never renders
+// through the mobile router so the writes are inert.
+ATMobileUIScreen          g_preMobileScreen     = ATMobileUIScreen::GameBrowser;
+bool                      g_preMobileGameLoaded = false;
+bool                      g_preMobileCaptured   = false;
 
 // Path of the media file the netplay handler loaded for this session
 // (.atr / .car / .xex / .cas).  Set by RegisterSessionImage from the
@@ -599,6 +626,15 @@ bool BeginSession(const PerGameOverrides& ov) {
 		return false;
 	}
 
+	// Capture pre-session Gaming Mode UI state.  Used by the
+	// failure-cleanup path below to restore the user's UI context
+	// verbatim when no live mutation occurred.  EndSession's success
+	// path uses a different (lossy-honest) restore — see comment at
+	// EndSession's mobile-state reset block.
+	g_preMobileScreen     = g_mobileState.currentScreen;
+	g_preMobileGameLoaded = g_mobileState.gameLoaded;
+	g_preMobileCaptured   = true;
+
 	EnsureNetplayProfileKey();
 
 	// CRITICAL: update g_ATCurrentProfileId to kNetplayProfileId BEFORE
@@ -674,6 +710,17 @@ bool BeginSession(const PerGameOverrides& ov) {
 		// the load AFTER BeginSession returns), but clear defensively
 		// in case a stale value lingered from a prior aborted session.
 		g_sessionImagePath.clear();
+		// Restore captured Gaming Mode UI state verbatim — at this
+		// point no UI flow has executed since the capture, so the
+		// captured values are the correct return target.  This path
+		// fires when ApplyCanonicalProfile fails (e.g. firmware
+		// resolution failure), so the user should land back exactly
+		// where they were before clicking Host/Join.
+		if (g_preMobileCaptured) {
+			g_mobileState.currentScreen = g_preMobileScreen;
+			g_mobileState.gameLoaded    = g_preMobileGameLoaded;
+			g_preMobileCaptured = false;
+		}
 		DeleteLockFile();
 		return false;
 	}
@@ -765,6 +812,25 @@ void EndSession() {
 	// preserved.  Must run AFTER ATSettingsSetTemporaryProfileMode
 	// (false) so the ATSaveSettings inside the scrub actually writes.
 	ScrubSessionMediaFromUserProfile();
+
+	// Reset Gaming Mode UI state to "no game, on the Game Library".
+	// This is intentionally lossy — we don't restore the captured
+	// pre-session values because:
+	//   * Restoring gameLoaded=true is dishonest: the user's
+	//     pre-session game RAM was wiped by SwitchProfile's
+	//     ColdReset, and the documented-unsafe ApplySnapshot path
+	//     above is deliberately skipped.  Showing the emulator view
+	//     (router behaviour for None+gameLoaded) on a freshly
+	//     cold-reset sim presents a phantom "single player" screen.
+	//   * Restoring currentScreen verbatim risks landing on a stale
+	//     overlay (AcceptJoinPrompt, etc.) that's no longer valid.
+	// The honest UI state matching the underlying sim is
+	// "GameBrowser + gameLoaded=false" — the user can re-launch a
+	// game from the library if they want.  Harmless on Desktop
+	// (mobile router never runs).
+	g_mobileState.gameLoaded    = false;
+	g_mobileState.currentScreen = ATMobileUIScreen::GameBrowser;
+	g_preMobileCaptured = false;
 
 	DeleteLockFile();
 

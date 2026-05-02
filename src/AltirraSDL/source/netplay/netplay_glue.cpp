@@ -16,6 +16,7 @@
 #include "simulator.h"
 #include "cpu.h"
 #include "gtia.h"
+#include <at/ataudio/pokey.h>
 #include <at/atcore/logging.h>
 #include <at/atcore/scheduler.h>
 
@@ -413,6 +414,27 @@ void Poll(uint64_t nowMs) {
 		ATNetplayInput::BeginSession();
 		g_ATLCNetplay("input: BeginSession (sim running=%d paused=%d)",
 			g_sim.IsRunning() ? 1 : 0, g_sim.IsPaused() ? 1 : 0);
+
+		// Same reasoning as the CPU register normalization above, but
+		// for keyboard modifier state.  POKEY's SKSTAT byte is computed
+		// from mbShiftKeyState/mbControlKeyState in ColdReset
+		// (pokey.cpp:186 — `mSKSTAT = mbShiftKeyState ? 0x77 : 0x7F`),
+		// and the simhash folds SKSTAT (pokey.cpp:3374).  If one peer
+		// holds Shift at the exact tick lockstep engages — possible
+		// when the user mashes Shift to skip a boot prompt right as
+		// the handshake completes, or in Gaming Mode where on-screen
+		// keyboard repaints can leave latched modifier state — the
+		// two peers' SKSTAT diverge by bit 0x08 and frame-0 desync
+		// fires.  Placing this AFTER ATNetplayInput::BeginSession
+		// matches the warp/slow-motion clear pattern below: the input
+		// manager's restricted mode is armed first, so SDL3 can't
+		// re-set a held modifier between this clear and the first
+		// gated frame.
+		ATPokeyEmulator& pokey = g_sim.GetPokey();
+		pokey.SetShiftKeyState(false, /*immediate=*/true);
+		pokey.SetControlKeyState(false);
+		pokey.SetBreakKeyState(false, /*immediate=*/true);
+		g_ATLCNetplay("lockstep entry: normalized POKEY shift/ctrl/break key state");
 
 		// Force-clear any warp/slow-motion/speed-modifier state that
 		// survived into the session (e.g. user held F1 as handshake

@@ -241,6 +241,19 @@ void ATPokeyEmulator::ColdReset() {
 	mbSerInBurstPendingIRQ1 = false;
 	mbSerInBurstPendingIRQ2 = false;
 	mbSerInBurstPendingData = false;
+	// Reset the deferred-serial-input flag too.  ColdReset already
+	// drops the shift register, the input counter, and the scheduled
+	// mpEventSerialInput tick — leaving this flag set is internally
+	// inconsistent and contaminates the netplay determinism hash
+	// when one peer's prior session involved real OS SIO traffic
+	// (.atr / .cas boot via simulateInputPort) and the next session
+	// does not.  Observed 2026-05-02: host plays World Karate
+	// Championship (.atr) → ends session → hosts Archon (.xex via
+	// HLE, which bypasses POKEY SIO) → frame-0 POKEY hash mismatch
+	// with sidl=1 on host vs sidl=0 on joiner being the sole
+	// differing field.  Same fix shape as the mPotMasterCounter
+	// patch below (2026-04-29).
+	mbSerInDeferredLoad = false;
 	mSerOutBurstDeadline = 0;
 	mbSerialSimulateInputPort = false;
 
