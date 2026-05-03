@@ -796,4 +796,34 @@ bool Back() {
 	return true;
 }
 
+void PopTo(Screen target) {
+	if (g_state.screen == target) return;
+
+	// Walk the existing stack top-down looking for `target`.  If
+	// found, drop everything from that point to the top so the user
+	// lands on `target` with the chain that originally led to it
+	// preserved underneath — Back from there returns to whatever was
+	// before `target` in the original navigation.  Anything popped
+	// (the abandoned current screen + everything that pushed onto
+	// `target`) is discarded so a subsequent Back can never resurface
+	// a stale failure / waiting screen.
+	for (auto it = g_state.backStack.rbegin(); it != g_state.backStack.rend(); ++it) {
+		if (*it == target) {
+			// Erase the matched entry and everything above it.  Erase
+			// uses forward iterators, so convert: rbegin()..it+1 → end-i ..
+			const size_t keepCount = (size_t)(g_state.backStack.rend() - (it + 1));
+			g_state.backStack.resize(keepCount);
+			g_state.screen = target;
+			return;
+		}
+	}
+
+	// Target not on the stack — semantically equivalent to "fresh
+	// start at `target`".  Clear and set; matches Navigate(Closed)
+	// followed by Navigate(target), without pushing the abandoned
+	// current screen.
+	g_state.backStack.clear();
+	g_state.screen = target;
+}
+
 } // namespace ATNetplayUI

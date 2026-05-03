@@ -707,21 +707,42 @@ void RenderJoinConfirm() {
 		"Both sides cold-boot from that so the session starts "
 		"identically.  Your current game will be replaced.");
 
-	// Spec diff — side-by-side view of the local emulator config vs.
-	// the host's session config so the joiner sees which knobs will
-	// change when they accept.  Mismatched tokens are highlighted in
-	// the palette warning colour.
+	// Host configuration view.  The joiner inherits the host's
+	// hardware/firmware/memory mode from the snapshot, so showing a
+	// "Your emulator vs Host" diff would be misleading — the joiner's
+	// own settings don't take part in the running session.  Instead
+	// show the host's configuration as a single column and only
+	// flag rows that the joiner physically can't satisfy: kernel /
+	// BASIC firmware ROMs that are not installed locally.  The game
+	// image itself is always streamed by the host so it never needs
+	// to be flagged here.
 	ImGui::Spacing();
-	ATTouchSection("Configuration");
+	ATTouchSection("Host configuration");
 	JoinCompat jcompat = CheckJoinCompat(
 		st.session.joinTarget.kernelCRC32,
 		st.session.joinTarget.basicCRC32);
 	SpecLine remoteSpec = BuildSpecLineFromSession(
 		st.session.joinTarget, jcompat);
-	SpecLine localSpec  = BuildSpecLineFromConfig(
-		CaptureCurrentMachineConfig());
-	SpecLineRenderDiff(localSpec, remoteSpec,
-		"Your emulator", "Host's session");
+	SpecLineRenderHostOnly(remoteSpec);
+
+	// Surface a one-line firmware advisory so users know what to
+	// install before the join can proceed.  The Browser screen
+	// already gates the row's clickability on this, but the user can
+	// still arrive here from a deep link / private code path so we
+	// repeat the warning where the action is taken.
+	if (jcompat == JoinCompat::MissingKernel
+	 || jcompat == JoinCompat::MissingBasic
+	 || jcompat == JoinCompat::MissingBoth)
+	{
+		ImGui::Spacing();
+		const ATMobilePalette &p = ATMobileGetPalette();
+		ImGui::PushStyleColor(ImGuiCol_Text, ATMobileCol(p.warning));
+		ImGui::TextWrapped(
+			"You are missing one or more of the firmware ROMs "
+			"this host requires.  Install them in System "
+			"Configuration → Firmware before joining.");
+		ImGui::PopStyleColor();
+	}
 
 	EndScreenBody();
 
@@ -733,10 +754,24 @@ void RenderJoinConfirm() {
 		Back();
 	}
 	ImGui::SameLine(0, Dp(10));
+	// Block Join when the joiner is missing required firmware.  The
+	// Browser screen already gates the Browser tile click on this, but
+	// JoinConfirm can also be reached from the private-code path
+	// (JoinPrompt → JoinConfirm) which doesn't re-check, and from
+	// pop-back navigation after a transient compat change.  Without
+	// this guard the user would hit Join, the worker would dispatch
+	// the request, and the failure surfaces only after several
+	// seconds of "Joining…" with no useful diagnostic.
+	const bool firmwareMissing =
+		jcompat == JoinCompat::MissingKernel
+	 || jcompat == JoinCompat::MissingBasic
+	 || jcompat == JoinCompat::MissingBoth;
+	if (firmwareMissing) ImGui::BeginDisabled();
 	if (ATTouchButton("Join", ImVec2(btnW, Dp(ATTouch::kButtonHeightNormal)),
 	                  ATTouchButtonStyle::Accent)) {
 		StartJoiningAction();
 	}
+	if (firmwareMissing) ImGui::EndDisabled();
 
 	if (!open) Back();
 	EndSheet();
@@ -880,13 +915,22 @@ void RenderWaiting() {
 		if (ATTouchButton("Cancel", ImVec2(bw, Dp(ATTouch::kButtonHeightNormal)),
 		                  ATTouchButtonStyle::Neutral)) {
 			ATNetplayGlue::DisconnectActive();
-			Navigate(Screen::Browser);
+			// Pop back to Browser (it's already on the stack from the
+			// natural Hub → Browser → JoinPrompt → Waiting chain).
+			// Calling Navigate(Browser) here would push the failed
+			// Waiting onto the stack, so a subsequent Back from
+			// Browser would resurface this dead screen.
+			PopTo(Screen::Browser);
 		}
 		ImGui::SameLine(0, Dp(10));
 		if (ATTouchButton("Change Code", ImVec2(bw, Dp(ATTouch::kButtonHeightNormal)),
 		                  ATTouchButtonStyle::Accent)) {
 			ATNetplayGlue::DisconnectActive();
-			Navigate(Screen::JoinPrompt);
+			// JoinPrompt is on the stack for private sessions (the
+			// only path that reaches the bad-code branch).  Pop to
+			// it so re-entering the code with a fresh attempt
+			// preserves the Browser-below-JoinPrompt chain.
+			PopTo(Screen::JoinPrompt);
 		}
 		ImGui::SameLine(0, Dp(10));
 		if (ATTouchButton("Try Again", ImVec2(bw, Dp(ATTouch::kButtonHeightNormal)),
@@ -902,7 +946,8 @@ void RenderWaiting() {
 		if (ATTouchButton("Back to Browse", ImVec2(bw, Dp(ATTouch::kButtonHeightNormal)),
 		                  ATTouchButtonStyle::Neutral)) {
 			ATNetplayGlue::DisconnectActive();
-			Navigate(Screen::Browser);
+			// PopTo, not Navigate — see Cancel above for rationale.
+			PopTo(Screen::Browser);
 		}
 		ImGui::SameLine(0, Dp(10));
 		if (ATTouchButton("Try Again", ImVec2(bw, Dp(ATTouch::kButtonHeightNormal)),
@@ -914,8 +959,20 @@ void RenderWaiting() {
 		float btnW = (ImGui::GetContentRegionAvail().x - Dp(10)) * 0.5f;
 		if (ATTouchButton("Cancel", ImVec2(btnW, Dp(ATTouch::kButtonHeightNormal)),
 		                  ATTouchButtonStyle::Danger)) {
-			StopHostingAction();
-			Navigate(Screen::Browser);
+			// Joiner-only Waiting screen (the whole RenderWaiting
+			// reads JoinPhase / joinTarget), so this is always a
+			// joiner cancel.  StopJoin tears down THIS attempt;
+			// don't fall through to StopHostingAction, which would
+			// also disable every game the user has queued for
+			// hosting — a surprising side effect for a user who
+			// just changed their mind about joining.
+			ATNetplayGlue::StopJoin();
+			// Mid-join cancel: pop back to wherever the user came
+			// from (Browser for the normal chain, JoinPrompt for
+			// private sessions if they want to try again with a
+			// different code).  PopTo(Browser) handles both — for
+			// the private chain Browser is also on the stack.
+			PopTo(Screen::Browser);
 		}
 		ImGui::SameLine(0, Dp(10));
 		if (ATTouchButton("Minimise", ImVec2(btnW, Dp(ATTouch::kButtonHeightNormal)),
@@ -1499,7 +1556,12 @@ void RenderAddOffer() {
 			// MachineConfig preset intentionally retained so next Add
 			// Game opens with the same choice.
 		}
-		Navigate(Screen::MyHostedGames);
+		// PopTo, not Navigate — MyHostedGames is on the stack from
+		// the natural Hub → MyHostedGames → AddGame chain.  Using
+		// Navigate here would push AddGame onto the stack and a
+		// subsequent Back from MyHostedGames would re-open AddGame
+		// with stale draft state.
+		PopTo(Screen::MyHostedGames);
 	}
 	ImGui::EndDisabled();
 

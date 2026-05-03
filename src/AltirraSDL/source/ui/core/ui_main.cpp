@@ -95,6 +95,7 @@
 #include "logging.h"
 #include <at/atcore/logging.h>
 #include "ui_fonts.h"
+#include "../gamelibrary/game_library.h"
 
 extern ATSimulator g_sim;
 extern ATUIKeyboardOptions g_kbdOpts;
@@ -1524,6 +1525,20 @@ void ATUIRenderFrame(ATSimulator &sim, VDVideoDisplaySDL3 &display,
 	}
 	ImGui_ImplSDL3_NewFrame();
 	ImGui::NewFrame();
+
+	// Drain background game-library scan results once per frame so
+	// `IsScanning()` flips back to false anywhere in the UI as soon as
+	// the worker thread finishes — not just on the screens that happen
+	// to call ConsumeScanResults() themselves.  Otherwise a scan
+	// triggered from Settings (or from the lobby flow) leaves the
+	// "Scanning..." indicator stuck because mScanning is only cleared
+	// inside ConsumeScanResults.  The call early-exits when no results
+	// are pending, so it costs nothing on idle frames.
+	{
+		extern ATGameLibrary *GetGameLibrary();
+		if (ATGameLibrary *lib = GetGameLibrary())
+			lib->ConsumeScanResults();
+	}
 
 	// Crash report viewer — no-op if no report is pending.  Rendered
 	// early so it is on top and usable even if something later in the

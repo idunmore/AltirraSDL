@@ -824,7 +824,12 @@ void DesktopWaiting() {
 		ImGui::SameLine();
 		if (ImGui::Button("Back to Browse", ImVec2(150, 0))) {
 			ATNetplayGlue::StopJoin();
-			Navigate(Screen::Browser);
+			// PopTo, not Navigate — Browser is on the stack from
+			// the natural Hub → Browser → JoinConfirm → Waiting
+			// chain.  Navigate(Browser) here would push the failed
+			// Waiting onto the stack and a subsequent Back from
+			// Browser would resurface it.
+			PopTo(Screen::Browser);
 		}
 		ImGui::SameLine();
 		if (ImGui::Button("Close", ImVec2(120, 0))) {
@@ -912,8 +917,21 @@ void DesktopWaiting() {
 
 	ImGui::Separator();
 	if (ImGui::Button("End Session", ImVec2(140, 0))) {
-		StopHostingAction();
-		Navigate(Screen::Browser);
+		// DesktopWaiting is a joiner-only screen (it reads
+		// JoinPhase / joinTarget exclusively).  StopJoin tears down
+		// THIS join attempt; don't fall through to
+		// StopHostingAction, which would also disable every game
+		// the user has queued for hosting — a surprising side
+		// effect for a user who just changed their mind about
+		// joining.
+		ATNetplayGlue::StopJoin();
+		// PopTo, not Navigate — see "Back to Browse" above.  This
+		// branch is the mid-join cancel, called before Lockstepping.
+		// PopTo handles the case where Browser is on the stack
+		// (normal join chain) and the rare case where it isn't
+		// (deep-link / out-of-band reach) by falling through to a
+		// fresh Navigate.
+		PopTo(Screen::Browser);
 	}
 	ImGui::SameLine();
 	if (ImGui::Button("Minimise", ImVec2(120, 0))) {
@@ -1461,7 +1479,11 @@ namespace {
 		s_librarySel = -1;
 		st.offerDraft = OfferDraft();
 
-		Navigate(Screen::MyHostedGames);
+		// PopTo, not Navigate — MyHostedGames is on the stack from
+		// the natural Hub → MyHostedGames → AddOffer chain.  Using
+		// Navigate would push AddOffer onto the stack and a Back
+		// from MyHostedGames would resurface it with stale state.
+		PopTo(Screen::MyHostedGames);
 	}
 }
 
@@ -1643,10 +1665,27 @@ void DesktopError() {
 	State& st = GetState();
 	CenterNext(ImVec2(420, 180));
 	bool open = true;
+	// Dismiss-the-error helper.  Use Back(), not Navigate(Browser):
+	// Error is reached via Navigate(Screen::Error) which pushes the
+	// originating screen onto the stack, so Back() returns the user
+	// exactly to where the error was raised — the natural place to
+	// retry or correct input.  Navigate(Browser) here would push
+	// Error onto the stack, so a subsequent Back from Browser would
+	// resurface the dismissed Error sheet.
+	auto dismissError = [&]() {
+		st.session.lastError.clear();
+		if (!Back()) {
+			// Stack was empty — Error was raised without a parent
+			// screen (rare; happens when an action handler
+			// surfaces Error from a notification path).  Fall back
+			// to Browser as the safe home.
+			Navigate(Screen::Browser);
+		}
+	};
 	if (!ImGui::Begin("Online Play Error##netplay", &open,
 		ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoCollapse)) {
 		ImGui::End();
-		if (!open) Navigate(Screen::Browser);
+		if (!open) dismissError();
 		return;
 	}
 	ImGui::TextWrapped("%s", st.session.lastError.empty()
@@ -1654,10 +1693,9 @@ void DesktopError() {
 		: st.session.lastError.c_str());
 	ImGui::Separator();
 	if (ImGui::Button("OK", ImVec2(120, 0))) {
-		st.session.lastError.clear();
-		Navigate(Screen::Browser);
+		dismissError();
 	}
-	if (!open) Navigate(Screen::Browser);
+	if (!open) dismissError();
 	ImGui::End();
 }
 

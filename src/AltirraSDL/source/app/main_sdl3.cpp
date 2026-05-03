@@ -371,6 +371,22 @@ static void HandleEvents() {
 
 	SDL_Event ev;
 	while (SDL_PollEvent(&ev)) {
+		// Android hardware Back button arrives as SDL_SCANCODE_AC_BACK
+		// / SDLK_AC_BACK.  Every "back arrow" handler in the UI
+		// (ATTouchScreenHeader, mobile dialogs, hamburger, file
+		// browser, netplay screens, etc.) listens for ImGuiKey_Escape.
+		// Rewrite the event in place so AC_BACK is treated identically
+		// to a physical Escape press without having to teach every
+		// call-site about a second key.  Physical Escape never
+		// surfaces as AC_BACK, so this rewrite is one-way and safe.
+		if ((ev.type == SDL_EVENT_KEY_DOWN
+		  || ev.type == SDL_EVENT_KEY_UP)
+			&& ev.key.scancode == SDL_SCANCODE_AC_BACK)
+		{
+			ev.key.scancode = SDL_SCANCODE_ESCAPE;
+			ev.key.key      = SDLK_ESCAPE;
+		}
+
 		// Emote picker open-shortcut: R3 (right stick click) while a
 		// netplay lockstep session is live.  Runs before any other
 		// gamepad dispatch so the UI opens even in Gaming Mode.

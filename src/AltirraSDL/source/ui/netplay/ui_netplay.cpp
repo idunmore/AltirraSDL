@@ -920,7 +920,13 @@ void RenderInSessionHUD() {
 			drawDot(dotColor);
 			ImGui::SameLine(0, 6);
 			if (status == Status::Live && peerKnown) {
-				ImGui::Text("%llums",
+				// Zero-pad to 4 digits so the pill width is stable
+				// as the value crosses 1/2/3/4-digit boundaries —
+				// otherwise the box re-flows every frame.  The
+				// HUD switches away from this branch (peer-stall
+				// modal at 3000 ms, relay rescue at 5000 ms) long
+				// before the value would need a 5th digit.
+				ImGui::Text("%04llums",
 					(unsigned long long)peerAgeMs);
 			} else {
 				ImGui::TextUnformatted("Off");
@@ -980,7 +986,10 @@ void RenderInSessionHUD() {
 		if (!peerKnown) {
 			std::snprintf(peerBuf, sizeof peerBuf, "--");
 		} else {
-			std::snprintf(peerBuf, sizeof peerBuf, "%llu ms",
+			// Zero-pad to 4 digits so the HUD width is stable across
+			// 1/2/3/4-digit pings; without padding the row reflows
+			// every frame which is visually distracting.
+			std::snprintf(peerBuf, sizeof peerBuf, "%04llu ms",
 				(unsigned long long)peerAgeMs);
 		}
 		std::snprintf(delayBuf, sizeof delayBuf, "%u %s",

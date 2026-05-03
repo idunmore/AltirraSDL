@@ -653,6 +653,18 @@ void Navigate(Screen next);
 // stack is empty, caller should fall through to the outer (menu / HUD).
 bool Back();
 
+// Pop the back stack until `target` becomes the current screen.  Use
+// this for "Back to Browse" / "Back to My Games" buttons that are
+// semantically a multi-step Back rather than a forward Navigate.
+// Calling Navigate(target) instead would push the current (typically
+// abandoned, e.g. failed Waiting) screen onto the stack, so a
+// subsequent Back would land the user back on that abandoned screen.
+//
+// If `target` is not currently on the back stack, the stack is reset
+// and the user is placed on `target` as a fresh entry — same end
+// state as Navigate(Closed) followed by Navigate(target).
+void PopTo(Screen target);
+
 // Fresh random nickname (eight char, pronounceable) used when
 // Prefs::isAnonymous is true.  Each session gets a new one.
 std::string GenerateAnonymousNickname();

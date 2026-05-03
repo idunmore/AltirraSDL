@@ -229,6 +229,17 @@ void PeerChip(const char *handle, const char *region, bool isPrivate);
 void SpecLineRenderDiff(const SpecLine& local, const SpecLine& remote,
 	const char *localLabel, const char *remoteLabel);
 
+// Render a single column of host spec rows for the Join Confirm screen.
+// All five rows (HW mode, video standard, memory, OS, BASIC) come from
+// the host's session — the joiner cold-boots from the host's snapshot,
+// so showing the joiner's own current config beside it is misleading.
+// Tokens flagged `missing` (kernel/BASIC firmware the joiner does NOT
+// have installed locally) paint in the palette warning colour with a
+// trailing "(missing)" tag so the user can see what they need to
+// install before the join can complete.  Other rows use the muted
+// body colour.
+void SpecLineRenderHostOnly(const SpecLine& host);
+
 // -----------------------------------------------------------------------
 // Keyboard / gamepad navigation helpers.
 // -----------------------------------------------------------------------

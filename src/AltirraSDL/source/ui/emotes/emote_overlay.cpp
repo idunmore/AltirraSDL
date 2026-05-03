@@ -96,8 +96,19 @@ void RenderSlot(Slot &slot, Side side, uint64_t nowMs) {
 	const ImVec2 workSize(vp->WorkSize.x - extraLeft - extraRight,
 	                      vp->WorkSize.y - extraTop  - extraBottom);
 
-	// Height ~15% of work area, clamped for phone + 4K.
-	float displayH = workSize.y * 0.15f;
+	// Height ~15% of the longer work-area axis, clamped for phone +
+	// 4K.  Driving from the longer axis (rather than workSize.y)
+	// keeps the icon the same size in landscape and portrait — on a
+	// 1080×1920 phone, workSize.y is 1920 in portrait but only 1080
+	// in landscape, so the old workSize.y * 0.15f shrunk the icon by
+	// ~30% the moment the user rotated the device.  Using the major
+	// axis means the result is identical in both orientations on the
+	// same device, and on landscape phones with bottom touch
+	// controls + top status-bar safe-area insets (which subtract
+	// further from workSize.y) the icon no longer collapses below
+	// the 96px minimum either.
+	const float majorAxis = workSize.x > workSize.y ? workSize.x : workSize.y;
+	float displayH = majorAxis * 0.15f;
 	if (displayH < 96.0f)  displayH = 96.0f;
 	if (displayH > 192.0f) displayH = 192.0f;
 	const float displayW = displayH * ((float)srcW / (float)srcH);

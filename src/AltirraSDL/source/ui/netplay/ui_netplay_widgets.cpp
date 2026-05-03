@@ -802,6 +802,48 @@ void SpecLineRenderDiff(const SpecLine& local, const SpecLine& remote,
 	ImGui::EndGroup();
 }
 
+// ---------------------------------------------------------------------
+// SpecLineRenderHostOnly — single-column view of the host's session
+// spec for the Join Confirm screen.  The joiner inherits the host's
+// hardware/firmware from the snapshot, so any "diff vs your emulator"
+// view is misleading — what actually matters to the joiner is which
+// firmware ROMs the host requires that aren't installed locally yet.
+// The caller passes the SpecLine produced by BuildSpecLineFromSession,
+// which already flags `missing=true` on kernel / BASIC tokens whose
+// CRC32 was not found in the local firmware manager.
+// ---------------------------------------------------------------------
+void SpecLineRenderHostOnly(const SpecLine& host) {
+	const ATMobilePalette &p = ATMobileGetPalette();
+
+	// Static row labels matching the BuildSpecLineFromSession token
+	// order: HW mode, video standard, memory mode, OS firmware,
+	// BASIC firmware.  Anything beyond five tokens is rendered without
+	// a label so the layout degrades gracefully if the schema grows.
+	static const char* const kLabels[5] = {
+		"Hardware", "Video", "Memory", "OS firmware", "BASIC"
+	};
+
+	const float labelW = Dp(120.0f);
+	for (size_t i = 0; i < host.tokens.size(); ++i) {
+		const SpecLineToken& tk = host.tokens[i];
+		const char *label = (i < 5) ? kLabels[i] : "";
+
+		ImGui::PushStyleColor(ImGuiCol_Text, ATMobileCol(p.textMuted));
+		ImGui::TextUnformatted(label);
+		ImGui::PopStyleColor();
+		ImGui::SameLine(labelW);
+
+		ImGui::PushStyleColor(ImGuiCol_Text, ATMobileCol(
+			tk.missing ? p.warning : p.text));
+		if (tk.missing) {
+			ImGui::Text("%s  (not installed)", tk.text.c_str());
+		} else {
+			ImGui::TextUnformatted(tk.text.c_str());
+		}
+		ImGui::PopStyleColor();
+	}
+}
+
 // -------------------------------------------------------------------
 // Machine Configuration section — shared between Gaming Mode and
 // Desktop so the host form has identical options on both paths.

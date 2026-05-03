@@ -1250,7 +1250,12 @@ void StartHostingAction() {
 	}
 	SaveToRegistry();
 	EnableHostedGame(id);
-	Navigate(Screen::MyHostedGames);
+	// PopTo, not Navigate — MyHostedGames is on the stack from the
+	// Hub → MyHostedGames → AddGame → HostSetup chain.  Navigating
+	// here would push HostSetup onto the stack and a subsequent
+	// Back from MyHostedGames would resurface a stale HostSetup
+	// with the just-confirmed values.
+	PopTo(Screen::MyHostedGames);
 }
 
 void StopHostingAction() {
