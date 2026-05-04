@@ -730,4 +730,21 @@ int ATWasmGetFirstRunState() { return g_firstRunState.load(); }
 extern "C" EMSCRIPTEN_KEEPALIVE
 int ATWasmGetFirstRunFiles() { return g_firstRunFiles.load(); }
 
+// Reset the bootstrap state so a subsequent ATWasmFirstRunBootstrap
+// call actually performs the fetch.  Called by JS in two situations:
+// (a) the user accepts the firmware-download wizard after we deferred
+// the silent auto-download, and (b) the user clicks the toolbar's
+// "Download firmware" button to re-run the bootstrap when the marker
+// already exists (e.g. after a previous session declined).  Removes
+// the marker and zeroes the atomic guards so the next bootstrap call
+// is allowed through.
+extern "C" EMSCRIPTEN_KEEPALIVE
+void ATWasmResetFirstRun() {
+	g_firstRunStarted.store(false);
+	g_firstRunState.store(0);
+	g_firstRunFiles.store(0);
+	unlink(kFirstRunMarkerPath);
+	_altirra_wasm_sync_fs_out();
+}
+
 #endif // __EMSCRIPTEN__

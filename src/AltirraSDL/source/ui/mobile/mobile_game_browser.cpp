@@ -90,12 +90,64 @@ void GameBrowser_Init() {
 	if (s_gameLibrary)
 		return;
 
-	s_gameLibrary = new ATGameLibrary();
-	s_gameLibrary->SetConfigDir(ATGetConfigDir());
-	s_gameLibrary->LoadSettingsFromRegistry();
-	s_gameLibrary->LoadCache();
-	ComputeAvailableLetters();
-	s_gameLibrary->StartScan();
+	// The whole init is wrapped in a try/catch because at least one
+	// path (game library cache JSON open on a fresh WASM install,
+	// before /home/web_user/.config/altirra is reliably populated by
+	// the IDBFS sync) was raising an uncaught VDException that
+	// terminated the wasm module and locked the user out of Gaming
+	// Mode entirely.  Catching here keeps the user in a degraded-but-
+	// usable state — the library starts empty, the next save/scan
+	// recreates the cache file, and the partial state is logged so
+	// the actual failing call site can be tracked down without
+	// crashing the page.
+	try {
+		// Make absolutely sure the config dir exists before any
+		// LoadCache / SaveCache attempts touch it.  On a fresh WASM
+		// install IDBFS may not have created the directory yet by
+		// the time the user reaches Gaming Mode, and a file-open
+		// against a non-existent directory raises a VDException
+		// from the bottom of the system layer with no opportunity
+		// for a higher try/catch to recover.
+		const VDStringA &configDir = ATGetConfigDir();
+		if (!configDir.empty()) {
+			SDL_CreateDirectory(configDir.c_str());
+		}
+
+		s_gameLibrary = new ATGameLibrary();
+		s_gameLibrary->SetConfigDir(configDir);
+		s_gameLibrary->LoadSettingsFromRegistry();
+		s_gameLibrary->LoadCache();
+		ComputeAvailableLetters();
+		s_gameLibrary->StartScan();
+	} catch (const MyError &e) {
+		std::fprintf(stderr,
+			"[gamebrowser] Init caught VDException: %s — continuing "
+			"with empty library\n", e.c_str());
+		// Ensure we still have a valid library object even if the
+		// load path threw partway through.  The user can still add
+		// games; the failed load means cached state is lost, not
+		// that the feature is broken.
+		if (!s_gameLibrary) {
+			s_gameLibrary = new ATGameLibrary();
+			s_gameLibrary->SetConfigDir(ATGetConfigDir());
+		}
+	} catch (const std::exception &e) {
+		std::fprintf(stderr,
+			"[gamebrowser] Init caught std::exception: %s — continuing "
+			"with empty library\n", e.what());
+		if (!s_gameLibrary) {
+			s_gameLibrary = new ATGameLibrary();
+			s_gameLibrary->SetConfigDir(ATGetConfigDir());
+		}
+	} catch (...) {
+		std::fprintf(stderr,
+			"[gamebrowser] Init caught unknown exception — continuing "
+			"with empty library\n");
+		if (!s_gameLibrary) {
+			s_gameLibrary = new ATGameLibrary();
+			s_gameLibrary->SetConfigDir(ATGetConfigDir());
+		}
+	}
 	s_needsRefresh = true;
 
 	// Defensive: ensure the letter picker modal is not "stuck open" from

@@ -79,6 +79,63 @@
     }
     .log-toggle:hover { color: #ddd; border-color: #444; }
 
+    /* The layout-toggle button is a thin "icon" pill that flips
+       between top-bar and left-bar mode.  Tooltip reflects the
+       direction the click will move things. */
+    #btn-layout {
+      flex: 0 0 auto;
+      padding: 4px 10px;
+      font-weight: 600;
+    }
+
+    /* ── Left-bar mode ───────────────────────────────────────────────
+       Same header markup, just rotated to a fixed-width column on the
+       left side.  The body's main axis becomes horizontal so the
+       canvas takes the entire remaining viewport.  Buttons and
+       status stack top-to-bottom; the title and status text wrap
+       naturally inside the narrow column.
+       ─────────────────────────────────────────────────────────────── */
+    body.layout-left {
+      flex-direction: row;
+    }
+    body.layout-left header {
+      width: 200px;
+      max-width: 35vw;        /* phone safety: never eat half the screen */
+      height: 100%;
+      flex-direction: column;
+      align-items: stretch;
+      flex-wrap: nowrap;
+      border-bottom: none;
+      border-right: 1px solid #333;
+      padding: 10px 10px;
+      gap: 8px;
+      overflow-y: auto;       /* small viewports scroll the bar */
+    }
+    body.layout-left header button,
+    body.layout-left header .btn {
+      width: 100%;
+      text-align: left;
+      padding: 8px 12px;
+    }
+    body.layout-left h1 {
+      font-size: 0.9rem;
+      word-break: break-word;
+      padding: 4px 2px 8px;
+      border-bottom: 1px solid #2a2a2a;
+    }
+    body.layout-left #status {
+      flex: 0 0 auto;
+      text-align: left;
+      white-space: normal;     /* allow wrapping in the narrow column */
+      padding: 6px 4px 4px;
+      border-top: 1px solid #2a2a2a;
+      margin-top: auto;        /* push status to the bottom of the bar */
+    }
+    body.layout-left .log-toggle {
+      text-align: left;
+      padding: 6px 4px;
+    }
+
     /* ── Canvas area ─────────────────────────────────────────────── */
     #canvas-wrap {
       flex: 1 1 auto;
@@ -465,8 +522,8 @@
        has pushed the icon over by one column. */
     .fm-row.in-select .pathHint { grid-column: 3 / 6; }
 
-    /* Wipe / Move dialogs (centred popups over the FM overlay) */
-    #wipe-backdrop, #move-backdrop {
+    /* Wipe / Move / Firmware dialogs (centred popups over the FM overlay) */
+    #wipe-backdrop, #move-backdrop, #fw-backdrop {
       position: fixed;
       inset: 0;
       background: rgba(0,0,0,0.65);
@@ -475,8 +532,8 @@
       justify-content: center;
       z-index: 200;
     }
-    #wipe-backdrop.open, #move-backdrop.open { display: flex; }
-    #wipe-box, #move-box {
+    #wipe-backdrop.open, #move-backdrop.open, #fw-backdrop.open { display: flex; }
+    #wipe-box, #move-box, #fw-box {
       width: min(440px, 90vw);
       background: #1c1c1c;
       border: 1px solid #5a3a3a;
@@ -486,13 +543,47 @@
       color: #e0e0e0;
     }
     #move-box { border-color: #3a4a5a; }
-    #wipe-box h2, #move-box h2 {
+    #fw-box {
+      width: min(560px, 92vw);
+      border-color: #4872ad;
+    }
+    #fw-box p {
+      line-height: 1.5;
+    }
+    #fw-box a { color: #7db2ff; }
+    #fw-progress {
+      margin: 6px 0 14px;
+    }
+    #fw-progress-bar {
+      width: 100%;
+      height: 6px;
+      background: #2a2a2a;
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    #fw-progress-fill {
+      width: 30%;
+      height: 100%;
+      background: linear-gradient(90deg, #4872ad, #7db2ff);
+      animation: fw-progress-pulse 1.4s ease-in-out infinite;
+    }
+    @keyframes fw-progress-pulse {
+      0%   { transform: translateX(-100%); }
+      100% { transform: translateX(400%); }
+    }
+    #fw-progress-msg {
+      margin-top: 6px;
+      font-size: 0.8rem;
+      color: #8aa;
+      text-align: center;
+    }
+    #wipe-box h2, #move-box h2, #fw-box h2 {
       font-size: 1rem;
       color: #f3b6b6;
       margin-bottom: 8px;
     }
-    #move-box h2 { color: #7db2ff; }
-    #wipe-box p, #move-box p {
+    #move-box h2, #fw-box h2 { color: #7db2ff; }
+    #wipe-box p, #move-box p, #fw-box p {
       font-size: 0.85rem;
       color: #bbb;
       margin-bottom: 14px;
@@ -641,6 +732,10 @@
       </span>
     </h1>
     <button id="btn-files" disabled>📁 Files…</button>
+    <button id="btn-firmware" disabled
+            title="Re-run the standard ROM bundle download">🎛 Download firmware…</button>
+    <button id="btn-layout"
+            title="Move the bar to the left side (vertical) — click again to bring it back to the top">⇄</button>
     <div id="status">Loading…</div>
     <div class="log-toggle" id="log-toggle" role="button" tabindex="0">▸ Show log</div>
   </header>
@@ -729,6 +824,43 @@
       <div class="wipe-buttons">
         <button id="move-cancel">Cancel</button>
         <button id="move-go" class="primary">Move</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Firmware-download wizard (first-run + on-demand) ------------------ -->
+  <div id="fw-backdrop" role="dialog" aria-modal="true" aria-labelledby="fw-title">
+    <div id="fw-box">
+      <h2 id="fw-title">Download standard Atari ROMs?</h2>
+      <p id="fw-body">
+        AltirraSDL needs the original Atari OS and BASIC ROMs to boot
+        software accurately. Avery Lee's emulator ships a free,
+        legally-redistributable ROM bundle that has been mirrored on
+        public archives for decades — for example,
+        <a href="https://atariarea.krap.pl/PLus/files/xf25.zip"
+           target="_blank" rel="noopener">atariarea.krap.pl</a> and
+        <a href="https://www.ibiblio.org/pub/micro/pc-stuff/freedos/files/distributions/1.1/repos/emulators/xf25.zip"
+           target="_blank" rel="noopener">ibiblio.org</a>.
+        These archives also ship with the
+        <a href="https://atari.fandom.com/wiki/X-Former" target="_blank" rel="noopener">X-Former</a>
+        Atari emulator, which is one of the canonical ways to obtain
+        them legally.
+      </p>
+      <p id="fw-body-secondary">
+        Click <b>Download</b> to fetch the bundle now (≈ 100 KB, takes
+        a second or two). Click <b>Skip</b> to upload your own ROM
+        files via <b>📁 Files…</b> instead — the same dialog you'll
+        get if you choose Download and a mirror is unreachable. You
+        can re-open this dialog any time from
+        <b>🎛 Download firmware…</b> in the top bar.
+      </p>
+      <div id="fw-progress" hidden>
+        <div id="fw-progress-bar"><div id="fw-progress-fill"></div></div>
+        <div id="fw-progress-msg">Starting download…</div>
+      </div>
+      <div class="wipe-buttons">
+        <button id="fw-skip">Skip</button>
+        <button id="fw-go" class="primary">Download</button>
       </div>
     </div>
   </div>
@@ -856,6 +988,98 @@
     const moveSuggest    = document.getElementById('move-suggestions');
     const moveGo         = document.getElementById('move-go');
     const moveCancel     = document.getElementById('move-cancel');
+    const fwBackdrop     = document.getElementById('fw-backdrop');
+    const fwGo           = document.getElementById('fw-go');
+    const fwSkip         = document.getElementById('fw-skip');
+    const fwProgress     = document.getElementById('fw-progress');
+    const fwProgressMsg  = document.getElementById('fw-progress-msg');
+    const btnFirmware    = document.getElementById('btn-firmware');
+    const btnLayout      = document.getElementById('btn-layout');
+
+    // ───────────────────────────────────────────────────────────────────
+    //  Bar-position toggle
+    //
+    //  The top bar can become a vertical sidebar on the left side via
+    //  body.layout-left.  Same controls, just stacked.  Choice is
+    //  persisted in localStorage so it survives page reloads.  We
+    //  apply the class as early as possible (immediately, before the
+    //  emulator finishes init) to avoid a layout flash on reload.
+    // ───────────────────────────────────────────────────────────────────
+    const LAYOUT_KEY = 'altirra-wasm-layout';
+    function applyLayout(layout) {
+      if (layout === 'left') {
+        document.body.classList.add('layout-left');
+        if (btnLayout) {
+          btnLayout.title = 'Move the bar back to the top (horizontal)';
+          btnLayout.textContent = '⇅';
+        }
+      } else {
+        document.body.classList.remove('layout-left');
+        if (btnLayout) {
+          btnLayout.title =
+            'Move the bar to the left side (vertical) — click again to bring it back to the top';
+          btnLayout.textContent = '⇄';
+        }
+      }
+    }
+    function toggleLayout() {
+      const next = document.body.classList.contains('layout-left')
+                   ? 'top' : 'left';
+      try { localStorage.setItem(LAYOUT_KEY, next); } catch (e) {}
+      applyLayout(next);
+      // The canvas's drawable size changes when the bar moves —
+      // SDL3 listens for window resize and reflows.  Fire one
+      // explicit resize so the change is picked up even if the
+      // browser would otherwise debounce.
+      window.dispatchEvent(new Event('resize'));
+    }
+    try {
+      const saved = localStorage.getItem(LAYOUT_KEY);
+      if (saved === 'left') applyLayout('left');
+    } catch (e) {}
+    if (btnLayout) btnLayout.addEventListener('click', toggleLayout);
+
+    // ───────────────────────────────────────────────────────────────────
+    //  Orientation / viewport-resize plumbing for mobile
+    //
+    //  SDL3's Emscripten port listens for `resize` events on `window`.
+    //  On desktop browsers that's enough — moving the OS window or
+    //  resizing the panel always triggers it.  Mobile is messier:
+    //
+    //  - iOS Safari fires `orientationchange` BEFORE the new viewport
+    //    dimensions are committed; a `resize` listener may see the
+    //    pre-rotation size if it queries innerWidth/innerHeight in
+    //    the same tick.  We re-fire after the next two frames so
+    //    SDL sees the corrected size.
+    //  - The `visualViewport` API reflects zoom + virtual-keyboard
+    //    intrusion separately from `window.innerHeight`.  Forwarding
+    //    its resize events keeps the canvas correctly sized when a
+    //    soft keyboard appears (e.g. typing into the File Manager
+    //    search field on Android).
+    //  - Some Android browsers reflow once on orientation start AND
+    //    once when the rotation finishes.  Re-firing twice (next
+    //    frame + 250ms later) catches both quirks without flooding.
+    // ───────────────────────────────────────────────────────────────────
+    function refireResizeSoon() {
+      // Two passes: requestAnimationFrame catches the immediate
+      // post-rotation layout; the 250ms delay catches Android's
+      // delayed-commit case where the viewport keeps changing.
+      requestAnimationFrame(() => {
+        try { window.dispatchEvent(new Event('resize')); } catch (e) {}
+      });
+      setTimeout(() => {
+        try { window.dispatchEvent(new Event('resize')); } catch (e) {}
+      }, 250);
+    }
+    window.addEventListener('orientationchange', refireResizeSoon);
+    if (window.screen && window.screen.orientation) {
+      try {
+        window.screen.orientation.addEventListener('change', refireResizeSoon);
+      } catch (e) {}
+    }
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', refireResizeSoon);
+    }
 
     let activeCategory = CATEGORIES[0];
     let selectedPath   = null;
@@ -916,32 +1140,35 @@
     //
     //  When focus is on the canvas (overlays closed, normal play), the
     //  listener is a no-op and SDL's listener sees the event as before.
-    function isOverlayKeyboardOwner() {
-      const ae = document.activeElement;
-      if (!ae) return false;
-      const tag = (ae.tagName || '').toLowerCase();
-      if (tag !== 'input' && tag !== 'textarea' && tag !== 'select')
-        return false;
-      // Only steal keys when the input lives inside one of OUR overlays
-      // (file manager, wipe, move).  A non-overlay input (none exist
-      // today, but be defensive) shouldn't change focus semantics.
+    function anyModalOpen() {
       const fmOpen   = fmBackdrop   && fmBackdrop  .classList.contains('open');
       const wipeOpen = wipeBackdrop && wipeBackdrop.classList.contains('open');
       const moveOpen = moveBackdrop && moveBackdrop.classList.contains('open');
-      if (!fmOpen && !wipeOpen && !moveOpen) return false;
-      // Walk up to confirm the input is inside an overlay subtree.
-      for (let n = ae; n; n = n.parentElement) {
-        if (n === fmBackdrop || n === wipeBackdrop || n === moveBackdrop)
-          return true;
-      }
-      return false;
+      const fwOpen   = fwBackdrop   && fwBackdrop  .classList.contains('open');
+      return fmOpen || wipeOpen || moveOpen || fwOpen;
     }
     function modalKeyHandler(e) {
-      if (isOverlayKeyboardOwner()) {
-        // Stop SDL from receiving — but DON'T preventDefault, so the
-        // browser still delivers the keystroke to the focused input.
-        e.stopImmediatePropagation();
+      if (!anyModalOpen()) return;
+      // Modal is open — stop SDL from receiving the key.  We do NOT
+      // call preventDefault, so the browser's normal keystroke
+      // delivery to focused inputs (Wipe confirm field, File Manager
+      // search, Move dialog destination) still happens.  Esc closes
+      // the topmost modal so the user always has an out.
+      e.stopImmediatePropagation();
+      if (e.type === 'keydown' && e.key === 'Escape') {
+        if (fwBackdrop && fwBackdrop.classList.contains('open')) {
+          // Esc on the firmware wizard mirrors clicking outside the
+          // box: writes the skip marker (in first-run mode) and
+          // closes.  Note this can't be undone in the same session
+          // — the user would re-trigger via the toolbar button.
+          fwUserSkipFromEsc();
+        }
       }
+    }
+    // Forward declaration so modalKeyHandler can reference it before
+    // fwUserSkip is defined further down in the file.
+    function fwUserSkipFromEsc() {
+      if (typeof fwUserSkip === 'function') fwUserSkip();
     }
     window.addEventListener('keydown',  modalKeyHandler, true);
     window.addEventListener('keyup',    modalKeyHandler, true);
@@ -1444,6 +1671,82 @@
     let firstRunPollTimer = null;
     let firstRunLastState = -1;
     let firstRunPollStarted = false;
+
+    const FIRSTRUN_MARKER = ROOT + '/.config/altirra/.firstrun_done';
+    const FIRMWARE_DIR    = ROOT + '/firmware';
+
+    // Returns true when the user has any firmware ROM file already
+    // (uploaded manually OR fetched via a previous bootstrap).  Drives
+    // the wizard logic: if firmware is present we treat the question as
+    // "done" and never auto-show the dialog.
+    function hasFirmwareInstalled() {
+      if (!runtimeReady) return false;
+      try {
+        const entries = Module.FS.readdir(FIRMWARE_DIR)
+          .filter(n => n !== '.' && n !== '..');
+        return entries.length > 0;
+      } catch (e) { return false; }
+    }
+
+    function hasFirstRunMarker() {
+      if (!runtimeReady) return false;
+      try { Module.FS.stat(FIRSTRUN_MARKER); return true; }
+      catch (e) { return false; }
+    }
+
+    // Persist a user-chose-skip marker so we never re-prompt on the
+    // next page load.  The C-side bootstrap also writes this marker on
+    // success / failure / silent-skip — by writing it from JS too we
+    // don't have to call into C just to record the user declined.
+    async function writeFirstRunMarker() {
+      try {
+        Module.FS.mkdirTree(ROOT + '/.config/altirra');
+        Module.FS.writeFile(FIRSTRUN_MARKER, '1\n');
+        await syncFsOut();
+      } catch (e) {
+        jlog('first-run: writeFirstRunMarker failed —', e);
+      }
+    }
+
+    // Open the firmware-download wizard.  `mode` is 'first-run' (auto-
+    // shown on a fresh install where no firmware is present) or 'manual'
+    // (user clicked the "Download firmware" toolbar button).  In manual
+    // mode the Skip button just closes the dialog without writing the
+    // marker — the user already controls when to (re-)download.
+    let fwWizardMode = 'first-run';
+    function openFirmwareWizard(mode) {
+      fwWizardMode = mode || 'first-run';
+      fwProgress.hidden  = true;
+      fwGo.disabled      = false;
+      fwSkip.disabled    = false;
+      fwGo.textContent   = (mode === 'manual' && hasFirmwareInstalled())
+                           ? 'Re-download'
+                           : 'Download';
+      fwBackdrop.classList.add('open');
+    }
+    function closeFirmwareWizard() {
+      fwBackdrop.classList.remove('open');
+    }
+
+    // Decide what to do on every WASM start with respect to the
+    // firmware bundle.  Three branches:
+    //   1. Firmware already present → silent, never prompt.
+    //   2. Marker present, firmware empty → user skipped previously.
+    //      Stay silent; they can re-trigger via the toolbar button.
+    //   3. No marker, no firmware → fresh install.  Show the wizard.
+    function decideFirstRunAction() {
+      if (hasFirmwareInstalled()) {
+        jlog('first-run: firmware present, no prompt needed');
+        return;
+      }
+      if (hasFirstRunMarker()) {
+        jlog('first-run: marker present (user previously skipped)');
+        return;
+      }
+      jlog('first-run: showing firmware wizard');
+      openFirmwareWizard('first-run');
+    }
+
     function startFirstRunPolling() {
       // Idempotent: hot-reload or accidental double-call shouldn't
       // double-allocate.
@@ -1480,25 +1783,49 @@
         // isn't attached to Module by the runtime glue.
         const state = Module._ATWasmGetFirstRunState();
         const files = Module._ATWasmGetFirstRunFiles();
+        const wizardOpen = fwBackdrop.classList.contains('open');
         if (state !== firstRunLastState) {
           firstRunLastState = state;
           jlog('first-run: state=' + state + ' files=' + files);
+          // Drive the wizard's inline progress message while it's
+          // visible AND fall back to a toast once the dialog has been
+          // dismissed.  Toasts are also shown alongside in case the
+          // user closed the dialog mid-flight.
+          let msg = null;
+          let isError = false;
+          let isTerminal = false;
           switch (state) {
-            case 2: toast('Downloading standard ROMs…'); break;
-            case 3: toast('Trying mirror…'); break;
-            case 4: toast('Unpacking ROM bundle…'); break;
+            case 2: msg = 'Downloading standard ROMs…'; break;
+            case 3: msg = 'Trying mirror…'; break;
+            case 4: msg = 'Unpacking ROM bundle…'; break;
             case 5:
-              toast('Loaded ' + files + ' standard ROM'
-                    + (files === 1 ? '' : 's'), 'ok');
-              renderFm();
+              msg = 'Loaded ' + files + ' standard ROM'
+                  + (files === 1 ? '' : 's') + '.';
+              isTerminal = true;
               break;
             case 6:
-              toast('ROM bundle had no .rom files', 'error');
+              msg = 'ROM bundle had no .rom files.';
+              isTerminal = true;
+              isError = true;
               break;
             case 7:
-              toast('Standard ROM download unavailable — upload your own', 'error');
+              msg = 'Standard ROM download unavailable — upload your own.';
+              isTerminal = true;
+              isError = true;
               break;
-            case 8: /* silently skipped */ break;
+            case 8: /* silently skipped — no message */ break;
+          }
+          if (msg) {
+            if (wizardOpen && fwProgressMsg) fwProgressMsg.textContent = msg;
+            toast(msg, isError ? 'error' : 'ok');
+          }
+          if (isTerminal) {
+            if (wizardOpen) {
+              // Auto-close the wizard a beat after the terminal
+              // message so the user sees what happened.
+              setTimeout(closeFirmwareWizard, 1500);
+            }
+            if (state === 5) renderFm();
           }
         }
         // Terminal states are 5 (success), 6 (empty zip), 7 (all
@@ -2550,6 +2877,51 @@
     });
 
     // ───────────────────────────────────────────────────────────────────
+    //  Firmware-download wizard wiring
+    // ───────────────────────────────────────────────────────────────────
+    function fwUserAccept() {
+      // Reset C-side bootstrap state so a previous decline doesn't
+      // make ATWasmFirstRunBootstrap a no-op.  Safe even on first
+      // run (no marker present).
+      if (Module._ATWasmResetFirstRun) {
+        try { Module._ATWasmResetFirstRun(); }
+        catch (e) { jlog('first-run: reset threw —', e); }
+      }
+      // Allow startFirstRunPolling to run again (it's idempotent
+      // per-page-load via firstRunPollStarted; clearing here lets a
+      // re-download attempt actually fire).
+      firstRunPollStarted = false;
+      firstRunLastState = -1;
+      fwProgress.hidden = false;
+      fwProgressMsg.textContent = 'Starting download…';
+      fwGo.disabled = true;
+      fwSkip.disabled = true;
+      startFirstRunPolling();
+    }
+    async function fwUserSkip() {
+      // First-run mode: persist the marker so we never auto-show the
+      // wizard again.  Manual mode: just close — no policy change.
+      if (fwWizardMode === 'first-run') {
+        await writeFirstRunMarker();
+      }
+      closeFirmwareWizard();
+    }
+    fwGo  .addEventListener('click', fwUserAccept);
+    fwSkip.addEventListener('click', fwUserSkip);
+    fwBackdrop.addEventListener('click', (e) => {
+      // Click on the backdrop (outside the box) is treated as Skip
+      // in first-run mode and as Close in manual mode — the latter
+      // doesn't write a marker, matching the explicit Skip button.
+      if (e.target === fwBackdrop) fwUserSkip();
+    });
+    if (btnFirmware) {
+      btnFirmware.addEventListener('click', () => {
+        if (!runtimeReady) { toast('Still loading…', 'error'); return; }
+        openFirmwareWizard('manual');
+      });
+    }
+
+    // ───────────────────────────────────────────────────────────────────
     //  Open / close overlay
     // ───────────────────────────────────────────────────────────────────
     function openFm(categoryId) {
@@ -2825,6 +3197,7 @@
         statusEl.textContent = 'Running';
         runtimeReady = true;
         btnFiles.disabled = false;
+        if (btnFirmware) btnFirmware.disabled = false;
         canvas.focus();
         jlog('runtime ready, build=@ALTIRRA_WASM_GIT_SHA@',
              '(@ALTIRRA_WASM_BUILD_STAMP@)');
@@ -2856,12 +3229,17 @@
           appendLog('[fw] startup rescan failed: ' + err);
         }
 
-        // First-run ROM bootstrap.  C handles all the heavy lifting
-        // (marker detection, fetch with mirror fallback, zip unpack,
-        // firmware scan, marker write).  We just kick it off and
-        // poll the status export so a toast can narrate progress
-        // without the user wondering whether the page is hung.
-        startFirstRunPolling();
+        // First-run ROM bootstrap.  Three-way decision:
+        //   1. Firmware already present (uploaded or previously
+        //      downloaded) → silent, no UI.
+        //   2. Marker file present (user previously skipped) →
+        //      silent.  They can re-trigger via the toolbar.
+        //   3. Neither → show the wizard so the user explicitly
+        //      consents before a network fetch happens.
+        // C still drives the actual fetch / unpack / marker writes;
+        // the wizard just gates whether ATWasmFirstRunBootstrap()
+        // gets called automatically or only on the user's say-so.
+        decideFirstRunAction();
       },
       totalDependencies: 0,
       monitorRunDependencies: (left) => {
