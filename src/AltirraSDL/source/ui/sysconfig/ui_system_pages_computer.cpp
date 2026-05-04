@@ -825,7 +825,7 @@ void RenderAccelerationCategory(ATSimulator &sim) {
 void RenderSpeedCategory(ATSimulator &sim) {
 	ImGui::SeparatorText("Speed control");
 
-	const bool netplayLocksSpeed = ATNetplayGlue::IsActive();
+	const bool netplayLocksSpeed = ATNetplayGlue::IsSessionEngaged();
 
 	bool warp = ATUIGetTurbo();
 	ImGui::BeginDisabled(netplayLocksSpeed);
@@ -877,7 +877,7 @@ void RenderSpeedCategory(ATSimulator &sim) {
 
 	bool pauseInactive = ATUIGetPauseWhenInactive();
 #ifdef ALTIRRA_NETPLAY_ENABLED
-	const bool netplayLocksPause = ATNetplayGlue::IsActive();
+	const bool netplayLocksPause = ATNetplayGlue::IsSessionEngaged();
 #else
 	const bool netplayLocksPause = false;
 #endif

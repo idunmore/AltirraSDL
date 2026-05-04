@@ -83,14 +83,18 @@ static void CmdHoldKeys() {
 // session reset paths run via the canonical-profile boot sequence
 // in kATDeferred_NetplayHostBoot / NetplayJoinerApply, so the
 // keyboard shortcut is purely a user action that would break sync.
+// Gate on IsSessionEngaged() — a host that's still merely
+// advertising (no peer connecting yet) can warm/cold reset freely;
+// the lock only kicks in once a peer is past Handshaking and a
+// reset would actually diverge lockstep.
 static void CmdWarmReset() {
-	if (ATNetplayGlue::IsActive()) return;
+	if (ATNetplayGlue::IsSessionEngaged()) return;
 	g_sim.WarmReset();
 	g_sim.Resume();
 }
 
 static void CmdColdReset() {
-	if (ATNetplayGlue::IsActive()) return;
+	if (ATNetplayGlue::IsSessionEngaged()) return;
 	g_sim.ColdReset();
 	g_sim.Resume();
 	if (!g_kbdOpts.mbAllowShiftOnColdReset)
@@ -98,7 +102,7 @@ static void CmdColdReset() {
 }
 
 static void CmdToggleNTSCPAL() {
-	if (ATNetplayGlue::IsActive()) return;
+	if (ATNetplayGlue::IsSessionEngaged()) return;
 	if (g_sim.GetVideoStandard() == kATVideoStandard_NTSC)
 		g_sim.SetVideoStandard(kATVideoStandard_PAL);
 	else
@@ -145,27 +149,28 @@ static void CmdToggleSlowMotion() {
 
 // POKEY channel toggles affect POKEY internal state which is
 // netplay-hashed (see netplay_simhash.cpp:pokeyRegs).  Toggling
-// during a session would diverge the next frame's hash.
+// during an *engaged* session would diverge the next frame's hash;
+// during WaitingForJoiner there's no peer to diverge from yet.
 static void CmdToggleChannel1() {
-	if (ATNetplayGlue::IsActive()) return;
+	if (ATNetplayGlue::IsSessionEngaged()) return;
 	ATPokeyEmulator& pokey = g_sim.GetPokey();
 	pokey.SetChannelEnabled(0, !pokey.IsChannelEnabled(0));
 }
 
 static void CmdToggleChannel2() {
-	if (ATNetplayGlue::IsActive()) return;
+	if (ATNetplayGlue::IsSessionEngaged()) return;
 	ATPokeyEmulator& pokey = g_sim.GetPokey();
 	pokey.SetChannelEnabled(1, !pokey.IsChannelEnabled(1));
 }
 
 static void CmdToggleChannel3() {
-	if (ATNetplayGlue::IsActive()) return;
+	if (ATNetplayGlue::IsSessionEngaged()) return;
 	ATPokeyEmulator& pokey = g_sim.GetPokey();
 	pokey.SetChannelEnabled(2, !pokey.IsChannelEnabled(2));
 }
 
 static void CmdToggleChannel4() {
-	if (ATNetplayGlue::IsActive()) return;
+	if (ATNetplayGlue::IsSessionEngaged()) return;
 	ATPokeyEmulator& pokey = g_sim.GetPokey();
 	pokey.SetChannelEnabled(3, !pokey.IsChannelEnabled(3));
 }
@@ -227,17 +232,19 @@ extern void ATUISetShowCheater(bool v);
 
 static void CmdDrivesDialog() {
 	// Same rationale as CmdConfigure: mounting/unmounting disks
-	// during a netplay session would mutate MountedImages on this
-	// peer only and instantly desync.
-	if (ATNetplayGlue::IsActive()) return;
+	// during an *engaged* netplay session would mutate MountedImages
+	// on this peer only and instantly desync.  While merely hosting
+	// (WaitingForJoiner) the host is free to swap disks.
+	if (ATNetplayGlue::IsSessionEngaged()) return;
 	ATUISetShowDiskManager(true);
 }
 
 static void CmdConfigure() {
 	// Configure System edits settings the canonical Online Play
-	// profile pins.  Suppress the shortcut while a session is active
-	// so the user can't open the dialog and silently desync.
-	if (ATNetplayGlue::IsActive()) return;
+	// profile pins.  Suppress the shortcut once a peer is engaged so
+	// the user can't desync mid-session.  Pre-engagement (just hosting)
+	// is fine.
+	if (ATNetplayGlue::IsSessionEngaged()) return;
 	ATUISetShowSystemConfig(true);
 }
 

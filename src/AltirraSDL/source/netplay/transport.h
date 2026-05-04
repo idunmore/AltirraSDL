@@ -107,6 +107,18 @@ public:
 	// when the carrier itself is a session-scoped WS connection.
 	// Default false; override in WasmTransport.
 	virtual bool IsRelayOnly() const { return false; }
+
+	// Did the underlying transport's session-scoped link fail?  Used
+	// by the WS transport to surface "bridge unreachable / auth
+	// rejected / mixed-content blocked" rather than letting the
+	// Coordinator sit at WaitingForJoiner / Handshaking forever.
+	// Default false (UDP can't really "fail" — datagrams are best-
+	// effort).
+	virtual bool HasFailed() const { return false; }
+
+	// Optional human-readable failure summary for the UI.  Only
+	// meaningful when HasFailed() returns true.  Default empty.
+	virtual const char *FailureReason() const { return ""; }
 };
 
 class UdpTransport final : public INetTransport {

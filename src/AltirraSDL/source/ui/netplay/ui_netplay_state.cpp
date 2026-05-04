@@ -19,6 +19,7 @@
 #include <vd2/system/text.h>
 
 #include "netplay/lobby_config.h"
+#include "netplay/netplay_profile.h"  // ResolveDefaultFirmwareCRCs
 
 extern ATSimulator g_sim;
 extern VDStringA ATGetConfigDir();
@@ -518,6 +519,31 @@ MachineConfig CaptureCurrentMachineConfig() {
 	c.kernelCRC32     = ComputeFirmwareCRC32(g_sim.GetKernelId());
 	c.basicCRC32      = ComputeFirmwareCRC32(g_sim.GetBasicId());
 	return c;
+}
+
+void PrefillHostMachineConfigDefaults(MachineConfig &cfg) {
+	// First-time Add-Game-to-Host seeding: when the live sim is running
+	// on the Altirra built-in fallback ROM (kernelCRC32 == 0), promote
+	// the proposal to the user's INSTALLED default for this hardware
+	// mode (resolved by ATFirmwareManager).  Same for BASIC.  This way
+	// the host's combobox shows "Atari XL/XE OS rev. 2" / "Atari BASIC
+	// rev. C" instead of a vague "(Altirra default for hardware)" /
+	// "(None)" — and joiners line up with the host's real ROM CRCs at
+	// session-begin time.
+	//
+	// We force `basicEnabled = true` for the resolve call so the helper
+	// fills in basicCRC32, then snap back to `basicEnabled = false`
+	// per the user's preferred default ("BASIC disabled, but with a
+	// real ROM staged in case the user enables it").
+	ATNetplayProfile::PerGameOverrides ov{};
+	ov.hardwareMode = (uint8_t)cfg.hardwareMode;
+	ov.basicEnabled = 1;
+	ov.kernelCRC32  = cfg.kernelCRC32;
+	ov.basicCRC32   = cfg.basicCRC32;
+	ATNetplayProfile::ResolveDefaultFirmwareCRCs(ov);
+	cfg.kernelCRC32 = ov.kernelCRC32;
+	cfg.basicCRC32  = ov.basicCRC32;
+	cfg.basicEnabled = false;
 }
 
 std::string FriendlyLobbyError(const std::string& raw, int httpStatus) {

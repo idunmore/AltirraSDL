@@ -893,7 +893,11 @@ static void BuildViewMenu(NSMenu *menu) {
 
 static void BuildSystemMenu(NSMenu *menu) {
 #ifdef ALTIRRA_NETPLAY_ENABLED
-	const bool netplayActive = ATNetplayGlue::IsActive();
+	// Engagement gate (peer past Handshaking), NOT plain IsActive —
+	// the host can keep using these menu items while merely
+	// advertising the offer.  Same rule as the ImGui System menu in
+	// ui_menus_system.cpp.
+	const bool netplayActive = ATNetplayGlue::IsSessionEngaged();
 #else
 	const bool netplayActive = false;
 #endif
@@ -1637,7 +1641,8 @@ static void BuildHelpMenu(NSMenu *menu) {
 
 static void BuildAppMenu(NSMenu *appMenu) {
 #ifdef ALTIRRA_NETPLAY_ENABLED
-	const bool netplayActive = ATNetplayGlue::IsActive();
+	// Match the System menu / commands_sdl3.cpp engagement gate.
+	const bool netplayActive = ATNetplayGlue::IsSessionEngaged();
 #else
 	const bool netplayActive = false;
 #endif

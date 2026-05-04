@@ -247,6 +247,7 @@ bool Coordinator::BeginJoinMulti(const char* hostCandidatesSemicolonList,
 		mLastHelloMs  = 0;
 		mHaveLastRejectReason = false;
 		mLastRejectReason = 0;
+		mWasRejected = false;
 		mPhaseStartMs = 0;
 		mPeerPath = PeerPath::WsRelay;
 		mRelayRegisteredMs = 0;
@@ -353,6 +354,7 @@ bool Coordinator::BeginJoinMulti(const char* hostCandidatesSemicolonList,
 	mLastHelloMs  = 0;
 	mHaveLastRejectReason = false;
 	mLastRejectReason = 0;
+	mWasRejected = false;
 	mPhaseStartMs = 0;
 	mPeerPath = PeerPath::Direct;
 	mRelayRegisteredMs = 0;
@@ -451,6 +453,7 @@ bool Coordinator::BeginJoinRelay(const char* lobbyHostPort,
 	mLastHelloMs  = 0;
 	mHaveLastRejectReason = false;
 	mLastRejectReason = 0;
+	mWasRejected = false;
 	mPhaseStartMs = 0;
 	mPeerPath = PeerPath::Relay;
 	mRelayRegisteredMs = 0;
@@ -488,6 +491,21 @@ void Coordinator::Poll(uint64_t nowMs) {
 	    mPhase == Phase::Ended ||
 	    mPhase == Phase::Failed ||
 	    mPhase == Phase::Desynced) {
+		return;
+	}
+
+	// Surface session-scoped transport failures (WS bridge unreachable,
+	// auth reject, mixed-content block).  The browser's WebSocket
+	// fires onerror+onclose with a non-1000 close code in those
+	// cases; without this gate the joiner sits at "Waiting for host
+	// to allow you in…" until the user gives up.
+	if (mTransport && mTransport->HasFailed()) {
+		const char *why = mTransport->FailureReason();
+		if (!why || !*why) why = "lobby connection lost";
+		g_ATLCNetplay("%s: transport failed — %s",
+			mRole == Role::Host ? "host" : "joiner", why);
+		mLastErrorOwned.assign(why);
+		FailWith(mLastErrorOwned.c_str());
 		return;
 	}
 
@@ -975,7 +993,15 @@ void Coordinator::Poll(uint64_t nowMs) {
 				FailWith(mLastErrorOwned.c_str());
 			}
 			mHelloCandidates.clear();
-		} else if (nowMs - mLastHelloMs >= kHelloRetryMs) {
+		} else if (!mWasRejected && nowMs - mLastHelloMs >= kHelloRetryMs) {
+			// Guard the retry on !mWasRejected so a rejected joiner
+			// doesn't keep flooding Hellos to the host (which would
+			// re-pop the host's accept/reject UI on every retry if
+			// any prior reject went undelivered).  HandleRejectFromHost
+			// already transitioned us to Phase::Failed, but
+			// Poll() short-circuits on Failed only at function entry —
+			// a rejection received DURING this Poll tick (before the
+			// retry block) needs the explicit gate here too.
 			mLastHelloMs = nowMs;
 			NetHello h;
 			FillHello(h);
@@ -1160,6 +1186,33 @@ void Coordinator::HandleHelloFromJoiner(const NetHello& hello,
 		// hanging in "Connecting…" until their handshake timeout.
 		SendReject(kRejectHostFull, from);
 		return;
+	}
+
+	// Pre-empt a UI re-prompt: this joiner was already manually
+	// rejected during this hosting session.  Auto-reject silently
+	// (no PendingDecision, no UI pop-up) so a retrying joiner whose
+	// previous NetReject was dropped on the wire doesn't create an
+	// infinite reject-prompt loop on the host.  Match by session
+	// nonce when possible (robust across NAT rebinds), else by
+	// endpoint.
+	{
+		bool helloHasNonce = false;
+		for (size_t k = 0; k < kSessionNonceLen; ++k) {
+			if (hello.sessionNonce[k] != 0) { helloHasNonce = true; break; }
+		}
+		for (const auto& rp : mRejectedPeers) {
+			bool match = false;
+			if (helloHasNonce && rp.hasSessionNonce) {
+				match = (std::memcmp(rp.sessionNonce,
+					hello.sessionNonce, kSessionNonceLen) == 0);
+			} else {
+				match = rp.peer.Equals(from);
+			}
+			if (match) {
+				SendReject(kRejectHostRejected, from);
+				return;
+			}
+		}
 	}
 
 	if (hello.protocolVersion != kProtocolVersion) {
@@ -1410,6 +1463,27 @@ void Coordinator::RejectPendingJoiner(size_t i) {
 	for (const auto& alt : pd.altPeers) {
 		SendReject(kRejectHostRejected, alt);
 	}
+
+	// Remember this joiner as rejected so a Hello that arrives AFTER
+	// our reject is silently auto-rejected — without this, every
+	// retry-Hello the joiner fires (because the joiner's NetReject
+	// got dropped en route, or because the joiner pre-dates the
+	// retry-stop fix in Poll) re-pops the host's accept/reject UI.
+	auto pushRejected = [&](const Endpoint& ep) {
+		RejectedPeer rp;
+		rp.peer = ep;
+		if (pd.hasSessionNonce) {
+			std::memcpy(rp.sessionNonce, pd.sessionNonce,
+				kSessionNonceLen);
+			rp.hasSessionNonce = true;
+		}
+		mRejectedPeers.push_back(std::move(rp));
+		if (mRejectedPeers.size() > kMaxRejectedPeers)
+			mRejectedPeers.erase(mRejectedPeers.begin());
+	};
+	pushRejected(pd.peer);
+	for (const auto& alt : pd.altPeers) pushRejected(alt);
+
 	mPendingDecisions.erase(mPendingDecisions.begin() + i);
 	// Stay in WaitingForJoiner — another entry may still be queued and
 	// new peers can still arrive.
@@ -1499,6 +1573,12 @@ void Coordinator::HandleWelcomeFromHost(const NetWelcome& w, uint64_t nowMs) {
 void Coordinator::HandleRejectFromHost(const NetReject& r) {
 	if (mPhase != Phase::Handshaking) return;
 	mPhase = Phase::Failed;
+	// Latch the rejection so the Hello-retry block in Poll() stops
+	// firing.  Without this, a joiner that just received NetReject
+	// would still send another Hello on the next retry tick (and
+	// every subsequent tick), and a host that hadn't yet drained
+	// our previous Hello would re-show the join-request UI.
+	mWasRejected = true;
 	switch (r.reason) {
 		case kRejectOsMismatch:     mLastError = "OS ROM does not match the host's. Install the matching firmware and try again."; break;
 		case kRejectBasicMismatch:  mLastError = "BASIC ROM does not match the host's. Install the matching firmware and try again."; break;

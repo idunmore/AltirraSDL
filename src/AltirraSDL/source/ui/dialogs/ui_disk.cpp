@@ -971,7 +971,9 @@ void ATUIRenderDiskManager(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 	// instantly desyncing.  The canonical Online Play profile pins
 	// disk state per session.  Close the dialog if it was open
 	// across BeginSession.
-	if (ATNetplayGlue::IsActive()) {
+	// IsSessionEngaged() — auto-close only once a peer is engaged.
+	// Merely hosting (WaitingForJoiner) shouldn't block disk swaps.
+	if (ATNetplayGlue::IsSessionEngaged()) {
 		state.showDiskManager = false;
 		return;
 	}

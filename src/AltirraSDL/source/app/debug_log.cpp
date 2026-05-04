@@ -246,6 +246,12 @@ void ATUIRenderDebugLogDialog(ATUIState &state) {
 	ImGui::Separator();
 
 	if (ImGui::Button("Copy to clipboard")) {
+		// Goes through ImGui's PlatformIO hook, which on WASM is
+		// overridden in ui_main.cpp to call ATCopyTextToClipboard ->
+		// navigator.clipboard.writeText (the deprecated execCommand
+		// path SDL3 uses on WASM is silently broken in modern
+		// browsers).  Native builds still hit SDL_SetClipboardText
+		// underneath, same as before.
 		ImGui::SetClipboardText(s_snapshot.c_str());
 	}
 	ImGui::SameLine();

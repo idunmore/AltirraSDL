@@ -540,7 +540,19 @@ void ResolveDefaultFirmwareCRCs(PerGameOverrides& ov) {
 			}
 		}
 	}
-	if (ov.basicCRC32 == 0) {
+	if (!ov.basicEnabled) {
+		// BASIC disabled = the host runs without BASIC.  Clear any
+		// stale CRC the caller passed in (which could happen if the
+		// user picked a BASIC ROM and then unticked the checkbox).
+		// Advertising basicCRC32 == 0 in the lobby session lets
+		// joiners see "BASIC off" and skip the BASIC compatibility
+		// check entirely — see CheckJoinCompat in ui_netplay_actions.cpp.
+		if (ov.basicCRC32 != 0) {
+			g_ATLCNetplay("netplay-profile: BASIC disabled — clearing "
+				"stale basicCRC32 %08X", (unsigned)ov.basicCRC32);
+			ov.basicCRC32 = 0;
+		}
+	} else if (ov.basicCRC32 == 0) {
 		uint64 bid = fwm->GetFirmwareOfType(kATFirmwareType_Basic, true);
 		if (bid) {
 			uint32_t crc = ATNetplayUI::ComputeFirmwareCRC32(bid);

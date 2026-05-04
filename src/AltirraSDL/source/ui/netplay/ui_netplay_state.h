@@ -276,6 +276,13 @@ std::string SpecLineJoin(const SpecLine& sl);
 // with firmware CRC32s computed from the loaded ROM bytes.
 MachineConfig CaptureCurrentMachineConfig();
 
+// First-time Add-Game-to-Host pre-fill: promotes a "(Altirra default)"
+// kernel/BASIC selection (CRC 0) to the user's INSTALLED default ROMs
+// (resolved via ATFirmwareManager), and forces basicEnabled = false.
+// Idempotent: non-zero CRCs are left alone, so once the user has
+// customised a hosted game's config it is never re-overwritten.
+void PrefillHostMachineConfigDefaults(MachineConfig &cfg);
+
 // CRC32 of the firmware ROM bytes for the given firmware id.  Returns
 // 0 if the id is unknown or the firmware can't be loaded.
 uint32_t ComputeFirmwareCRC32(uint64_t firmwareId);

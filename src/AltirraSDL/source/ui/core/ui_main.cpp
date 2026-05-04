@@ -1145,6 +1145,32 @@ bool ATUIInit(SDL_Window *window, IDisplayBackend *backend) {
 	ATNetplayUI_Initialize(window);
 #endif
 
+#if defined(__EMSCRIPTEN__)
+	// Override ImGui's clipboard hook on WASM so ImGui::SetClipboardText
+	// (used by Debug Log "Copy to clipboard", debugger console, trace
+	// viewer, etc.) reaches the browser's real clipboard API.  SDL3's
+	// WASM implementation is gated on a deprecated execCommand path
+	// that no modern browser honours outside an <input> selection.
+	// ATCopyTextToClipboard already does the right thing — wrap it.
+	ImGui::GetPlatformIO().Platform_SetClipboardTextFn =
+		[](ImGuiContext * /*ctx*/, const char *text) {
+			ATCopyTextToClipboard(nullptr, text);
+		};
+	ImGui::GetPlatformIO().Platform_GetClipboardTextFn =
+		[](ImGuiContext * /*ctx*/) -> const char * {
+			// SDL still drives reads correctly on WASM (read uses the
+			// async navigator API which works for in-tab selection
+			// state); preserve the SDL backend's getter so paste keeps
+			// working in InputText fields.
+			static thread_local std::string s_buf;
+			char *p = SDL_GetClipboardText();
+			if (!p) { s_buf.clear(); return s_buf.c_str(); }
+			s_buf.assign(p);
+			SDL_free(p);
+			return s_buf.c_str();
+		};
+#endif
+
 	return true;
 }
 

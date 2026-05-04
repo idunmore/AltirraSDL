@@ -1389,6 +1389,11 @@ void RenderAddOffer() {
 			{
 				s_mobileAddConfig = CaptureCurrentMachineConfig();
 			}
+			// Promote any remaining (Altirra default) / (None)
+			// placeholders to the user's INSTALLED default ROMs, and
+			// force BASIC enabled = false (per-user-default of
+			// "BASIC disabled, real ROM staged for later toggle").
+			PrefillHostMachineConfigDefaults(s_mobileAddConfig);
 		}
 		s_mobileAddConfigSeeded = true;
 	}

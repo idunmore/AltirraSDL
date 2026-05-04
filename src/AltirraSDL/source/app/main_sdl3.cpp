@@ -2322,7 +2322,10 @@ int main(int argc, char *argv[]) {
 		// peers are connected.
 		bool pauseInactive = ATUIGetPauseWhenInactive() && !g_winActive;
 #ifdef ALTIRRA_NETPLAY_ENABLED
-		if (ATNetplayGlue::IsActive()) pauseInactive = false;
+		// Force pause-when-inactive off only once a peer is engaged —
+		// merely hosting (no peer) doesn't suffer from a stalled sim,
+		// and the user's preference should be honoured then.
+		if (ATNetplayGlue::IsSessionEngaged()) pauseInactive = false;
 #endif
 
 		if (pauseInactive) {

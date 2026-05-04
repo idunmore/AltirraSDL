@@ -266,18 +266,64 @@ bool WasmTransport::OnErrorCb(int /*eventType*/,
                               const EmscriptenWebSocketErrorEvent* _Nonnull /*evt*/,
                               void* userData) {
 	auto* self = static_cast<WasmTransport*>(userData);
-	g_ATLCNetplay("WasmTransport: WS error");
-	self->mOpen = false;
+	// The browser doesn't expose a useful error reason on the
+	// onerror event (CORS / mixed-content / refused TLS all surface
+	// as a generic event).  The follow-up onclose event carries the
+	// real close code, so log a placeholder here and capture the
+	// detail there.
+	g_ATLCNetplay("WasmTransport: WS error (browser will close shortly)");
+	self->mOpen   = false;
+	self->mFailed = true;
 	return true;
 }
 
 bool WasmTransport::OnCloseCb(int /*eventType*/,
-                              const EmscriptenWebSocketCloseEvent* _Nonnull /*c*/,
+                              const EmscriptenWebSocketCloseEvent* _Nonnull c,
                               void* userData) {
 	auto* self = static_cast<WasmTransport*>(userData);
-	self->mOpen = false;
-	self->mClosed = true;
-	g_ATLCNetplay("WasmTransport: WS closed");
+	self->mOpen          = false;
+	self->mClosed        = true;
+	self->mCloseCode     = c ? c->code : 0;
+	self->mCloseWasClean = c ? c->wasClean : false;
+	if (c && c->reason[0]) self->mCloseReason.assign(c->reason);
+	// Treat any non-1000 close BEFORE we ever opened as a failure.
+	// 1006 (abnormal closure) usually means mixed-content/CORS/TLS;
+	// 1008/1011 are application-policy rejects from the lobby.
+	if (!self->mFailed && self->mCloseCode != 0 && self->mCloseCode != 1000)
+		self->mFailed = true;
+	// Build a one-liner the joiner UI can show instead of "Waiting for
+	// host…" forever.  Map the most common close codes to friendly
+	// language; fall back to a generic "code N" for anything else.
+	if (self->mFailed) {
+		char buf[160];
+		const char *human = "lobby connection lost";
+		switch (self->mCloseCode) {
+			case 1006: human = "could not reach lobby (DNS / TLS / CORS / mixed-content)"; break;
+			case 1008: human = "lobby refused the connection (policy)"; break;
+			case 1011: human = "lobby internal error"; break;
+			case 4000: human = "lobby refused: bad request"; break;
+			case 4001: human = "lobby refused: authentication"; break;
+			case 4003: human = "lobby refused: forbidden (bad token?)"; break;
+			case 4009: human = "lobby refused: role already taken"; break;
+			case 4010: human = "lobby refused: session is gone"; break;
+		}
+		if (!self->mCloseReason.empty()) {
+			std::snprintf(buf, sizeof buf,
+				"%s (code %u: %s)", human,
+				(unsigned)self->mCloseCode, self->mCloseReason.c_str());
+		} else {
+			std::snprintf(buf, sizeof buf,
+				"%s (code %u)", human,
+				(unsigned)self->mCloseCode);
+		}
+		self->mFailureSummary.assign(buf);
+	}
+	g_ATLCNetplay("WasmTransport: WS closed code=%u clean=%d reason=\"%s\"%s%s",
+		(unsigned)self->mCloseCode,
+		(int)self->mCloseWasClean,
+		self->mCloseReason.c_str(),
+		self->mFailed ? " — " : "",
+		self->mFailed ? self->mFailureSummary.c_str() : "");
 	return true;
 }
 

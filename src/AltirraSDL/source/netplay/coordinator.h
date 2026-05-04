@@ -549,6 +549,28 @@ private:
 	bool     mPromptAccept       = false;
 	std::vector<PendingDecision> mPendingDecisions;
 
+	// Recently-rejected peers (host-side).  When the user clicks
+	// "Reject" on a pending joiner we push (endpoint + sessionNonce)
+	// here.  Subsequent Hellos from the same peer are auto-re-rejected
+	// without ever rebuilding a PendingDecision entry, so the host UI
+	// doesn't keep re-prompting on a retrying joiner who never saw our
+	// first Reject (e.g. a packet was dropped by the WS bridge).
+	// Capped at kMaxRejectedPeers with FIFO eviction.
+	struct RejectedPeer {
+		Endpoint peer;
+		uint8_t  sessionNonce[kSessionNonceLen] = {};
+		bool     hasSessionNonce = false;
+	};
+	static constexpr size_t kMaxRejectedPeers = 32;
+	std::vector<RejectedPeer> mRejectedPeers;
+
+	// Joiner-side rejection latch.  Set true by HandleRejectFromHost so
+	// the Hello-retry block in Poll() stops firing.  Without this, a
+	// joiner that received NetReject would keep flooding Hellos at
+	// kHelloRetryMs intervals, and any host who hadn't yet processed
+	// the rejection would re-pop the join-request UI on every retry.
+	bool mWasRejected = false;
+
 	// Snapshot channels (only one is active at a time).
 	std::vector<uint8_t> mSnapTxBuffer;   // host's copy of what we're uploading
 	SnapshotSender       mSnapTx;

@@ -1492,6 +1492,10 @@ void DesktopAddOffer() {
 		// Seed from the current emulator so the host's Add-Game
 		// always starts with a config they can actually boot.
 		s_addConfig = CaptureCurrentMachineConfig();
+		// Promote (Altirra default)/(None) to the user's installed
+		// default ROMs and default BASIC to disabled — same first-
+		// time UX the mobile RenderAddOffer gives.
+		PrefillHostMachineConfigDefaults(s_addConfig);
 		s_addConfigSeeded = true;
 	}
 	if (!s_firmwareChoicesLoaded) {

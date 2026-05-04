@@ -31,7 +31,12 @@ static inline void ShortcutContextMenu(const char *command) {
 // --- body extracted from ui_menus.cpp -------------------------------------
 void ATUIRenderSystemMenu(ATSimulator &sim, ATUIState &state) {
 #ifdef ALTIRRA_NETPLAY_ENABLED
-	const bool netplayActiveTop = ATNetplayGlue::IsActive();
+	// Gate menu disables on "peer is actually engaged", NOT on "any
+	// coordinator exists".  Merely hosting (WaitingForJoiner) leaves
+	// the user free to reset, configure, switch profiles, etc. — the
+	// constraints only kick in once a peer is past Handshaking and
+	// actions like Cold Reset would diverge the lockstep.
+	const bool netplayActiveTop = ATNetplayGlue::IsSessionEngaged();
 #else
 	const bool netplayActiveTop = false;
 #endif
@@ -152,7 +157,11 @@ void ATUIRenderSystemMenu(ATSimulator &sim, ATUIState &state) {
 
 	bool turbo = ATUIGetTurbo();
 #ifdef ALTIRRA_NETPLAY_ENABLED
-	const bool netplayActive = ATNetplayGlue::IsActive();
+	// Same engagement gate as netplayActiveTop above — Warp Speed and
+	// Pause-When-Inactive only need to be locked down once a peer is
+	// engaged in lockstep, not while the host is still waiting for a
+	// joiner.
+	const bool netplayActive = ATNetplayGlue::IsSessionEngaged();
 #else
 	const bool netplayActive = false;
 #endif

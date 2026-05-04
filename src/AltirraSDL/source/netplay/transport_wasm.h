@@ -78,6 +78,18 @@ public:
 	// WS bridge IS the relay; no NAT punch, no direct probes.
 	bool IsRelayOnly() const override { return true; }
 
+	// Did the WebSocket error or close abnormally?  See INetTransport.
+	// True after the browser fires onerror or onclose with a non-1000
+	// close code — meaning the session can no longer carry inner
+	// frames and the Coordinator should fail the joiner / host.
+	bool HasFailed() const override { return mFailed; }
+	const char *FailureReason() const override {
+		return mFailureSummary.c_str();
+	}
+	uint16_t      CloseCode()   const { return mCloseCode; }
+	const char *  CloseReason() const { return mCloseReason.c_str(); }
+	bool          CloseWasClean() const { return mCloseWasClean; }
+
 private:
 	// Emscripten provides `EMSCRIPTEN_WEBSOCKET_T` which is an int
 	// handle, not a pointer.  We store it as int32_t so the header
@@ -103,6 +115,18 @@ private:
 
 	// One-shot inbound-cap warning gate.
 	bool mWarnedInboundOverflow = false;
+
+	// Failure state set by OnError / OnClose so the Coordinator can
+	// detect WS-level failures (auth reject, lobby down, mixed-content
+	// block) and surface a clear error to the UI.  Without this the
+	// joiner sits at "Waiting for host…" forever.
+	bool        mFailed = false;
+	uint16_t    mCloseCode = 0;
+	std::string mCloseReason;
+	bool        mCloseWasClean = false;
+	// Human-readable summary of the failure, generated in OnCloseCb
+	// from mCloseCode / mCloseReason and exposed via FailureReason().
+	std::string mFailureSummary;
 
 	// Emscripten event callbacks.  Match the canonical typedef
 	// signatures (including `_Nonnull` annotations) from

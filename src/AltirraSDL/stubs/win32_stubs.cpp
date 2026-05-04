@@ -23,6 +23,43 @@
 #include "uiaccessors.h"
 #include "settings.h"
 
+#if defined(__EMSCRIPTEN__)
+#  include <emscripten.h>
+// Browser clipboard via the standard async navigator.clipboard API.
+// SDL3's SDL_SetClipboardText on WASM uses document.execCommand('copy')
+// which has been deprecated by every major browser since 2023 and
+// silently fails outside <input>/<textarea> selection contexts (which
+// our ImGui-driven UI never sets up).  This helper bypasses SDL and
+// goes straight to the modern API; permission-wise the navigator
+// clipboard write requires a "user activation" (a recent click /
+// keypress), which any "Copy" button trivially provides.
+EM_JS(void, _altirra_wasm_clipboard_write, (const char *utf8), {
+    try {
+        var s = UTF8ToString(utf8);
+        if (typeof navigator !== 'undefined' && navigator.clipboard
+                && typeof navigator.clipboard.writeText === 'function') {
+            navigator.clipboard.writeText(s).catch(function (err) {
+                console.warn('[altirra-wasm] clipboard write failed:', err);
+            });
+            return;
+        }
+        // Final fallback: stuff into a hidden textarea + execCommand.
+        // This still works on older browsers and on http:// origins
+        // where the async API is gated.
+        var ta = document.createElement('textarea');
+        ta.value = s;
+        ta.style.position = 'fixed';
+        ta.style.opacity  = '0';
+        document.body.appendChild(ta);
+        ta.focus(); ta.select();
+        try { document.execCommand('copy'); } catch (e2) {}
+        document.body.removeChild(ta);
+    } catch (e) {
+        console.warn('[altirra-wasm] clipboard write threw:', e);
+    }
+});
+#endif
+
 // ============================================================
 // oshelper.h — SDL3 implementations
 // ============================================================
@@ -35,14 +72,24 @@
 // predate that file remain here.
 
 void ATCopyTextToClipboard(void *hwnd, const char *s) {
-	if (s && *s) SDL_SetClipboardText(s);
+	if (!s || !*s) return;
+#if defined(__EMSCRIPTEN__)
+	// Use the browser's real clipboard API (see _altirra_wasm_clipboard_write
+	// above for the rationale); also keep the SDL path so internal SDL
+	// state stays consistent (some ImGui drag-paste helpers query it
+	// back via SDL_GetClipboardText).
+	_altirra_wasm_clipboard_write(s);
+#endif
+	SDL_SetClipboardText(s);
 }
 
 void ATCopyTextToClipboard(void *hwnd, const wchar_t *s) {
-	if (s && *s) {
-		VDStringA u8 = VDTextWToU8(VDStringW(s));
-		SDL_SetClipboardText(u8.c_str());
-	}
+	if (!s || !*s) return;
+	VDStringA u8 = VDTextWToU8(VDStringW(s));
+#if defined(__EMSCRIPTEN__)
+	_altirra_wasm_clipboard_write(u8.c_str());
+#endif
+	SDL_SetClipboardText(u8.c_str());
 }
 
 void ATLaunchURL(const wchar_t *url) {

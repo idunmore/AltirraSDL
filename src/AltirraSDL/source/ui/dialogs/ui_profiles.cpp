@@ -25,7 +25,9 @@ void ATUIRenderProfiles(ATSimulator &sim, ATUIState &state) {
 	// pre-existing windows), close it.  Editing / switching profiles
 	// while the canonical Online Play profile is active would break
 	// the session.
-	if (ATNetplayGlue::IsActive()) {
+	// IsSessionEngaged() — auto-close only once a peer is engaged.
+	// Merely hosting (WaitingForJoiner) shouldn't block profile edits.
+	if (ATNetplayGlue::IsSessionEngaged()) {
 		state.showProfiles = false;
 		return;
 	}

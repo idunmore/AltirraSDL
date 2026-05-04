@@ -168,11 +168,14 @@ static const int kNumTreeEntries = sizeof(kTreeEntries) / sizeof(kTreeEntries[0]
 
 void ATUIRenderSystemConfig(ATSimulator &sim, ATUIState &state) {
 #ifdef ALTIRRA_NETPLAY_ENABLED
-	// Defensive: if the dialog was already open when an Online Play
-	// session began (the gate in CmdConfigure / the menu only blocks
-	// new opens, not pre-existing ones), close it here.  Editing the
-	// canonical Online Play profile mid-session would silently desync.
-	if (ATNetplayGlue::IsActive()) {
+	// Defensive: if the dialog was already open when a peer engaged
+	// (the gate in CmdConfigure / the menu only blocks new opens, not
+	// pre-existing ones), close it here.  Editing the canonical Online
+	// Play profile mid-session would silently desync.  Use
+	// IsSessionEngaged() — merely hosting (WaitingForJoiner) leaves the
+	// user free to keep configuring; the lock kicks in once a peer is
+	// past Handshaking.
+	if (ATNetplayGlue::IsSessionEngaged()) {
 		state.showSystemConfig = false;
 		return;
 	}
