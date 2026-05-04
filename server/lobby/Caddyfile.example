@@ -1,0 +1,56 @@
+# Altirra SDL netplay lobby — public TLS edge reference Caddyfile.
+#
+# Copy to /etc/caddy/Caddyfile (or merge into your existing one) on the
+# lobby box and `caddy reload`.  Without the /netplay reverse_proxy,
+# WASM (browser) joiners get a WS code 1006 ("could not reach lobby")
+# because Caddy returns 404 for the upgrade attempt and the bridge on
+# localhost:8090 is never reached.
+#
+# WHY the split: /v1/* is plain HTTP/1.1 served by cpp-httplib on
+# localhost:8080.  /netplay is a WebSocket upgrade served by mongoose
+# on localhost:8090.  cpp-httplib doesn't speak WS, so the two
+# listeners cannot share a port; Caddy is the single TLS edge that
+# stitches them back together.
+#
+# After applying:
+#   sudo systemctl reload caddy
+#   curl -i https://altirra-lobby.duckdns.org/v1/stats     # → 200
+#   curl -i -H "Connection: Upgrade" -H "Upgrade: websocket" \
+#        -H "Sec-WebSocket-Version: 13" \
+#        -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
+#        -H "Sec-WebSocket-Protocol: altirra-netplay.v1, session.00112233445566778899aabbccddeeff, role.joiner" \
+#        https://altirra-lobby.duckdns.org/netplay        # → 400/403/410
+#                                                         #   (NOT 404)
+
+altirra-lobby.duckdns.org {
+	# The lobby's REST API.  Trust the X-Forwarded-For Caddy adds so
+	# rate limiting in the lobby uses the real client IP, not 127.0.0.1.
+	@v1 path /v1/*
+	handle @v1 {
+		reverse_proxy localhost:8080
+	}
+
+	# WebSocket bridge for browser (WASM) netplay.  Caddy auto-detects
+	# the Upgrade header and switches to bidirectional WS proxy.  The
+	# bridge requires the Sec-WebSocket-Protocol subprotocol list
+	# (altirra-netplay.v1 + session/role/token tokens) — unauthorised
+	# upgrades are rejected by the bridge with 4xx, never reach 101.
+	@netplay path /netplay
+	handle @netplay {
+		reverse_proxy localhost:8090
+	}
+
+	# Static health check / default response for everything else so
+	# Caddy doesn't accidentally proxy unrelated paths to the lobby.
+	handle {
+		respond "altirra-lobby" 200
+	}
+
+	# Standard logging — keep the format that fits your existing
+	# rotation policy.  Do NOT log query strings if a future client
+	# ever puts secrets in URLs (the v1 client does not).
+	log {
+		output file /var/log/caddy/altirra-lobby.log
+		format console
+	}
+}

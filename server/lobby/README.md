@@ -185,6 +185,17 @@ Vendored single-file mongoose 7.18 implements the WebSocket protocol
 (`vendor/mongoose/mongoose.{c,h}`).  Caddy terminates TLS so the
 bridge speaks plain WS upstream.
 
+> **Deployment note — the public Caddyfile MUST include a
+> `/netplay → localhost:8090` reverse_proxy route.** Without it,
+> Caddy returns 404 on the WS upgrade and browser joiners see WS
+> close code **1006**: *"could not reach lobby (DNS / TLS / CORS /
+> mixed-content)"*. See `Caddyfile.example` in this directory for
+> a complete reference config; copy/merge into `/etc/caddy/Caddyfile`
+> on the lobby box and `sudo systemctl reload caddy`. To verify
+> after applying, an unauthenticated curl probe of `/netplay` should
+> return 400/403/410 (the bridge rejecting the missing subprotocol)
+> rather than 404 (Caddy with no route).
+
 ### Handshake
 
 The browser opens
