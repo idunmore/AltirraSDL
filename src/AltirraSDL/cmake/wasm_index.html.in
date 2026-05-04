@@ -2073,10 +2073,16 @@
       return GAME_PACKS.reduce((acc, p) => acc + (p.selected ? 1 : 0), 0);
     }
     function fwIsFirmwareSelected() {
-      // First-run mode and the firmware toggle is hidden → firmware
-      // download is implied.  Manual mode → driven by checkbox.
+      // The firmware toggle is hidden when there's nothing else to
+      // choose alongside firmware — i.e. no game packs configured AND
+      // (in manual mode) no other reason to open the wizard.  In that
+      // case firmware download is the *only* action the wizard can
+      // perform, so treat it as implicitly selected regardless of
+      // mode.  Without this the Download button stayed disabled when
+      // a user who skipped first-run later clicked "Download firmware…"
+      // on a host with no game packs configured.
       if (fwFirmwareToggle && fwFirmwareToggle.style.display === 'none')
-        return fwWizardMode === 'first-run';
+        return true;
       return !!fwFirmwareCheckState;
     }
     function updateFwGoLabel() {
