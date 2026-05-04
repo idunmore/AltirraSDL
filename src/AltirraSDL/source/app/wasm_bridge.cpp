@@ -276,8 +276,40 @@ int ATWasmUnpackArchive(const char *zipPath, const char *destDir) {
 
 			EnsureParentDirs(outPath);
 
+			// OpenDecodedStream + Read is the canonical inflate path.
+			// Calling DecompressStream(idx, buf) directly without first
+			// loading the compressed bytes via ReadRawStream throws
+			// VDIOReadPastEOFException because buf is empty.  Using
+			// the inflate stream avoids that contract entirely.
 			vdfastvector<uint8> buf;
-			zip.DecompressStream(i, buf);
+			try {
+				if (info.mUncompressedSize > 256 * 1024 * 1024) {
+					fprintf(stderr, "[wasm] UnpackArchive: skip oversized '%ls' (%u bytes)\n",
+						info.mDecodedFileName.c_str(), info.mUncompressedSize);
+					continue;
+				}
+				vdautoptr<IVDInflateStream> zs(zip.OpenDecodedStream(i, true));
+				if (!zs) {
+					fprintf(stderr, "[wasm] UnpackArchive: OpenDecodedStream null for '%ls'\n",
+						info.mDecodedFileName.c_str());
+					continue;
+				}
+				buf.resize(info.mUncompressedSize);
+				if (info.mUncompressedSize)
+					zs->Read(buf.data(), info.mUncompressedSize);
+			} catch (const MyError &e) {
+				fprintf(stderr, "[wasm] UnpackArchive: read entry '%ls' failed: %s\n",
+					info.mDecodedFileName.c_str(), e.c_str());
+				continue;
+			} catch (const std::exception &e) {
+				fprintf(stderr, "[wasm] UnpackArchive: read entry '%ls' std::exception: %s\n",
+					info.mDecodedFileName.c_str(), e.what());
+				continue;
+			} catch (...) {
+				fprintf(stderr, "[wasm] UnpackArchive: read entry '%ls' unknown exception\n",
+					info.mDecodedFileName.c_str());
+				continue;
+			}
 
 			try {
 				VDFile out(outPath.c_str(),
@@ -290,6 +322,12 @@ int ATWasmUnpackArchive(const char *zipPath, const char *destDir) {
 			} catch (const MyError &e) {
 				fprintf(stderr, "[wasm] UnpackArchive: write failed for '%ls': %s\n",
 					outPath.c_str(), e.c_str());
+			} catch (const std::exception &e) {
+				fprintf(stderr, "[wasm] UnpackArchive: write '%ls' std::exception: %s\n",
+					outPath.c_str(), e.what());
+			} catch (...) {
+				fprintf(stderr, "[wasm] UnpackArchive: write '%ls' unknown exception\n",
+					outPath.c_str());
 			}
 		}
 	} catch (const MyError &e) {
@@ -460,6 +498,44 @@ namespace {
 		_altirra_wasm_sync_fs_out();
 	}
 
+	// Read one zip entry's uncompressed bytes into outBuf.  Uses the
+	// OpenDecodedStream API — which expects the underlying zip's
+	// random-access stream to still be alive — and resizes outBuf to
+	// the entry's full uncompressed length before reading.  Each
+	// entry is wrapped in its own try/catch so a single corrupt /
+	// truncated entry doesn't abort the whole extraction.
+	bool ReadZipEntry(VDZipArchive &zip, sint32 idx,
+			vdfastvector<uint8> &outBuf, const wchar_t *nameForLog) {
+		try {
+			const auto &fi = zip.GetFileInfo(idx);
+			if (fi.mUncompressedSize > 64 * 1024 * 1024) {
+				fprintf(stderr, "[wasm] FirstRun: skip oversized entry '%ls' (%u bytes)\n",
+					nameForLog, fi.mUncompressedSize);
+				return false;
+			}
+			vdautoptr<IVDInflateStream> zs(zip.OpenDecodedStream(idx));
+			if (!zs) {
+				fprintf(stderr, "[wasm] FirstRun: OpenDecodedStream returned null for '%ls'\n",
+					nameForLog);
+				return false;
+			}
+			outBuf.resize(fi.mUncompressedSize);
+			if (fi.mUncompressedSize)
+				zs->Read(outBuf.data(), fi.mUncompressedSize);
+			return true;
+		} catch (const MyError &e) {
+			fprintf(stderr, "[wasm] FirstRun: read entry '%ls' failed: %s\n",
+				nameForLog, e.c_str());
+		} catch (const std::exception &e) {
+			fprintf(stderr, "[wasm] FirstRun: read entry '%ls' std::exception: %s\n",
+				nameForLog, e.what());
+		} catch (...) {
+			fprintf(stderr, "[wasm] FirstRun: read entry '%ls' unknown exception\n",
+				nameForLog);
+		}
+		return false;
+	}
+
 	int ExtractRomsFromBuffer(const uint8_t *bytes, size_t len) {
 		int written = 0;
 		try {
@@ -492,7 +568,8 @@ namespace {
 				outPath += base;
 
 				vdfastvector<uint8> buf;
-				zip.DecompressStream(i, buf);
+				if (!ReadZipEntry(zip, i, buf, base))
+					continue;   // skip & keep going — corrupt entry, not a fatal zip
 
 				try {
 					VDFile out(outPath.c_str(),
@@ -507,6 +584,12 @@ namespace {
 				} catch (const MyError &e) {
 					fprintf(stderr, "[wasm] FirstRun: write failed for '%ls': %s\n",
 						base, e.c_str());
+				} catch (const std::exception &e) {
+					fprintf(stderr, "[wasm] FirstRun: write '%ls' std::exception: %s\n",
+						base, e.what());
+				} catch (...) {
+					fprintf(stderr, "[wasm] FirstRun: write '%ls' unknown exception\n",
+						base);
 				}
 			}
 		} catch (const MyError &e) {
@@ -642,9 +725,9 @@ void ATWasmFirstRunBootstrap() {
 }
 
 extern "C" EMSCRIPTEN_KEEPALIVE
-void ATWasmGetFirstRunStatus(int *outState, int *outFilesExtracted) {
-	if (outState)           *outState           = g_firstRunState.load();
-	if (outFilesExtracted)  *outFilesExtracted  = g_firstRunFiles.load();
-}
+int ATWasmGetFirstRunState() { return g_firstRunState.load(); }
+
+extern "C" EMSCRIPTEN_KEEPALIVE
+int ATWasmGetFirstRunFiles() { return g_firstRunFiles.load(); }
 
 #endif // __EMSCRIPTEN__

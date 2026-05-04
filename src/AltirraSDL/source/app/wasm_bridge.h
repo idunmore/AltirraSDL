@@ -79,10 +79,9 @@ extern "C" int ATWasmDeleteTree(const char *path);
 extern "C" void ATWasmFirstRunBootstrap();
 
 // First-run status, polled by the JS shell to drive the toast UX.
-//   *outState           — see kATWasmFirstRunState_* values.
-//   *outFilesExtracted  — count of ROM files written so far (only
-//                         meaningful when state >= 4).
-// Either pointer may be NULL.
+// Two simple int returners (instead of an out-pointer struct) keep
+// the JS bridge minimal — no Module.HEAP32 / Module.getValue export
+// needed.  States:
 //
 //   0 = idle / not started
 //   1 = checking marker / firmware dir
@@ -91,9 +90,10 @@ extern "C" void ATWasmFirstRunBootstrap();
 //   4 = unpacking
 //   5 = done, success (>=1 file extracted)
 //   6 = done, no firmware files in archive
-//   7 = done, both URLs failed
+//   7 = done, all URLs failed
 //   8 = skipped (marker present or firmware dir already populated)
-extern "C" void ATWasmGetFirstRunStatus(int *outState, int *outFilesExtracted);
+extern "C" int ATWasmGetFirstRunState();
+extern "C" int ATWasmGetFirstRunFiles();
 
 #else // !__EMSCRIPTEN__
 

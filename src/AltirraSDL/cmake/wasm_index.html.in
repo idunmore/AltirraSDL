@@ -1357,18 +1357,15 @@
         jlog('first-run: bootstrap threw —', err && err.message ? err.message : err);
         return;
       }
-      if (!Module._ATWasmGetFirstRunStatus) {
+      if (!Module._ATWasmGetFirstRunState
+          || !Module._ATWasmGetFirstRunFiles) {
         jlog('first-run: status export missing — skipping');
         return;
       }
-      const statePtr = Module._malloc(4);
-      const filesPtr = Module._malloc(4);
       let stopped = false;
       const stop = () => {
         if (stopped) return;
         stopped = true;
-        Module._free(statePtr);
-        Module._free(filesPtr);
         if (firstRunPollTimer) {
           clearInterval(firstRunPollTimer);
           firstRunPollTimer = null;
@@ -1376,13 +1373,12 @@
       };
       const tick = () => {
         if (stopped) return;
-        Module._ATWasmGetFirstRunStatus(statePtr, filesPtr);
-        // HEAP32 is the canonical 32-bit signed view; using it
-        // directly avoids needing Module.getValue (which would have
-        // to be added to EXPORTED_RUNTIME_METHODS).  >>2 converts the
-        // byte offset to a 32-bit element index.
-        const state = Module.HEAP32[statePtr >> 2];
-        const files = Module.HEAP32[filesPtr >> 2];
+        // Two int-returning exports — no Module.HEAP32 access required,
+        // which keeps EXPORTED_RUNTIME_METHODS small and dodges the
+        // "Cannot read properties of undefined" failure when HEAP32
+        // isn't attached to Module by the runtime glue.
+        const state = Module._ATWasmGetFirstRunState();
+        const files = Module._ATWasmGetFirstRunFiles();
         if (state !== firstRunLastState) {
           firstRunLastState = state;
           jlog('first-run: state=' + state + ' files=' + files);
