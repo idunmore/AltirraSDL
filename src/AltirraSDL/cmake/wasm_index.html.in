@@ -4173,7 +4173,7 @@
     async function diagnoseNetplay() {
       const host = (HOST_CONFIG && HOST_CONFIG.lobbyHost)
                    ? HOST_CONFIG.lobbyHost
-                   : 'altirra-lobby.duckdns.org';
+                   : 'lobby.atari.org.pl';
       const baseHttps = 'https://' + host;
       const wssUrl    = 'wss://' + host + '/netplay';
 
@@ -4280,7 +4280,10 @@
       //     has zero size or is detached / display:none, an adblock-
       //     style extension is active.  This catches the extension
       //     even when its WS-block list happens to spare our host —
-      //     the user can then disable / pause it and retry.
+      //     the user can then disable / pause it and retry.  (The
+      //     primary host `lobby.atari.org.pl` should not trip filter
+      //     lists, but the duckdns backup commonly does — the same
+      //     diagnostic applies whichever the user has configured.)
       //
       // Neither signal is conclusive on its own; together they pin
       // the cause precisely enough to give an actionable verdict.
@@ -4388,7 +4391,7 @@
           verdict = 'WSS blocked by browser — HTTPS works, WSS closed'
                   + ' in ' + c.ms + ' ms.  Open DevTools (F12) →'
                   + ' Console for the exact reason.  Common causes:'
-                  + ' ad/privacy extension blocking WS to duckdns.org,'
+                  + ' ad/privacy extension blocking WS to ' + host + ','
                   + ' corporate AV intercepting TLS, or a system proxy.'
                   + '  Try an Incognito window with all extensions'
                   + ' disabled to confirm.';

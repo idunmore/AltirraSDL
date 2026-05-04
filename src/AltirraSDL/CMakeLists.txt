@@ -846,7 +846,7 @@ elseif(ALTIRRA_WASM)
         "SHELL:-sFORCE_FILESYSTEM=1"
         # FETCH=1 enables emscripten_fetch_t, used by
         # ui_netplay_lobby_worker.cpp under __EMSCRIPTEN__ to talk to
-        # the lobby HTTP API (https://altirra-lobby.duckdns.org/v1/*)
+        # the lobby HTTP API (https://lobby.atari.org.pl/v1/*)
         # asynchronously from the main loop.  Adds ~10 KB to the wasm.
         "SHELL:-sFETCH=1"
         # websocket.js exports emscripten_websocket_*, used by

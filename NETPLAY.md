@@ -118,9 +118,20 @@ On first launch AltirraSDL writes
 
 [official]
 name    = Altirra Official Lobby
-url     = http://158.180.27.70:8080
+url     = http://lobby.atari.org.pl:8080
 region  = global
 enabled = true
+
+; Backup lobby — same server, alternate DNS via DuckDNS.  Enable
+; this manually if 'lobby.atari.org.pl' is unreachable (DNS outage
+; on the primary).  Do NOT enable both at once: both names resolve
+; to the same box, so leaving them on creates duplicate listings
+; in Browse and double the heartbeats per session.
+[backup]
+name    = Altirra Lobby (DuckDNS backup)
+url     = http://altirra-lobby.duckdns.org:8080
+region  = global
+enabled = false
 
 [lan]
 name      = LAN

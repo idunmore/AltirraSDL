@@ -1,8 +1,9 @@
 // Altirra SDL3 netplay - lobby client
 //
 // Typed facade over http_minimal.cpp + a tiny hand-rolled JSON reader.
-// Talks to the altirra-sdl-lobby reference server (Go, deployed at
-// http://158.180.27.70:8080 — see NETPLAY_DESIGN_PLAN.md §11).
+// Talks to the altirra-sdl-lobby reference server (C++, deployed at
+// http://lobby.atari.org.pl:8080 → 158.180.27.70 — see
+// NETPLAY_DESIGN_PLAN.md §11).
 //
 // The lobby is a session directory, not a rendezvous server.  Calls:
 //
@@ -123,8 +124,9 @@ struct LobbyStats {
 };
 
 struct LobbyEndpoint {
-	// HTTP transport.
-	std::string host       = "158.180.27.70";
+	// HTTP transport.  Default points at the public lobby; clients can
+	// override per-call from the user's lobby.ini.
+	std::string host       = "lobby.atari.org.pl";
 	uint16_t    port       = 8080;
 	// Fail fast — the lobby is optional infrastructure (peers can
 	// still connect via direct IP).  A 5 s wait on every Create /

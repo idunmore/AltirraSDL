@@ -46,7 +46,7 @@ class WasmTransport final : public INetTransport {
 public:
 	// Authenticated WS handshake parameters.  All four are required.
 	//
-	//   lobbyHost  — `altirra-lobby.duckdns.org` (no scheme, no port).
+	//   lobbyHost  — e.g. `lobby.atari.org.pl` (no scheme, no port).
 	//                The transport always uses wss:// on port 443.
 	//   sidHex32   — 32-char lowercase hex form of the session id (the
 	//                UUIDv4 returned by Create with dashes stripped).

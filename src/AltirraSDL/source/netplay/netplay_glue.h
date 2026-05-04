@@ -252,7 +252,7 @@ bool StartJoinRelay(const char* lobbyHostPort,
 
 #if defined(__EMSCRIPTEN__)
 // WASM joiner: open a WSS connection to `lobbyHost` (e.g.
-// "altirra-lobby.duckdns.org") tagged with `sessionIdHex32` (the 32-hex
+// "lobby.atari.org.pl") tagged with `sessionIdHex32` (the 32-hex
 // lobby session id, no dashes) and route Hello/Welcome/Input through it.
 // The lobby's WS bridge translates to/from UDP for the host.  No UDP
 // candidates are needed — the bridge keys on (sessionId, role).

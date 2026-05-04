@@ -1,7 +1,7 @@
 // Altirra SDL3 netplay - lobby client selftest
 //
 // End-to-end integration test against the production lobby server
-// http://158.180.27.70:8080.  Creates a private session, lists and finds
+// http://lobby.atari.org.pl:8080.  Creates a private session, lists and finds
 // it, heartbeats, deletes, and verifies the delete stuck.  Uses a
 // unique cart name with the PID + wallclock so concurrent runs don't
 // stomp each other.
@@ -89,7 +89,7 @@ static void testLiveLobbyRoundTrip() {
 	}
 
 	LobbyEndpoint ep;
-	ep.host = envOr("LOBBY_HOST", "158.180.27.70");
+	ep.host = envOr("LOBBY_HOST", "lobby.atari.org.pl");
 	ep.port = (uint16_t)std::atoi(envOr("LOBBY_PORT", "8080").c_str());
 	ep.timeoutMs = 8000;
 

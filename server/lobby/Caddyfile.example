@@ -14,15 +14,20 @@
 #
 # After applying:
 #   sudo systemctl reload caddy
-#   curl -i https://altirra-lobby.duckdns.org/v1/stats     # → 200
+#   curl -i https://lobby.atari.org.pl/v1/stats           # → 200
 #   curl -i -H "Connection: Upgrade" -H "Upgrade: websocket" \
 #        -H "Sec-WebSocket-Version: 13" \
 #        -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
 #        -H "Sec-WebSocket-Protocol: altirra-netplay.v1, session.00112233445566778899aabbccddeeff, role.joiner" \
-#        https://altirra-lobby.duckdns.org/netplay        # → 400/403/410
+#        https://lobby.atari.org.pl/netplay               # → 400/403/410
 #                                                         #   (NOT 404)
+#
+# Both lobby.atari.org.pl (primary) and altirra-lobby.duckdns.org
+# (DuckDNS backup) point at the same VM and are served by the same
+# routes.  The shared (altirra_lobby_routes) snippet keeps the two
+# site blocks byte-identical so they cannot drift.
 
-altirra-lobby.duckdns.org {
+(altirra_lobby_routes) {
 	# The lobby's REST API.  Trust the X-Forwarded-For Caddy adds so
 	# rate limiting in the lobby uses the real client IP, not 127.0.0.1.
 	@v1 path /v1/*
@@ -53,4 +58,14 @@ altirra-lobby.duckdns.org {
 		output file /var/log/caddy/altirra-lobby.log
 		format console
 	}
+}
+
+# Primary hostname.
+lobby.atari.org.pl {
+	import altirra_lobby_routes
+}
+
+# DuckDNS backup hostname (refreshed in-VM by duckdns-update.sh).
+altirra-lobby.duckdns.org {
+	import altirra_lobby_routes
 }

@@ -30,16 +30,27 @@ static int fails = 0;
 static void testDefaultIni() {
 	std::vector<LobbyEntry> xs;
 	GetDefaultLobbies(xs);
-	CHECK(xs.size() == 2);
-	if (xs.size() >= 2) {
+	// Native default ini: [official] enabled + [backup] disabled + [lan].
+	// WASM default ini: same three sections; the URL strings differ
+	// (no :8080 port) but both [official] entries are HTTP-kind.
+	CHECK(xs.size() == 3);
+	if (xs.size() >= 3) {
 		CHECK(xs[0].section == "official");
 		CHECK(xs[0].kind == LobbyKind::Http);
-		CHECK(xs[0].url == "http://158.180.27.70:8080");
+#if defined(__EMSCRIPTEN__)
+		CHECK(xs[0].url == "http://lobby.atari.org.pl");
+#else
+		CHECK(xs[0].url == "http://lobby.atari.org.pl:8080");
+#endif
 		CHECK(xs[0].enabled);
 
-		CHECK(xs[1].section == "lan");
-		CHECK(xs[1].kind == LobbyKind::LanBroadcast);
-		CHECK(xs[1].port == 26101);
+		CHECK(xs[1].section == "backup");
+		CHECK(xs[1].kind == LobbyKind::Http);
+		CHECK(!xs[1].enabled);
+
+		CHECK(xs[2].section == "lan");
+		CHECK(xs[2].kind == LobbyKind::LanBroadcast);
+		CHECK(xs[2].port == 26101);
 	}
 }
 

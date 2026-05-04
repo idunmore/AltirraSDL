@@ -33,7 +33,7 @@ first-run experience.  Every field is optional.
 ```json
 {
   "firmwareUrl": "https://example.com/firmware/xf25.zip",
-  "lobbyHost":   "altirra-lobby.duckdns.org",
+  "lobbyHost":   "lobby.atari.org.pl",
   "gamePacks": [
     {
       "name":        "Games",
@@ -65,12 +65,14 @@ first-run experience.  Every field is optional.
   of `xf25.zip` (or build a minimal zip containing only `.rom`
   entries) and point at it.
 
-- **`lobbyHost`** *(string, optional, default `altirra-lobby.duckdns.org`)*
+- **`lobbyHost`** *(string, optional, default `lobby.atari.org.pl`)*
   — the netplay lobby host.  Used by the *🩺 Diagnose lobby* button to
   probe `/healthz` and `/v1/stats`, and by the WASM netplay transport
   for its WSS connection.  Leave at the default to use the public
   Altirra netplay lobby; override only if you've stood up your own
-  lobby (see `server/lobby/README.md`).
+  lobby (see `server/lobby/README.md`).  The same VM also answers on
+  the DuckDNS backup hostname `altirra-lobby.duckdns.org` if the
+  primary DNS is ever unreachable.
 
 - **`gamePacks`** *(array of objects, optional)* — pre-populated
   starter library.  Each pack:
@@ -159,8 +161,10 @@ that's typically a CORS preflight failure.
 ## 4. Netplay lobby
 
 The WASM build of AltirraSDL talks to the public netplay lobby at
-`altirra-lobby.duckdns.org` over HTTPS for session listing
-(`/v1/sessions`) and over WSS for the relay (`/netplay`).  No
+`lobby.atari.org.pl` over HTTPS for session listing (`/v1/sessions`)
+and over WSS for the relay (`/netplay`).  The same VM also answers on
+the DuckDNS backup hostname `altirra-lobby.duckdns.org` — both names
+point at the same server, so set `lobbyHost` to either one.  No
 configuration is needed for the standard hosting case — the public
 lobby accepts anyone.
 

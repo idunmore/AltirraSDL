@@ -27,7 +27,7 @@ namespace ATNetplay {
 
 struct HttpRequest {
 	const char* method    = "GET";  // "GET" | "POST" | "DELETE"
-	const char* host      = "";     // "158.180.27.70" or "lobby.example.com"
+	const char* host      = "";     // "lobby.atari.org.pl" or other lobby host
 	uint16_t    port      = 80;
 	const char* path      = "/";    // starts with '/'
 	const char* contentType = nullptr;  // set when body is non-empty

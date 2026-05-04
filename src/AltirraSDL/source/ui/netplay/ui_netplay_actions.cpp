@@ -1439,10 +1439,10 @@ void StartJoiningAction() {
 	}
 	{
 		// Resolve the lobby's WSS host.  The user's lobby.ini stores
-		// `url = http://altirra-lobby.duckdns.org:8080`; for the WS
-		// upgrade we strip the scheme/port and let the transport go
-		// straight to wss://<host>:443/netplay.  Caddy on the lobby box
-		// terminates TLS and reverse-proxies /netplay to the bridge on
+		// `url = http://lobby.atari.org.pl[:8080]`; for the WS upgrade
+		// we strip the scheme/port and let the transport go straight to
+		// wss://<host>:443/netplay.  Caddy on the lobby box terminates
+		// TLS and reverse-proxies /netplay to the bridge on
 		// localhost:8090.
 		auto lobbies = AllEnabledHttpLobbies();
 		const ATNetplay::LobbyEndpoint *ep = nullptr;

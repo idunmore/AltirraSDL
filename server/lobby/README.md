@@ -19,10 +19,13 @@ enabled = true
 ```
 
 The default community lobby is hosted on Oracle Always-Free
-infrastructure at `http://158.180.27.70:8080` — see the sibling
-deployment repo `github.com/ilmenit/altirra-sdl-lobby` for the
-automation that runs it (Dockerfile, systemd unit, CI auto-deploy).
-That deployment repo is infra-only; the server source lives here.
+infrastructure at `http://lobby.atari.org.pl:8080` (HTTPS via
+`https://lobby.atari.org.pl`; DuckDNS backup hostname
+`altirra-lobby.duckdns.org` resolves to the same box).  See the
+sibling deployment repo `github.com/ilmenit/altirra-sdl-lobby` for
+the automation that runs it (Dockerfile, systemd unit, CI
+auto-deploy).  That deployment repo is infra-only; the server source
+lives here.
 
 ## Build
 
@@ -200,7 +203,7 @@ bridge speaks plain WS upstream.
 
 The browser opens
 
-    wss://altirra-lobby.duckdns.org/netplay
+    wss://lobby.atari.org.pl/netplay
 
 with a comma-separated `Sec-WebSocket-Protocol` list:
 
