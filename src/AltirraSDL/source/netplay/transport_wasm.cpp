@@ -332,14 +332,36 @@ bool WasmTransport::OnCloseCb(int /*eventType*/,
 	// 1008/1011 are application-policy rejects from the lobby.
 	if (!self->mFailed && self->mCloseCode != 0 && self->mCloseCode != 1000)
 		self->mFailed = true;
+	// Time from WebSocket() construction to close event.  A real network
+	// roundtrip to the lobby takes ≥30 ms over the public internet; a
+	// close that fires in <10 ms means the browser refused to even
+	// open the WS (mixed-content, CSP, extension/proxy intercept).
+	// Surface this number so operators can tell the two cases apart at
+	// a glance instead of guessing from a generic "code 1006" message.
+	const double closeMs = (self->mHandshakeStartMs > 0.0)
+		? (emscripten_get_now() - self->mHandshakeStartMs)
+		: -1.0;
+
 	// Build a one-liner the joiner UI can show instead of "Waiting for
 	// host…" forever.  Map the most common close codes to friendly
 	// language; fall back to a generic "code N" for anything else.
 	if (self->mFailed) {
-		char buf[160];
+		char buf[200];
 		const char *human = "lobby connection lost";
 		switch (self->mCloseCode) {
-			case 1006: human = "could not reach lobby (DNS / TLS / CORS / mixed-content)"; break;
+			case 1006:
+				// 1006 covers a wide range of "no Close frame received"
+				// outcomes: TCP/TLS failure, server returned non-101,
+				// or the browser refused the connection synchronously.
+				// Use the elapsed time to pick the more accurate hint.
+				if (closeMs >= 0.0 && closeMs < 10.0) {
+					human = "WSS blocked by browser (CSP / mixed-content / "
+					        "extension / proxy)";
+				} else {
+					human = "WSS handshake failed (server rejected upgrade, "
+					        "or DNS/TLS/Caddy /netplay route)";
+				}
+				break;
 			case 1008: human = "lobby refused the connection (policy)"; break;
 			case 1011: human = "lobby internal error"; break;
 			case 4000: human = "lobby refused: bad request"; break;
@@ -359,12 +381,23 @@ bool WasmTransport::OnCloseCb(int /*eventType*/,
 		}
 		self->mFailureSummary.assign(buf);
 	}
-	g_ATLCNetplay("WasmTransport: WS closed code=%u clean=%d reason=\"%s\"%s%s",
-		(unsigned)self->mCloseCode,
-		(int)self->mCloseWasClean,
-		self->mCloseReason.c_str(),
-		self->mFailed ? " — " : "",
-		self->mFailed ? self->mFailureSummary.c_str() : "");
+	if (closeMs >= 0.0) {
+		g_ATLCNetplay("WasmTransport: WS closed code=%u clean=%d "
+			"reason=\"%s\" closeMs=%.0f%s%s",
+			(unsigned)self->mCloseCode,
+			(int)self->mCloseWasClean,
+			self->mCloseReason.c_str(),
+			closeMs,
+			self->mFailed ? " — " : "",
+			self->mFailed ? self->mFailureSummary.c_str() : "");
+	} else {
+		g_ATLCNetplay("WasmTransport: WS closed code=%u clean=%d reason=\"%s\"%s%s",
+			(unsigned)self->mCloseCode,
+			(int)self->mCloseWasClean,
+			self->mCloseReason.c_str(),
+			self->mFailed ? " — " : "",
+			self->mFailed ? self->mFailureSummary.c_str() : "");
+	}
 	return true;
 }
 

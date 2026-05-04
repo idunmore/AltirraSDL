@@ -425,6 +425,169 @@ int ATWasmDeleteTree(const char *path) {
 }
 
 // -----------------------------------------------------------------------
+// Recursive copy (file or directory tree)
+// -----------------------------------------------------------------------
+//
+// Symmetric counterpart to ATWasmDeleteTree.  JS's File Manager Cut/Copy/
+// Paste flow uses Module.FS.rename for cut-mode (atomic, no copy), and
+// this export for copy-mode where we have to materialise a fresh subtree.
+// Doing the file-by-file read+write in C++ keeps the WASM heap calm — a
+// JS implementation would have to allocate a Uint8Array per file and
+// shuttle bytes back through the JS↔WASM boundary, which on a multi-MB
+// game-pack folder churns the heap and trips growAllocations stalls.
+//
+// Returns the number of *files* written (directories aren't counted), or
+// -1 on a fatal failure (bad src, allocation, IO error before any
+// progress).  Per-entry errors are logged but the walk continues so a
+// single corrupt file doesn't abort the whole copy.
+
+namespace {
+	// Copy one regular file's bytes from `src` to `dest`.  `dest` must
+	// not exist (caller is responsible for collision-renaming when the
+	// destination already has an entry of the same name).  Returns true
+	// on success.
+	bool CopyFileImpl(const std::string &src, const std::string &dest) {
+		// Stream in 64 KB chunks — small enough to avoid heap spikes,
+		// large enough that even a 10 MB ROM completes in ≤160 reads.
+		// MEMFS read/write are simple memmove/memcpy under the hood, so
+		// throughput is bounded by allocation behaviour, not block size.
+		FILE *in = fopen(src.c_str(), "rb");
+		if (!in) {
+			fprintf(stderr, "[wasm] CopyTree: fopen('%s', rb) errno=%d\n",
+				src.c_str(), errno);
+			return false;
+		}
+		FILE *out = fopen(dest.c_str(), "wb");
+		if (!out) {
+			fprintf(stderr, "[wasm] CopyTree: fopen('%s', wb) errno=%d\n",
+				dest.c_str(), errno);
+			fclose(in);
+			return false;
+		}
+		constexpr size_t kBuf = 64 * 1024;
+		std::vector<char> buf(kBuf);
+		bool ok = true;
+		for (;;) {
+			size_t n = fread(buf.data(), 1, kBuf, in);
+			if (n == 0) {
+				if (ferror(in)) {
+					fprintf(stderr,
+						"[wasm] CopyTree: fread('%s') errno=%d\n",
+						src.c_str(), errno);
+					ok = false;
+				}
+				break;
+			}
+			if (fwrite(buf.data(), 1, n, out) != n) {
+				fprintf(stderr,
+					"[wasm] CopyTree: fwrite('%s') errno=%d\n",
+					dest.c_str(), errno);
+				ok = false;
+				break;
+			}
+		}
+		fclose(in);
+		fclose(out);
+		if (!ok) {
+			// Best-effort rollback so a partial file doesn't pollute
+			// the destination tree.
+			unlink(dest.c_str());
+		}
+		return ok;
+	}
+
+	int CopyTreeImpl(const std::string &src, const std::string &dest) {
+		struct stat st;
+		if (lstat(src.c_str(), &st) != 0) {
+			fprintf(stderr, "[wasm] CopyTree: stat('%s') errno=%d\n",
+				src.c_str(), errno);
+			return -1;
+		}
+
+		if (!S_ISDIR(st.st_mode)) {
+			return CopyFileImpl(src, dest) ? 1 : -1;
+		}
+
+		// Create the destination directory.  EEXIST is fine — caller
+		// may have pre-created it as part of a paste-into-existing-
+		// folder collision-rename ladder.
+		if (mkdir(dest.c_str(), 0755) != 0 && errno != EEXIST) {
+			fprintf(stderr, "[wasm] CopyTree: mkdir('%s') errno=%d\n",
+				dest.c_str(), errno);
+			return -1;
+		}
+
+		// Snapshot names first to avoid undefined behaviour from
+		// mutating the FS while walking it (matches DeleteTreeImpl's
+		// pattern; MEMFS may skip entries otherwise).
+		std::vector<std::string> children;
+		{
+			DIR *d = opendir(src.c_str());
+			if (!d) {
+				fprintf(stderr,
+					"[wasm] CopyTree: opendir('%s') errno=%d\n",
+					src.c_str(), errno);
+				return -1;
+			}
+			struct dirent *e;
+			while ((e = readdir(d)) != nullptr) {
+				const char *n = e->d_name;
+				if (!strcmp(n, ".") || !strcmp(n, "..")) continue;
+				children.emplace_back(n);
+			}
+			closedir(d);
+		}
+
+		int copied = 0;
+		for (const auto &n : children) {
+			std::string s = src; if (s.back() != '/') s += '/'; s += n;
+			std::string t = dest; if (t.back() != '/') t += '/'; t += n;
+			int r = CopyTreeImpl(s, t);
+			if (r < 0) {
+				// Skip this entry but keep going — a single bad file
+				// shouldn't abort a whole pack copy.
+				continue;
+			}
+			copied += r;
+		}
+		return copied;
+	}
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE
+int ATWasmCopyTree(const char *src, const char *dest) {
+	if (!src || !*src || !dest || !*dest) {
+		fprintf(stderr, "[wasm] CopyTree: bad args\n");
+		return -1;
+	}
+	// Refuse a copy onto self / into a descendant — MEMFS would
+	// happily walk into an infinite directory loop otherwise.  This
+	// MUST stay in C so the JS-level cycle guard isn't the only
+	// safety net (e.g. if a future caller bypasses the JS clipboard
+	// helpers).
+	std::string s = src, d = dest;
+	if (s == d) {
+		fprintf(stderr, "[wasm] CopyTree: src == dest, refusing\n");
+		return -1;
+	}
+	std::string sPlusSlash = s;
+	if (sPlusSlash.empty() || sPlusSlash.back() != '/')
+		sPlusSlash += '/';
+	if (d.compare(0, sPlusSlash.size(), sPlusSlash) == 0) {
+		fprintf(stderr,
+			"[wasm] CopyTree: dest '%s' is inside src '%s', refusing\n",
+			d.c_str(), s.c_str());
+		return -1;
+	}
+
+	fprintf(stderr, "[wasm] CopyTree: %s -> %s\n", src, dest);
+	int r = CopyTreeImpl(s, d);
+	if (r > 0) _altirra_wasm_sync_fs_out();
+	fprintf(stderr, "[wasm] CopyTree: copied %d file(s)\n", r);
+	return r;
+}
+
+// -----------------------------------------------------------------------
 // First-run ROM bootstrap
 // -----------------------------------------------------------------------
 //

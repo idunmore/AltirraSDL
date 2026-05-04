@@ -522,6 +522,56 @@
        has pushed the icon over by one column. */
     .fm-row.in-select .pathHint { grid-column: 3 / 6; }
 
+    /* Cut-pending rows (the row's path is in the clipboard while
+       clipboard.mode === 'cut').  Mirrors the dim-italic ghost that
+       Finder / Files / Explorer all use to mark "this is queued for
+       move on next paste".  We deliberately don't disable interaction
+       so the user can still rename / delete / undo by clicking on a
+       cut-pending row. */
+    .fm-row.cut-pending {
+      opacity: 0.55;
+    }
+    .fm-row.cut-pending .name {
+      font-style: italic;
+    }
+
+    /* Persistent clipboard banner (lives below the breadcrumb).
+       Visible only while a cut/copy is queued; gives the user a
+       fixed Paste / Clear affordance regardless of which folder
+       they navigate to next.  Same visual weight as the breadcrumb
+       bar above so the two together read as one nav strip. */
+    .fm-clipbanner {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      padding: 6px 14px;
+      background: #1f2a36;
+      border-bottom: 1px solid #2c3a4a;
+      color: #cfd8e3;
+      font-size: 0.82rem;
+    }
+    .fm-clipbanner[hidden] { display: none; }
+    .fm-clipbanner > span:first-child { flex: 1 1 auto; }
+    .fm-clipbanner button {
+      background: #2a2a2a;
+      color: #ddd;
+      border: 1px solid #444;
+      padding: 3px 12px;
+      border-radius: 3px;
+      font-size: 0.78rem;
+      cursor: pointer;
+    }
+    .fm-clipbanner button.primary {
+      background: #3a598a;
+      border-color: #4872ad;
+      color: #fff;
+    }
+    .fm-clipbanner button:hover:not(:disabled) { filter: brightness(1.15); }
+    .fm-clipbanner button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
     /* Wipe / Move / Firmware dialogs (centred popups over the FM overlay) */
     #wipe-backdrop, #move-backdrop, #fw-backdrop {
       position: fixed;
@@ -802,11 +852,11 @@
     <button id="btn-files" disabled>📁 Files…</button>
     <button id="btn-firmware" disabled
             title="Re-run the standard ROM bundle download">🎛 Download firmware…</button>
-    <button id="btn-diagnose"
-            title="Test reachability of the netplay lobby. Useful when 'Play Online' fails with WS code 1006 / 'could not reach lobby'.">🩺 Diagnose lobby</button>
     <button id="btn-layout"
             title="Move the bar to the left side (vertical) — click again to bring it back to the top">⇄</button>
     <div id="status">Loading…</div>
+    <button id="btn-diagnose"
+            title="Test reachability of the netplay lobby and WebSocket bridge. Useful when 'Play Online' fails with WS code 1006 / 'could not reach lobby'.">🩺 Diagnose Netplay</button>
     <div class="log-toggle" id="log-toggle" role="button" tabindex="0">▸ Show log</div>
   </header>
 
@@ -835,9 +885,12 @@
       <div id="fm-breadcrumb" class="fm-breadcrumb"></div>
       <div id="fm-batchbar" class="fm-batchbar" hidden>
         <span id="fm-batch-count">0 selected</span>
-        <button id="fm-batch-delete" class="danger">🗑 Delete</button>
+        <button id="fm-batch-cut" title="Cut (move on paste)">✂ Cut</button>
+        <button id="fm-batch-copy" title="Copy (duplicate on paste)">⎘ Copy</button>
+        <button id="fm-batch-paste" title="Paste into the current folder">📋 Paste</button>
         <button id="fm-batch-move">📂 Move to…</button>
         <button id="fm-batch-unpack" hidden>📦 Unpack</button>
+        <button id="fm-batch-delete" class="danger">🗑 Delete</button>
         <span class="spacer"></span>
         <button id="fm-batch-cancel">Cancel</button>
       </div>
@@ -1064,6 +1117,9 @@
     const fmBreadcrumb   = document.getElementById('fm-breadcrumb');
     const fmBatchBar     = document.getElementById('fm-batchbar');
     const fmBatchCount   = document.getElementById('fm-batch-count');
+    const fmBatchCut     = document.getElementById('fm-batch-cut');
+    const fmBatchCopy    = document.getElementById('fm-batch-copy');
+    const fmBatchPaste   = document.getElementById('fm-batch-paste');
     const fmBatchDelete  = document.getElementById('fm-batch-delete');
     const fmBatchMove    = document.getElementById('fm-batch-move');
     const fmBatchUnpack  = document.getElementById('fm-batch-unpack');
@@ -1241,6 +1297,24 @@
       const fwOpen   = fwBackdrop   && fwBackdrop  .classList.contains('open');
       return fmOpen || wipeOpen || moveOpen || fwOpen;
     }
+    // True iff the focused element is a text-entry control where
+    // shortcut characters should pass through to native editing
+    // semantics (Ctrl+C copies highlighted text, Backspace deletes a
+    // character, etc.) rather than firing FM clipboard / delete /
+    // rename actions.
+    function focusInTextInput() {
+      const el = document.activeElement;
+      if (!el || el === document.body) return false;
+      const tag = (el.tagName || '').toLowerCase();
+      if (tag === 'textarea') return true;
+      if (tag === 'input') {
+        const t = (el.type || '').toLowerCase();
+        // Buttons / checkboxes / radios are inputs but not text-entry.
+        return !['button','submit','checkbox','radio','range','color',
+                'file','image','reset'].includes(t);
+      }
+      return el.isContentEditable === true;
+    }
     function modalKeyHandler(e) {
       if (!anyModalOpen()) return;
       // Modal is open — stop SDL from receiving the key.  We do NOT
@@ -1257,6 +1331,72 @@
           // — the user would re-trigger via the toolbar button.
           fwUserSkipFromEsc();
         }
+      }
+
+      // File Manager keyboard shortcuts.  Only fire on keydown, only
+      // when the FM overlay is the active modal (not Wipe/Move/
+      // Firmware), only outside text-entry controls, and never in
+      // pickMode (we don't want to mutate the FS while a native file
+      // dialog is waiting for the user).
+      const fmOpen = fmBackdrop && fmBackdrop.classList.contains('open');
+      const wipeOpen = wipeBackdrop && wipeBackdrop.classList.contains('open');
+      const moveOpen = moveBackdrop && moveBackdrop.classList.contains('open');
+      const fwOpen   = fwBackdrop   && fwBackdrop  .classList.contains('open');
+      if (e.type !== 'keydown')               return;
+      if (!fmOpen || wipeOpen || moveOpen || fwOpen) return;
+      if (pickMode)                            return;
+      if (focusInTextInput())                  return;
+      handleFmShortcut(e);
+    }
+    function handleFmShortcut(e) {
+      // Resolve the "current selection" once: prefer multi-select
+      // batch, fall back to the single highlighted row.
+      const selPaths = (selectMode && selectedSet.size > 0)
+        ? Array.from(selectedSet)
+        : (selectedPath ? [selectedPath] : []);
+      const ctrl = e.ctrlKey || e.metaKey;
+      // Don't intercept Shift / Alt combos — let the browser deal
+      // with them so user-installed extensions (translation, screen-
+      // reader) keep working.
+      if (e.altKey || e.shiftKey) return;
+      const k = e.key;
+      if (ctrl && (k === 'x' || k === 'X')) {
+        if (selPaths.length === 0) return;
+        e.preventDefault();
+        clipboardSet('cut', selPaths);
+        return;
+      }
+      if (ctrl && (k === 'c' || k === 'C')) {
+        if (selPaths.length === 0) return;
+        e.preventDefault();
+        clipboardSet('copy', selPaths);
+        return;
+      }
+      if (ctrl && (k === 'v' || k === 'V')) {
+        const here = currentViewDir();
+        if (!here) return;
+        e.preventDefault();
+        clipboardPaste(here);
+        return;
+      }
+      if (k === 'Delete' || k === 'Del') {
+        if (selPaths.length === 0) return;
+        e.preventDefault();
+        // Reuse batch path even for a single row — same per-entry
+        // logic, includes recursive folder delete via ATWasmDeleteTree.
+        // We seed selectedSet so batchDelete picks them up.
+        if (selPaths.length === 1 && !selectMode) {
+          selectedSet.clear();
+          selectedSet.add(selPaths[0]);
+        }
+        batchDelete();
+        return;
+      }
+      if (k === 'F2') {
+        if (selPaths.length !== 1) return;
+        e.preventDefault();
+        renameEntry(selPaths[0]);
+        return;
       }
     }
     // Forward declaration so modalKeyHandler can reference it before
@@ -1643,6 +1783,18 @@
       fmBatchCount.textContent = n + ' selected';
       fmBatchDelete.textContent = '🗑 Delete ' + n;
       fmBatchMove.textContent   = '📂 Move ' + n + '…';
+      if (fmBatchCut)  fmBatchCut .textContent = '✂ Cut '  + n;
+      if (fmBatchCopy) fmBatchCopy.textContent = '⎘ Copy ' + n;
+      if (fmBatchPaste) {
+        // Paste is only useful when (a) clipboard is non-empty and
+        // (b) the current view dir is a valid destination for it.
+        const here = currentViewDir();
+        const can = !!clipboard && !!here && clipboardCanPaste(here);
+        fmBatchPaste.hidden = !clipboard;
+        fmBatchPaste.disabled = !can;
+        const cn = clipboard ? clipboard.paths.length : 0;
+        fmBatchPaste.textContent = '📋 Paste' + (cn ? ' ' + cn : '');
+      }
       // Unpack only makes sense when exactly one .zip is selected.
       let oneZip = null;
       if (n === 1) {
@@ -2533,6 +2685,40 @@
       return categoryForExt(r.name.substring(dot + 1));
     }
 
+    // Append the standard trio of clipboard buttons (✂ Cut, ⎘ Copy,
+    // 📂 Move…) to a row's `actions` div.  Both file and folder rows
+    // get the same trio in the same order so muscle memory transfers.
+    // Move… opens the existing move-to dialog with this single path
+    // queued — same code path as the multi-select Move N… button.
+    function appendClipboardActions(actions, rowPath) {
+      const cut = document.createElement('button');
+      cut.textContent = '✂';
+      cut.title = 'Cut (move on paste)';
+      cut.addEventListener('click', (e) => {
+        e.stopPropagation();
+        clipboardSet('cut', [rowPath]);
+      });
+      actions.appendChild(cut);
+
+      const copy = document.createElement('button');
+      copy.textContent = '⎘';
+      copy.title = 'Copy (duplicate on paste)';
+      copy.addEventListener('click', (e) => {
+        e.stopPropagation();
+        clipboardSet('copy', [rowPath]);
+      });
+      actions.appendChild(copy);
+
+      const move = document.createElement('button');
+      move.textContent = '📂';
+      move.title = 'Move to…';
+      move.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openMoveDialog([rowPath]);
+      });
+      actions.appendChild(move);
+    }
+
     function renderList() {
       fmList.innerHTML = '';
       const q = (fmSearch.value || '').toLowerCase().trim();
@@ -2614,7 +2800,8 @@
         row.className = 'fm-row'
           + (r.path === selectedPath ? ' selected' : '')
           + (selectMode ? ' in-select' : '')
-          + (r.isDir   ? ' is-folder' : '');
+          + (r.isDir   ? ' is-folder' : '')
+          + (clipboardCutSet.has(r.path) ? ' cut-pending' : '');
         row.dataset.path = r.path;
         if (r.isDir) row.dataset.folder = '1';
 
@@ -2663,6 +2850,8 @@
             renameEntry(r.path);
           });
           actions.appendChild(rn);
+
+          appendClipboardActions(actions, r.path);
 
           const del = document.createElement('button');
           del.className = 'danger';
@@ -2725,6 +2914,8 @@
             renameEntry(r.path);
           });
           actions.appendChild(rn);
+
+          appendClipboardActions(actions, r.path);
 
           const del = document.createElement('button');
           del.className = 'danger';
@@ -2812,8 +3003,18 @@
           }
         });
 
-        // Drag-drop into folder rows = move the dragged file there.
+        // Folders are BOTH drag sources (so users can drag a folder
+        // into another folder to nest it) AND drop targets (so users
+        // can drag any row onto them to move it inside).  The cycle
+        // guard lives in moveSinglePath, so dropping a folder into
+        // itself or a descendant fails with a friendly toast instead
+        // of breaking the FS.
         if (r.isDir) {
+          row.draggable = true;
+          row.addEventListener('dragstart', (e) => {
+            e.dataTransfer.setData('text/altirra-vfs-path', r.path);
+            e.dataTransfer.effectAllowed = 'move';
+          });
           row.addEventListener('dragover', (e) => {
             // Only accept internal drags, not OS file drops.
             if (!e.dataTransfer.types.includes('text/altirra-vfs-path'))
@@ -2829,6 +3030,9 @@
             const src = e.dataTransfer.getData('text/altirra-vfs-path');
             if (!src) return;
             e.preventDefault();
+            // Don't try to drop a folder onto itself (no-op anyway,
+            // but a quick early-out keeps the code path tidy).
+            if (src === r.path) return;
             moveSinglePath(src, r.path);
           });
         } else {
@@ -2836,6 +3040,7 @@
           row.draggable = true;
           row.addEventListener('dragstart', (e) => {
             e.dataTransfer.setData('text/altirra-vfs-path', r.path);
+            e.dataTransfer.effectAllowed = 'move';
           });
         }
 
@@ -2915,8 +3120,13 @@
       // Pick mode also disables the Select toggle (multi-select makes
       // no sense for a "choose one file" picker).
       fmSelectToggle.disabled = !!pickMode;
+      // Keep the Upload button's tooltip aligned with the routing
+      // logic in fmFilePicker's change handler.  Cheap: just title
+      // text, no DOM rebuild.
+      refreshUploadButton();
       renderSidebar();
       renderBreadcrumb();
+      renderClipboardBanner();
       renderBatchBar();
       renderList();
     }
@@ -3051,10 +3261,52 @@
     // category root, an existing user folder, or a freshly typed
     // path (mkdirP creates intermediates).  No-op if src is already
     // inside destDir.
+    // True iff `child` lives strictly inside `parent` (or IS `parent`).
+    // Used both as a cycle guard for folder→descendant moves/pastes
+    // and as a visual gate for cut-rendering of moved-source rows.
+    function isDescendantPath(child, parent) {
+      if (!child || !parent) return false;
+      if (child === parent) return true;
+      const p = parent.replace(/\/+$/, '') + '/';
+      return child.startsWith(p);
+    }
+
+    // Pick a name that doesn't collide in `dir`.  Mirrors macOS Finder
+    // / GNOME Files convention: append ` (2)`, ` (3)` … before the
+    // extension.  Bails out after 999 attempts so a buggy caller can't
+    // wedge the UI in an infinite stat loop.
+    function uniqueDestName(dir, base) {
+      const dot = base.lastIndexOf('.');
+      // Treat dot-files (".cfg") as having no extension.
+      const stem = (dot > 0) ? base.substring(0, dot) : base;
+      const ext  = (dot > 0) ? base.substring(dot) : '';
+      const dirNorm = dir.replace(/\/+$/, '');
+      const exists = (n) => {
+        try { Module.FS.stat(dirNorm + '/' + n); return true; }
+        catch (e) { return false; }
+      };
+      if (!exists(base)) return base;
+      for (let i = 2; i < 1000; ++i) {
+        const cand = stem + ' (' + i + ')' + ext;
+        if (!exists(cand)) return cand;
+      }
+      // Last-ditch fallback: timestamp.  Practically unreachable.
+      return stem + '-' + Date.now() + ext;
+    }
+
     async function moveSinglePath(srcPath, destDir) {
       if (!srcPath || !destDir) return;
+      // Cycle guard: dropping a folder into itself / a descendant
+      // of itself would walk into an infinite directory loop.  Bail
+      // with a friendly message instead of letting MEMFS fail mid-
+      // walk and leave the tree half-renamed.
+      if (isDescendantPath(destDir, srcPath)) {
+        toast("Can't move a folder into itself.", 'error');
+        return;
+      }
       const base = pathBasename(srcPath);
-      const newPath = destDir.replace(/\/+$/, '') + '/' + base;
+      const safeName = uniqueDestName(destDir, base);
+      const newPath = destDir.replace(/\/+$/, '') + '/' + safeName;
       if (newPath === srcPath) return;
       try {
         mkdirP(destDir);
@@ -3070,7 +3322,239 @@
         selectedSet.delete(srcPath);
         selectedSet.add(newPath);
       }
+      // Same for the cut clipboard so a "Cut → drag-instead-of-paste"
+      // workflow doesn't leave a stale ghost in the cut state.
+      clipboardForgetMoved(srcPath, newPath);
       renderFm();
+    }
+
+    // ───────────────────────────────────────────────────────────────────
+    //  Clipboard (cut / copy / paste) for the File Manager
+    //
+    //  Modeless, in-memory only.  The user cuts or copies one or more
+    //  rows; the clipboard banner persists across folder navigation so
+    //  the user can then walk to any folder and paste.  cut-mode rows
+    //  render with a dim+italic style (CSS class `.fm-row.cut-pending`)
+    //  so the user can see what's queued without having to remember.
+    //
+    //  Intentionally not persisted across reloads — every native OS
+    //  clipboard works that way and any IDBFS-staging would be more
+    //  surprising than helpful.
+    //
+    //  Cycle / collision rules:
+    //   - Pasting a folder into itself or a descendant: blocked with
+    //     a toast (see `clipboardCanPaste`).
+    //   - Pasting a row whose name already exists at the destination:
+    //     auto-renamed to ` (2)`, ` (3)` … via `uniqueDestName`.
+    //   - cut-mode paste = `Module.FS.rename` (atomic move).  copy-
+    //     mode paste = `_ATWasmCopyTree` (C export, file-by-file
+    //     copy that handles directories recursively).
+    // ───────────────────────────────────────────────────────────────────
+    let clipboard = null;
+    // Set of cut-source paths, derived from clipboard for O(1) lookup
+    // in renderList without re-iterating clipboard.paths each row.
+    let clipboardCutSet = new Set();
+
+    function clipboardSet(mode, paths) {
+      // Drop empties, dedupe, and prune children of an already-
+      // included parent (cutting both /games and /games/foo would
+      // otherwise lose the inner row when its parent is renamed).
+      const dedup = Array.from(new Set((paths || [])
+        .filter(p => typeof p === 'string' && p.startsWith('/'))));
+      dedup.sort();   // ancestors come before descendants alphabetically
+      const cleaned = [];
+      for (const p of dedup) {
+        if (cleaned.some(a => isDescendantPath(p, a))) continue;
+        cleaned.push(p);
+      }
+      if (cleaned.length === 0) {
+        clipboardClear();
+        return;
+      }
+      clipboard = { mode, paths: cleaned, ts: Date.now() };
+      clipboardCutSet = (mode === 'cut') ? new Set(cleaned) : new Set();
+      jlog('[fm]', mode, cleaned.length, 'path' + (cleaned.length===1?'':'s'));
+      const verb = (mode === 'cut') ? 'Cut' : 'Copied';
+      toast(verb + ' ' + cleaned.length + ' item'
+            + (cleaned.length === 1 ? '' : 's'));
+      renderClipboardBanner();
+      renderList();   // rerender so cut-mode rows dim immediately
+    }
+
+    function clipboardClear() {
+      clipboard = null;
+      clipboardCutSet = new Set();
+      renderClipboardBanner();
+      renderList();
+    }
+
+    function clipboardCanPaste(destDir) {
+      if (!clipboard || !clipboard.paths.length) return false;
+      if (!destDir) return false;
+      // Block pasting any source onto its own parent (no-op rename
+      // for cut-mode, would create a duplicate "(2)" for copy-mode —
+      // technically the copy case is well-defined, but the user
+      // almost never wants it; the explicit Move dialog or per-row
+      // Copy followed by an in-place paste both feel like footguns).
+      // Also block descendant cycles.
+      for (const p of clipboard.paths) {
+        if (isDescendantPath(destDir, p)) return false;
+      }
+      return true;
+    }
+
+    // Forget any clipboard entry whose source path was just moved
+    // away by some other code path (drag-drop, batch Move, single
+    // Move).  Keeps the cut visual + banner in sync.
+    function clipboardForgetMoved(oldPath, /*newPath*/) {
+      if (!clipboard) return;
+      const before = clipboard.paths.length;
+      clipboard.paths = clipboard.paths.filter(p =>
+        !isDescendantPath(p, oldPath));
+      if (clipboard.paths.length !== before) {
+        if (clipboard.paths.length === 0) {
+          clipboardClear();
+        } else {
+          clipboardCutSet = (clipboard.mode === 'cut')
+            ? new Set(clipboard.paths) : new Set();
+          renderClipboardBanner();
+        }
+      }
+    }
+
+    async function pasteOne(srcPath, destDir, mode) {
+      let st;
+      try { st = Module.FS.stat(srcPath); }
+      catch (e) {
+        jlog('[fm] paste: source vanished —', srcPath);
+        return { ok: false, files: 0 };
+      }
+      const isDir = Module.FS.isDir(st.mode);
+      const base  = pathBasename(srcPath);
+      const newName = uniqueDestName(destDir, base);
+      const newPath = destDir.replace(/\/+$/, '') + '/' + newName;
+      mkdirP(destDir);
+
+      if (mode === 'cut') {
+        // Atomic move via FS.rename — works for both files and
+        // directories regardless of size, because MEMFS just rewires
+        // the inode pointer.
+        try {
+          Module.FS.rename(srcPath, newPath);
+          return { ok: true, files: isDir ? -1 : 1 };
+        } catch (e) {
+          jlog('[fm] paste-cut: rename failed', srcPath, '→', newPath,
+               '—', e && e.message ? e.message : e);
+          return { ok: false, files: 0 };
+        }
+      } else {
+        // copy-mode: hand off to the C export which streams bytes
+        // file-by-file and recurses into subdirectories.  Returns
+        // file count (≥0) or -1 on failure.
+        const n = callC2('ATWasmCopyTree', srcPath, newPath);
+        if (n < 0) {
+          jlog('[fm] paste-copy: ATWasmCopyTree failed for', srcPath);
+          return { ok: false, files: 0 };
+        }
+        return { ok: true, files: n };
+      }
+    }
+
+    async function clipboardPaste(destDir) {
+      if (!clipboard || !clipboard.paths.length) {
+        toast('Clipboard is empty.', 'error');
+        return;
+      }
+      if (!clipboardCanPaste(destDir)) {
+        toast("Can't move/paste a folder into itself.", 'error');
+        return;
+      }
+      const mode  = clipboard.mode;
+      const paths = clipboard.paths.slice();   // snapshot
+      let ok = 0, fail = 0, fileCount = 0;
+      for (const p of paths) {
+        const r = await pasteOne(p, destDir, mode);
+        if (r.ok) {
+          ++ok;
+          if (r.files > 0) fileCount += r.files;
+        } else {
+          ++fail;
+        }
+      }
+      await syncFsOut();
+      const where = destDir.replace(ROOT, '~') || '/';
+      const verb  = (mode === 'cut') ? 'Moved' : 'Pasted';
+      const fcStr = (mode === 'copy' && fileCount > 0)
+        ? ' (' + fileCount + ' file' + (fileCount===1?'':'s') + ')'
+        : '';
+      toast(verb + ' ' + ok + ' item' + (ok===1?'':'s') + fcStr +
+            ' → ' + where +
+            (fail ? ' — ' + fail + ' failed' : ''),
+            fail ? 'error' : 'ok');
+      jlog('[fm] paste', mode, 'ok=' + ok, 'fail=' + fail,
+           'files=' + fileCount, '→', destDir);
+      // cut-mode paste is one-shot — sources are gone now.  copy-
+      // mode keeps the clipboard so the user can paste again into
+      // another folder (Finder behaviour).
+      if (mode === 'cut') {
+        clipboardClear();
+      } else {
+        renderClipboardBanner();   // refresh "ready to paste here" line
+        renderList();
+      }
+      renderFm();
+    }
+
+    // The persistent clipboard banner.  Rendered as a sibling under
+    // the breadcrumb so it stays visible while the user navigates.
+    // Visible only while clipboard is non-empty; click-areas are
+    // [Paste] (commits) and [✕ Clear].
+    function renderClipboardBanner() {
+      let banner = document.getElementById('fm-clipbanner');
+      if (!clipboard || !clipboard.paths.length) {
+        if (banner) banner.hidden = true;
+        return;
+      }
+      // The breadcrumb element is the natural anchor — we want the
+      // banner to sit immediately below it without a layout reflow
+      // affecting the file list area.
+      if (!banner) {
+        banner = document.createElement('div');
+        banner.id = 'fm-clipbanner';
+        banner.className = 'fm-clipbanner';
+        if (fmBreadcrumb && fmBreadcrumb.parentElement) {
+          fmBreadcrumb.parentElement.insertBefore(
+            banner, fmBreadcrumb.nextSibling);
+        }
+      }
+      banner.hidden = false;
+      const n = clipboard.paths.length;
+      const icon = (clipboard.mode === 'cut') ? '✂' : '⎘';
+      const verb = (clipboard.mode === 'cut') ? 'cut' : 'copied';
+      const here = currentViewDir() || ROOT;
+      const canPaste = clipboardCanPaste(here);
+      banner.innerHTML = '';
+      const label = document.createElement('span');
+      label.textContent = icon + ' ' + n + ' item'
+        + (n === 1 ? '' : 's') + ' ' + verb
+        + ' — ready to paste here';
+      banner.appendChild(label);
+
+      const paste = document.createElement('button');
+      paste.className = 'primary';
+      paste.textContent = 'Paste';
+      paste.disabled = !canPaste;
+      paste.title = canPaste
+        ? 'Paste into ' + here.replace(ROOT, '~')
+        : "Can't paste here — destination is inside the cut/copied folder.";
+      paste.addEventListener('click', () => clipboardPaste(here));
+      banner.appendChild(paste);
+
+      const clear = document.createElement('button');
+      clear.textContent = '✕ Clear';
+      clear.title = 'Empty clipboard';
+      clear.addEventListener('click', clipboardClear);
+      banner.appendChild(clear);
     }
 
     // Batch operations driven by the multi-select toolbar.
@@ -3110,14 +3594,27 @@
         ? srcPaths.slice()
         : Array.from(selectedSet);
       if (paths.length === 0 || !destDir) return;
+
+      // Cycle guard: any source whose subtree contains destDir would
+      // walk into an infinite directory loop.  Bail upfront with a
+      // clear toast rather than fail half-way through the batch.
+      for (const p of paths) {
+        if (isDescendantPath(destDir, p)) {
+          toast("Can't move a folder into itself.", 'error');
+          return;
+        }
+      }
+
       mkdirP(destDir);
       let ok = 0, fail = 0;
       for (const p of paths) {
         const base = pathBasename(p);
-        const newPath = destDir.replace(/\/+$/, '') + '/' + base;
+        const safe = uniqueDestName(destDir, base);
+        const newPath = destDir.replace(/\/+$/, '') + '/' + safe;
         if (newPath === p) continue;
         try {
           Module.FS.rename(p, newPath);
+          clipboardForgetMoved(p, newPath);
           ++ok;
         } catch (e) {
           jlog('batchMove: failed on', p, e && e.message ? e.message : e);
@@ -3575,26 +4072,36 @@
     }
 
     // ───────────────────────────────────────────────────────────────────
-    //  Diagnose lobby — quick reachability probe
+    //  Diagnose Netplay — three-leg reachability probe
     //
     //  When a user reports "Play Online" failing with WS code 1006
     //  ("could not reach lobby"), the failure could be DNS, TLS, CORS,
-    //  mixed-content, a missing Caddy /netplay route, or the lobby
-    //  process being down.  This handler probes both the public HTTPS
-    //  endpoint (/healthz, /v1/stats) and reports each leg's outcome
-    //  so the user — or the operator hosting AltirraSDL — knows where
-    //  the break is.  No emulator state is touched.
+    //  mixed-content, a missing Caddy /netplay route, the lobby process
+    //  being down, OR a browser-side block on the WSS leg specifically
+    //  (CSP, COEP, extension/proxy, IDS rewrite).  We probe all three:
+    //    1. https://host/healthz       — lobby alive at all?
+    //    2. https://host/v1/stats      — REST API working?
+    //    3. wss://host/netplay         — WebSocket bridge accepting upgrades?
+    //
+    //  The WSS probe deliberately sends a malformed subprotocol (no
+    //  session/role), so the bridge is expected to reply with HTTP 400
+    //  and the browser then closes us with code=1006.  What matters is
+    //  the close-event TIMING and CODE: a real network roundtrip takes
+    //  ≥30 ms, while a synchronous browser-side block (CSP / mixed-
+    //  content / extension intercept) closes in <10 ms.  We surface the
+    //  numbers so the operator can tell the two scenarios apart.
     // ───────────────────────────────────────────────────────────────────
-    async function diagnoseLobby() {
+    async function diagnoseNetplay() {
       const host = (HOST_CONFIG && HOST_CONFIG.lobbyHost)
                    ? HOST_CONFIG.lobbyHost
                    : 'altirra-lobby.duckdns.org';
       const baseHttps = 'https://' + host;
+      const wssUrl    = 'wss://' + host + '/netplay';
 
       toast('Diagnosing ' + host + '…', 'ok');
       appendLog('[diagnose] target = ' + host);
 
-      const probe = async (label, url) => {
+      const probeHttp = async (label, url) => {
         const t0 = performance.now();
         try {
           const r = await fetch(url, { cache: 'no-store' });
@@ -3613,16 +4120,75 @@
         }
       };
 
-      const a = await probe('healthz', baseHttps + '/healthz');
-      const b = await probe('stats',   baseHttps + '/v1/stats');
+      // WSS handshake probe.  The subprotocol list intentionally lacks
+      // session.<hex>, role.<…>; the bridge will reject with HTTP 400
+      // ("malformed Sec-WebSocket-Protocol").  We do NOT need a 101 —
+      // we need to learn whether the browser even reaches the server.
+      const probeWss = (url) => new Promise((resolve) => {
+        const t0 = performance.now();
+        let ws;
+        let resolved = false;
+        const finish = (out) => {
+          if (resolved) return;
+          resolved = true;
+          out.ms = +(performance.now() - t0).toFixed(0);
+          if (ws && ws.readyState !== WebSocket.CLOSED) {
+            try { ws.close(); } catch (_) {}
+          }
+          resolve(out);
+        };
+        try {
+          ws = new WebSocket(url, ['altirra-netplay.v1']);
+        } catch (e) {
+          finish({ phase: 'construct-throw',
+                   error: (e && e.message) ? e.message : String(e) });
+          return;
+        }
+        ws.binaryType = 'arraybuffer';
+        ws.onopen   = () => finish({ phase: 'open' });
+        ws.onerror  = () => { /* wait for close to grab the code */ };
+        ws.onclose  = (e) => finish({ phase: 'close',
+                                      code: e.code,
+                                      reason: e.reason || '',
+                                      wasClean: !!e.wasClean });
+        // Safety: should never trigger; the browser closes within ms
+        // either way, but a stuck network could leave us hanging.
+        setTimeout(() => finish({ phase: 'timeout' }), 8000);
+      });
+
+      const a = await probeHttp('healthz', baseHttps + '/healthz');
+      const b = await probeHttp('stats',   baseHttps + '/v1/stats');
+
+      // The WSS probe ALWAYS closes — we just want to know how, when,
+      // and with what code.  Phase=open means our malformed handshake
+      // somehow reached a peer that accepted it (shouldn't happen with
+      // a real lobby — would indicate a non-conformant intermediary).
+      const c = await probeWss(wssUrl);
+      let cLine = '[diagnose] netplay-wss: ' + wssUrl + ' → '
+                + c.phase + ' (' + c.ms + ' ms)';
+      if (c.code !== undefined) cLine += ' code=' + c.code;
+      if (c.reason) cLine += ' reason="' + c.reason + '"';
+      if (c.error)  cLine += ' error=' + c.error;
+      appendLog(cLine);
+
+      // Fast (<10 ms) close = browser refused to even open the WS.
+      // That's the smoking-gun signature for CSP / mixed-content / a
+      // proxy or extension intercepting WSS.  Slow (≥30 ms) close with
+      // code=1006 (and our malformed handshake) = bridge IS reachable
+      // and replied 400; everything is fine for real joiners.
+      const wssReachedServer = (c.phase === 'close' && c.ms >= 30);
 
       // Build a one-line verdict for the toast.
       let verdict;
-      if (a.ok && b.ok) {
-        verdict = 'Lobby OK — HTTPS + Caddy reachable';
+      if (a.ok && b.ok && wssReachedServer) {
+        verdict = 'Lobby OK — HTTPS + WSS bridge reachable';
       } else if (a.error && b.error) {
-        // Both legs threw → most likely DNS / CORS / TLS / mixed content.
         verdict = 'Lobby unreachable: ' + (a.error || b.error);
+      } else if (a.ok && b.ok && !wssReachedServer) {
+        // The HTTPS API works but the WSS leg fails synchronously —
+        // this is almost certainly a browser-side block.
+        verdict = 'WSS blocked by browser (CSP / extension / proxy?)'
+                + ' — HTTPS works, WSS closed in ' + c.ms + ' ms';
       } else if (!a.ok || !b.ok) {
         const bad = !a.ok ? a : b;
         verdict = 'Lobby reachable but ' +
@@ -3631,19 +4197,13 @@
       } else {
         verdict = 'Lobby partial — see log';
       }
-      // The /netplay WebSocket leg can't be probed via fetch(); add
-      // an instructional line so the user knows what to check next.
-      appendLog('[diagnose] note: /netplay (WSS) is not testable via'
-              + ' fetch — if the two probes above passed but Play'
-              + ' Online still fails, the Caddy /netplay reverse-proxy'
-              + ' route is misconfigured.  See server/lobby/README.md.');
-      toast(verdict, (a.ok && b.ok) ? 'ok' : 'error');
+      toast(verdict, (a.ok && b.ok && wssReachedServer) ? 'ok' : 'error');
     }
 
     if (btnDiagnose) {
       btnDiagnose.addEventListener('click', () => {
         if (!runtimeReady) { toast('Still loading…', 'error'); return; }
-        diagnoseLobby();
+        diagnoseNetplay();
       });
     }
 
@@ -3779,15 +4339,35 @@
 
     // ───────────────────────────────────────────────────────────────────
     //  Upload button inside overlay
+    //
+    //  Routing depends on view mode:
+    //    tree mode → the folder you're staring at (`currentPath`)
+    //                — same as Finder/Files: "Upload here".
+    //    filter    → auto-categorise by extension (.rom→firmware,
+    //                .atr→disks, etc.), preserving the original
+    //                routing behaviour for users browsing by type.
+    //    pick mode → unchanged.
+    //  Same logic governs OS-file drops onto the FM overlay further
+    //  below.  The button title is rebuilt every renderFm to reflect
+    //  the contextual destination.
     // ───────────────────────────────────────────────────────────────────
+    function uploadTargetForCurrentView() {
+      if (viewMode === 'tree' && currentPath) return currentPath;
+      return null;   // null → uploadFiles auto-categorises
+    }
+    function refreshUploadButton() {
+      if (!fmUpload) return;
+      const t = uploadTargetForCurrentView();
+      if (t) {
+        fmUpload.title = 'Upload to ' + t.replace(ROOT, '~');
+      } else {
+        fmUpload.title = 'Upload (auto-categorize by file type)';
+      }
+    }
     fmUpload.addEventListener('click', () => fmFilePicker.click());
     fmFilePicker.addEventListener('change', (e) => {
-      // Upload from inside the overlay auto-categorizes by extension
-      // so .rom files land in Firmware, .atr in Disks, etc.  Force-
-      // category still works via drag-drop onto the overlay (see
-      // the dragleave/drop handlers below) when the user explicitly
-      // wants to override auto-detect.
-      uploadFiles(Array.from(e.target.files));
+      const target = uploadTargetForCurrentView();
+      uploadFiles(Array.from(e.target.files), target);
       e.target.value = '';
     });
 
@@ -3811,6 +4391,24 @@
       const paths = Array.from(selectedSet);
       if (paths.length === 0) return;
       openMoveDialog(paths);
+    });
+    if (fmBatchCut) fmBatchCut.addEventListener('click', () => {
+      const paths = Array.from(selectedSet);
+      if (paths.length === 0) return;
+      clipboardSet('cut', paths);
+      // Stay in select mode so the user can keep adding to a future
+      // selection if they want — the cut is reflected via the
+      // dim+italic styling instead.
+    });
+    if (fmBatchCopy) fmBatchCopy.addEventListener('click', () => {
+      const paths = Array.from(selectedSet);
+      if (paths.length === 0) return;
+      clipboardSet('copy', paths);
+    });
+    if (fmBatchPaste) fmBatchPaste.addEventListener('click', () => {
+      const here = currentViewDir();
+      if (!here) return;
+      clipboardPaste(here);
     });
     fmBatchUnpack.addEventListener('click', () => {
       const p = fmBatchUnpack.dataset.zipPath;
