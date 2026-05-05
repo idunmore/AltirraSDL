@@ -1,8 +1,8 @@
 # AltirraSDL
 
-**Unofficial** SDL3 + Dear ImGui frontend for [Altirra](https://www.virtualdub.org/altirra.html), the cycle-accurate 8-bit Atari computer emulator by Avery Lee (phaeron).
+**Unofficial** SDL3 + Dear ImGui fork of [Altirra](https://www.virtualdub.org/altirra.html), the cycle-accurate 8-bit Atari computer emulator by Avery Lee (phaeron).
 
-> **This is not an official Altirra release.** It is an independent, community-maintained fork that replaces the native Windows UI with a cross-platform SDL3 + Dear ImGui frontend. It is not affiliated with, endorsed by, or supported by the original author. For the official Altirra emulator, please visit [virtualdub.org/altirra.html](https://www.virtualdub.org/altirra.html).
+> **This is not an official Altirra release.** It is an independent, community-maintained fork that replaces the native Windows UI with a cross-platform SDL3 + Dear ImGui frontend, and expands the capabilities into new directions. It is not affiliated with, endorsed by, or supported by the original author. For the official Altirra emulator, please visit [virtualdub.org/altirra.html](https://www.virtualdub.org/altirra.html).
 
 ## What is Altirra?
 
