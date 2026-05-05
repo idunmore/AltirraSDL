@@ -8,6 +8,7 @@
 #include "ui_netplay_lobby_worker.h"
 #include "ui_netplay_actions.h"
 #include "ui_netplay_activity.h"
+#include "ui_netplay_deeplink.h"
 
 #include "netplay/platform_notify.h"
 #include "netplay/netplay_glue.h"
@@ -136,6 +137,13 @@ void ATNetplayUI_Poll(uint64_t nowMs) {
 		(ATNetplayUI::GetWorker().InFlightCount() > 0);
 	ATNetplayUI::GetWorker().Poll(
 		[&](ATNetplayUI::LobbyResult& r) {
+			// Deep-link join: GetById results route to the dedicated
+			// state machine that populates joinTarget and fires
+			// StartJoiningAction.  Returns true when the result is
+			// the deep-link's own; otherwise we fall through to the
+			// general lobby-health bookkeeping below.
+			if (ATNetplayUI::OnDeepLinkLobbyResult(r)) return;
+
 			// Record cross-window lobby reachability — every op except
 			// Stats updates this so Browse and Host Games show a
 			// consistent status without each window polling on its
@@ -619,6 +627,13 @@ void ATNetplayUI_Poll(uint64_t nowMs) {
 
 	// Track aggregate session-active for menu/HUD.
 	st.sessionActive = ATNetplayGlue::IsActive();
+
+	// Deep-link join: drive the per-frame state machine that consumes
+	// any pending --join-session / ?s=<id> request.  Cheap no-op
+	// unless the URL bridge or CLI parser stashed something.  Runs
+	// AFTER the session-active update so the gate it checks
+	// (!ATNetplayGlue::IsActive()) reflects the current frame.
+	ATNetplayUI::DriveDeepLinkJoin();
 }
 
 void ATNetplayUI_OpenBrowser() {

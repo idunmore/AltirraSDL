@@ -1204,6 +1204,14 @@ void DesktopMyHostedGames() {
 
 	ImGui::Separator();
 
+	// Always-visible counter — same shape as the Gaming Mode card so
+	// users see the limit before they hit it.  The number is shared
+	// with the server (kMaxHostedGamesPerHost in lobby_protocol.h);
+	// a modded client that bypasses the local cap still gets a 429
+	// "host limit reached" from the lobby.
+	ImGui::Text("Hosted Games (%zu / %zu)",
+		st.hostedGames.size(), (size_t)State::kMaxHostedGames);
+
 	bool atCap = (st.hostedGames.size() >= State::kMaxHostedGames);
 	ImGui::BeginDisabled(atCap);
 	if (ImGui::Button("Add Game...", ImVec2(140, 0))) {
@@ -1211,6 +1219,12 @@ void DesktopMyHostedGames() {
 		Navigate(Screen::AddGame);
 	}
 	ImGui::EndDisabled();
+	if (atCap && ImGui::IsItemHovered(
+			ImGuiHoveredFlags_AllowWhenDisabled)) {
+		ImGui::SetTooltip(
+			"Hosted-games limit reached — remove one of your hosted "
+			"games before adding another.");
+	}
 	if (atCap) {
 		ImGui::SameLine();
 		ImGui::TextDisabled("(%zu/%zu — remove one first)",

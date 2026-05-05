@@ -48,6 +48,7 @@
 #include "uikeyboard.h"
 #include "ui_main.h"
 #include "logging.h"
+#include "ui/netplay/ui_netplay_deeplink.h"
 
 extern ATSimulator g_sim;
 extern ATUIKeyboardOptions g_kbdOpts;
@@ -289,7 +290,7 @@ bool ATProcessCommandLineSDL3(int argc, char **argv) {
 		// ---- Help ----
 		if (MatchSwitch(sw, "help") || MatchSwitch(sw, "?")) {
 			consumed[i] = true;
-			LOG_INFO("CmdLine", "Usage: AltirraSDL [options] [image-file ...]\n\n" "Display:  --f  --ntsc --pal --secam --ntsc50 --pal60\n" "          --artifact <mode>  --vsync/--novsync\n" "Hardware: --hardware <mode>  --kernel <name>  --memsize <size>\n" "          --stereo/--nostereo  --basic/--nobasic\n" "Media:    --cart/--disk/--run/--runbas/--tape <file>\n" "          --bootro/--bootrw/--bootvrw/--bootvrwsafe\n" "Devices:  --adddevice/--setdevice/--removedevice <spec>\n" "          --cleardevices  --pclink <mode,path>  --hdpath <path>\n" "Debugger: --debug  --debugcmd <cmd>  --autotest\n" "Other:    --type <text>  --rawkeys  --diskemu <mode>\n\n" "Use Help > Command-Line Help in the menu for full details.");
+			LOG_INFO("CmdLine", "Usage: AltirraSDL [options] [image-file ...]\n\n" "Display:  --f  --ntsc --pal --secam --ntsc50 --pal60\n" "          --artifact <mode>  --vsync/--novsync\n" "Hardware: --hardware <mode>  --kernel <name>  --memsize <size>\n" "          --stereo/--nostereo  --basic/--nobasic\n" "Media:    --cart/--disk/--run/--runbas/--tape <file>\n" "          --bootro/--bootrw/--bootvrw/--bootvrwsafe\n" "Devices:  --adddevice/--setdevice/--removedevice <spec>\n" "          --cleardevices  --pclink <mode,path>  --hdpath <path>\n" "Online:   --join-session <id>  --join-code <code>\n" "Debugger: --debug  --debugcmd <cmd>  --autotest\n" "Other:    --type <text>  --rawkeys  --diskemu <mode>\n\n" "Use Help > Command-Line Help in the menu for full details.");
 			continue;
 		}
 
@@ -498,6 +499,37 @@ bool ATProcessCommandLineSDL3(int argc, char **argv) {
 		if (MatchSwitch(sw, "nocovox")) {
 			consumed[i] = true;
 			g_sim.GetDeviceManager()->RemoveDevice("covox");
+			continue;
+		}
+
+		// ---- Online Play deep-link ----
+		// `--join-session <id>` and `--join-code <code>` arrive from:
+		//   - the WASM page reading `?s=<id>` (and optional `?code=<c>`)
+		//     from window.location.search and injecting them into
+		//     Module.arguments before main();
+		//   - a native build invoked from a future altirra:// URL
+		//     handler or a desktop launcher / shortcut.
+		// Sanity-cap the length so the parser cannot be wedged by a
+		// hostile URL; deeper validation (lobby fetch, 404 handling)
+		// lives in the deep-link state machine, which routes to the
+		// standard Error screen on any failure.  The two flags are
+		// stored independently so they can arrive in either order.
+		if ((val = ConsumeArg(argc, argv, i, consumed, "join-session")) != nullptr) {
+			std::string id = val;
+			if (id.size() > 128) {
+				LOG_INFO("CmdLine", "--join-session: id too long, ignored");
+			} else {
+				ATNetplayUI::SetPendingDeepLinkSessionId(id);
+			}
+			continue;
+		}
+		if ((val = ConsumeArg(argc, argv, i, consumed, "join-code")) != nullptr) {
+			std::string code = val;
+			if (code.size() > 64) {
+				LOG_INFO("CmdLine", "--join-code: code too long, ignored");
+			} else {
+				ATNetplayUI::SetPendingDeepLinkCode(code);
+			}
 			continue;
 		}
 

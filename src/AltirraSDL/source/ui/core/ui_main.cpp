@@ -1623,7 +1623,13 @@ void ATUIRenderFrame(ATSimulator &sim, VDVideoDisplaySDL3 &display,
 	if (state.showCompatWarning)     ATUIRenderCompatWarning(sim, state);
 	if (state.showExitConfirm)       ATUIRenderExitConfirm(sim, state);
 	if (state.showDiskExplorer)      ATUIRenderDiskExplorer(sim, state, window);
-	if (state.showSetupWizard)       ATUIRenderSetupWizard(sim, state, window);
+	// Setup wizard: in Gaming Mode the wizard is rendered through
+	// ATMobileUI_Render's screen dispatch (currentScreen ==
+	// ATMobileUIScreen::SetupWizard) so it gets the same touch chrome
+	// and uiOwns input ownership as other gaming-mode screens.  In
+	// Desktop Mode the original ImGui-window renderer runs here.
+	if (state.showSetupWizard && !ATUIIsGamingMode())
+		ATUIRenderSetupWizard(sim, state, window);
 	if (state.showKeyboardShortcuts) ATUIRenderKeyboardShortcuts(state);
 	if (state.showKeyboardCustomize) ATUIRenderKeyboardCustomize(state);
 	if (state.showCompatDB)          ATUIRenderCompatDB(sim, state);

@@ -43,6 +43,13 @@ enum class LobbyOp {
 	Heartbeat,
 	Delete,
 	Stats,
+	// Deep-link join: fetch a single session by its lobby-issued id.
+	// Result is returned as the first (and only) element of
+	// LobbyResult::sessions.  Used by the WASM/native deep-link path
+	// (?s=<id> URL parameter) — we have only the id and need the rest
+	// of the LobbySession metadata (host endpoint, candidates,
+	// wssRelayOnly flag, …) before invoking the standard join action.
+	GetById,
 	// v4 two-sided punch: joiner-side POST to announce own candidates
 	// to the lobby so the host can pre-open its NAT pinhole.  Uses
 	// req.sessionId (target host's session), req.token (joiner's

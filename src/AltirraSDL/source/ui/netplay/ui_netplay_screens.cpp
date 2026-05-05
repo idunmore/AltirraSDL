@@ -1169,6 +1169,20 @@ void RenderMyHostedGames() {
 	// again here would just clutter the sub-screen.
 	float btnW = Dp(220);
 	bool atCap = (st.hostedGames.size() >= State::kMaxHostedGames);
+
+	// Counter — always visible so users learn the limit before they
+	// hit it.  Same number is enforced server-side
+	// (kMaxHostedGamesPerHost in lobby_protocol.h, returned as 429
+	// "host limit reached" if a modded client tries to exceed it).
+	{
+		char counter[64];
+		std::snprintf(counter, sizeof counter,
+			"Hosted games: %zu / %zu",
+			st.hostedGames.size(),
+			(size_t)State::kMaxHostedGames);
+		ATTouchMutedText(counter);
+	}
+
 	ImGui::BeginDisabled(atCap);
 	if (ConsumeFocusRequest(4004))
 		ImGui::SetKeyboardFocusHere();
@@ -1179,6 +1193,11 @@ void RenderMyHostedGames() {
 		Navigate(Screen::AddGame);
 	}
 	ImGui::EndDisabled();
+	if (atCap && ImGui::IsItemHovered()) {
+		ImGui::SetTooltip(
+			"Hosted-games limit reached — remove one of your hosted "
+			"games before adding another.");
+	}
 
 	ImGui::Spacing();
 	ImGui::Separator();

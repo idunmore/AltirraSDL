@@ -189,6 +189,31 @@ ATLobby::WsBridgeContext       gWsBridgeCtx;
 // Session store
 // -----------------------------------------------------------------
 
+// Normalize a hostHandle for case- and whitespace-insensitive matching:
+// trim ASCII whitespace from both ends, then ASCII-lowercase.  Used as
+// the bucket key for the per-host cap (kMaxHostedGamesPerHost) and for
+// the dedup-on-Create path so re-hosting the same cart from "Alice"
+// vs "alice" doesn't leave a ghost listing.
+//
+// Why ASCII-only: Atari handles are user-typed and the lobby's input
+// validator already restricts kHostHandleMax = 32.  Locale-aware
+// case-folding would require ICU and produce surprises for shared
+// machines; the extreme case (two players named "ALICE" vs "Алиса")
+// is a name collision either way.
+inline std::string NormalizeHandle(const std::string& h) {
+	size_t a = 0, b = h.size();
+	while (a < b && (unsigned char)h[a] <= 0x20) ++a;
+	while (b > a && (unsigned char)h[b - 1] <= 0x20) --b;
+	std::string out;
+	out.reserve(b - a);
+	for (size_t i = a; i < b; ++i) {
+		unsigned char c = (unsigned char)h[i];
+		if (c >= 'A' && c <= 'Z') c = (unsigned char)(c + 32);
+		out.push_back((char)c);
+	}
+	return out;
+}
+
 // v4 two-sided punch: one buffered joiner hint awaiting delivery to
 // the host on its next heartbeat.  The lobby stores up to kPeerHintCap
 // per session; entries older than kPeerHintTtlMs are pruned before
@@ -204,6 +229,9 @@ struct Session {
 	std::string id;
 	std::string cartName;
 	std::string hostHandle;
+	// Computed at Create-time (NormalizeHandle), used for dedup +
+	// per-host cap.  Never serialised to the wire.
+	std::string hostHandleNorm;
 	std::string hostEndpoint;
 	// v3: semicolon-separated list of "ip:port" endpoints the joiner
 	// should try (LAN, srflx/public, loopback).  Empty for old clients
@@ -259,6 +287,13 @@ struct Config {
 	// production reverse-proxy on the same VM.  Override via
 	// TRUSTED_PROXIES (comma-separated).
 	std::vector<std::string> trustedProxies = {"127.0.0.1", "::1"};
+	// Base URL the lobby uses to build per-session `joinUrl` values
+	// in /v1/public/sessions responses.  The session id is appended
+	// as `?s=<id>` (the lobby trusts the configured base to already
+	// end with a slash).  Override via PUBLIC_WASM_URL.  A self-hosted
+	// lobby can point this at its own WASM build; the production
+	// instance points at the upstream GitHub Pages deployment.
+	std::string publicWasmUrl = kDefaultPublicWasmUrl;
 };
 
 // Token-bucket rate limit per source IP.
@@ -317,21 +352,33 @@ class Store {
 public:
 	explicit Store(const Config& cfg) : mCfg(cfg), mRate(cfg) {}
 
-	// Create returns empty id on capacity failure.
-	Session Create(const Session& in) {
+	// Reasons Create can fail.  Each maps to a distinct 429 response
+	// body so the client UI can show specific guidance.
+	enum class CreateError {
+		None        = 0,  // success (id non-empty)
+		LobbyFull   = 1,  // global Cfg.maxSessions reached
+		HostLimit   = 2,  // this host already has kMaxHostedGamesPerHost
+	};
+
+	// Create returns empty id on failure with `errOut` set to the
+	// specific cause.  On success errOut is left at None.
+	Session Create(const Session& in, CreateError& errOut) {
+		errOut = CreateError::None;
 		std::lock_guard<std::mutex> lk(mMu);
 
-		// Identity-based dedup: when the same host (hostHandle) is
-		// re-creating a session for the same cart (cartName), expire
-		// the prior entry so the public list doesn't show a ghost
-		// alongside the live one.  The scenario that motivated this:
-		// client crashed / killed / lost network → no clean Delete
-		// reached us → user reconnects → both old and new sessions
-		// are visible until TTL.  Replacing on (hostHandle, cartName)
-		// collapses that to one entry.
+		const std::string handleNorm = NormalizeHandle(in.hostHandle);
+
+		// Identity-based dedup: when the same host (normalized
+		// hostHandle) is re-creating a session for the same cart
+		// (cartName), expire the prior entry so the public list
+		// doesn't show a ghost alongside the live one.  The scenario
+		// that motivated this: client crashed / killed / lost network
+		// → no clean Delete reached us → user reconnects → both old
+		// and new sessions are visible until TTL.  Replacing on
+		// (hostHandleNorm, cartName) collapses that to one entry.
 		//
 		// Conditions:
-		//   - hostHandle non-empty (legacy clients without a handle
+		//   - handleNorm non-empty (legacy clients without a handle
 		//     are exempt — we'd otherwise collapse all of them).
 		//   - cartName non-empty (same reason).
 		// Collisions across genuinely different users with identical
@@ -339,10 +386,10 @@ public:
 		// list) is acceptable; nicknames are user identity in this
 		// protocol.  No token check here: this is a server-side
 		// housekeeping step, not a per-request action.
-		if (!in.hostHandle.empty() && !in.cartName.empty()) {
+		if (!handleNorm.empty() && !in.cartName.empty()) {
 			for (auto it = mItems.begin(); it != mItems.end();) {
-				if (it->second.hostHandle == in.hostHandle &&
-				    it->second.cartName   == in.cartName) {
+				if (it->second.hostHandleNorm == handleNorm &&
+				    it->second.cartName       == in.cartName) {
 					it = mItems.erase(it);
 				} else {
 					++it;
@@ -350,12 +397,34 @@ public:
 			}
 		}
 
-		if ((int)mItems.size() >= mCfg.maxSessions) return Session{};
-		Session s    = in;
-		s.id         = NewUUIDv4();
-		s.token      = NewToken();
-		s.createdAt  = IsoNow();
-		s.lastSeenMs = NowMs();
+		// Per-host cap: count remaining sessions belonging to this
+		// normalized handle and reject the request if the host is
+		// already at the configured limit.  Runs AFTER the dedup
+		// loop so re-creating an existing entry (same cart) doesn't
+		// itself count toward the cap.  Empty handles are exempt —
+		// they represent un-attributed legacy clients and we don't
+		// have a fair way to bucket them.
+		if (!handleNorm.empty()) {
+			int count = 0;
+			for (const auto& kv : mItems) {
+				if (kv.second.hostHandleNorm == handleNorm) ++count;
+			}
+			if (count >= kMaxHostedGamesPerHost) {
+				errOut = CreateError::HostLimit;
+				return Session{};
+			}
+		}
+
+		if ((int)mItems.size() >= mCfg.maxSessions) {
+			errOut = CreateError::LobbyFull;
+			return Session{};
+		}
+		Session s          = in;
+		s.id               = NewUUIDv4();
+		s.token            = NewToken();
+		s.createdAt        = IsoNow();
+		s.lastSeenMs       = NowMs();
+		s.hostHandleNorm   = handleNorm;
 		if (s.state.empty()) s.state = kStateWaiting;
 		mItems[s.id] = s;
 		return s;
@@ -561,6 +630,43 @@ void WriteSessionJson(JsonBuilder& b, const Session& s) {
 	// lastSeen is the server's monotonic clock; we emit an ISO time
 	// for debug inspection — clients don't parse it.
 	b.key(Field::kLastSeen);        b.str(s.createdAt);
+	b.raw('}');
+}
+
+// Public-listing projection used by /v1/public/sessions.  Stable
+// schema for third-party embeds: only fields useful for a "what's
+// being hosted right now" widget, plus a server-built `joinUrl` that
+// drops a visitor straight into the WASM client.  Internal protocol
+// fields (token, candidates, wssRelayOnly, kernelCRC32, …) are
+// deliberately omitted so the wire protocol can evolve without
+// breaking embedders.
+//
+// `wasmBaseUrl` is taken from Cfg().publicWasmUrl; it must end with
+// a slash because we append "?s=<id>" directly.
+void WritePublicSessionJson(JsonBuilder& b, const Session& s,
+                            const std::string& wasmBaseUrl) {
+	b.raw('{');
+	b.key(Field::kCartName);        b.str(s.cartName);     b.raw(',');
+	b.key(Field::kHostHandle);      b.str(s.hostHandle);   b.raw(',');
+	b.key(Field::kRegion);          b.str(s.region);       b.raw(',');
+	b.key(Field::kHardwareMode);    b.str(s.hardwareMode); b.raw(',');
+	b.key(Field::kVideoStandard);   b.str(s.videoStandard);b.raw(',');
+	b.key(Field::kMemoryMode);      b.str(s.memoryMode);   b.raw(',');
+	b.key(Field::kState);           b.str(s.state.empty() ? kStateWaiting
+	                                                       : s.state);
+	b.raw(',');
+	b.key(Field::kPlayerCount);     b.num(s.playerCount);  b.raw(',');
+	b.key(Field::kMaxPlayers);      b.num(s.maxPlayers);   b.raw(',');
+	b.key(Field::kRequiresCode);    b.boolean(s.requiresCode); b.raw(',');
+	// joinUrl: wasmBaseUrl + "?s=" + sessionId.  The session id is a
+	// UUIDv4 hex string (lowercase + dashes), so all characters are
+	// URL-safe and no percent-encoding is needed.
+	std::string joinUrl;
+	joinUrl.reserve(wasmBaseUrl.size() + 4 + s.id.size());
+	joinUrl.append(wasmBaseUrl);
+	joinUrl.append("?s=");
+	joinUrl.append(s.id);
+	b.key(Field::kJoinUrl);         b.str(joinUrl);
 	b.raw('}');
 }
 
@@ -1064,6 +1170,26 @@ void Install(httplib::Server& srv, Store& store) {
 			res.set_content(std::move(b.s), "application/json");
 		});
 
+	// Curated public projection — see WritePublicSessionJson() above.
+	// Same data source as /v1/sessions, but with a stable, embedder-
+	// friendly subset of fields plus a server-built joinUrl.  CORS
+	// header is already set by the pre-routing handler that runs for
+	// every GET, so external sites can fetch() this directly.
+	srv.Get(kPathPublicSessions,
+		[&store](const httplib::Request&, httplib::Response& res) {
+			auto list = store.List();
+			const std::string& wasmBase = store.Cfg().publicWasmUrl;
+			JsonBuilder b;
+			b.raw('[');
+			for (size_t i = 0; i < list.size(); ++i) {
+				if (i) b.raw(',');
+				WritePublicSessionJson(b, list[i], wasmBase);
+			}
+			b.raw(']');
+			res.status = 200;
+			res.set_content(std::move(b.s), "application/json");
+		});
+
 	srv.Post(kPathSession,
 		[&store](const httplib::Request& req, httplib::Response& res) {
 			CreateReq r;
@@ -1093,9 +1219,18 @@ void Install(httplib::Server& srv, Store& store) {
 			in.memoryMode    = r.memoryMode;
 			in.wssRelayOnly  = r.wssRelayOnly;
 
-			Session s = store.Create(in);
+			Store::CreateError createErr = Store::CreateError::None;
+			Session s = store.Create(in, createErr);
 			if (s.id.empty()) {
-				WriteErr(res, 429, "lobby full"); return;
+				switch (createErr) {
+				case Store::CreateError::HostLimit:
+					WriteErr(res, 429, "host limit reached");
+					return;
+				case Store::CreateError::LobbyFull:
+				default:
+					WriteErr(res, 429, "lobby full");
+					return;
+				}
 			}
 
 			JsonBuilder b;
@@ -1388,6 +1523,15 @@ Config LoadConfig() {
 		cfg.maxSessions = std::atoi(v);
 	if (const char *v = std::getenv("RATE_BURST"))
 		cfg.rateBurst = std::atoi(v);
+	if (const char *v = std::getenv("PUBLIC_WASM_URL")) {
+		std::string s = v;
+		// Trim ASCII whitespace; we expect a clean URL.
+		while (!s.empty() && (unsigned char)s.front() <= 0x20)
+			s.erase(s.begin());
+		while (!s.empty() && (unsigned char)s.back() <= 0x20)
+			s.pop_back();
+		if (!s.empty()) cfg.publicWasmUrl = std::move(s);
+	}
 	if (const char *v = std::getenv("TRUSTED_PROXIES")) {
 		cfg.trustedProxies.clear();
 		std::string s = v;

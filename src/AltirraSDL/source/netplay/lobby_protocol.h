@@ -67,6 +67,20 @@ inline constexpr int kSweepIntervalMillis = 30 * 1000;        // 30 s
 // Create requests return 429 once full.
 inline constexpr int kMaxSessions = 1000;
 
+// Per-host cap on concurrent hosted games.  Enforced by the server at
+// POST /v1/session (per normalized hostHandle, returning 429
+// "host limit reached" on overflow) and mirrored by the client UI so
+// users see the limit before they hit it.  Shared between client and
+// server so a future bump only changes one number.
+//
+// Why 5: a single user heartbeats every 30 s, so 5 hosted games is
+// 10 req/min — comfortably under the lobby's 120-req-burst per-IP
+// rate limit even with two players sharing a NAT.  At the same time
+// it's enough headroom that no realistic player runs out of slots
+// (the public list has historically averaged single-digit waiting
+// games across all hosts).
+inline constexpr int kMaxHostedGamesPerHost = 5;
+
 // Maximum sessions returned in a single List response.
 inline constexpr int kListCap = 500;
 
@@ -94,6 +108,14 @@ inline constexpr const char *kPathStats           = "/v1/stats";
 inline constexpr const char *kPathMetrics         = "/v1/metrics";
 inline constexpr const char *kPathSessions        = "/v1/sessions";
 inline constexpr const char *kPathSession         = "/v1/session";
+// Curated public projection of /v1/sessions, intended for embedding
+// on third-party websites.  Returns only the fields useful for a
+// public listing plus a server-built `joinUrl` that drops the user
+// straight into the WASM client.  CORS-enabled (Access-Control-
+// Allow-Origin: *).  Internal protocol fields (token, candidates,
+// wssRelayOnly, kernelCRC32, lastSeen, …) are omitted so the wire
+// protocol can evolve without breaking embedders.
+inline constexpr const char *kPathPublicSessions  = "/v1/public/sessions";
 // Dynamic ID suffix; the server pattern-matches on kPathSession + "/"
 // + <id> [+ "/heartbeat"] and the client does the same string build.
 inline constexpr const char *kPathHeartbeatSuffix = "/heartbeat";
@@ -177,9 +199,21 @@ namespace Field {
     inline constexpr const char *kAgeMs           = "ageMs";
     inline constexpr const char *kHints           = "hints";
 
+    // /v1/public/sessions: the curated "click PLAY" deep-link the
+    // server builds for each session.  Embedders just render the URL
+    // directly; the format is opaque to them so we can change the
+    // WASM host without rebroadcasting.
+    inline constexpr const char *kJoinUrl         = "joinUrl";
+
     // Error response.
     inline constexpr const char *kError           = "error";
 }
+
+// Default WASM client URL used to build joinUrl when the lobby is
+// run without --public-wasm-url override.  Trailing slash required:
+// the lobby appends "?s=<id>" without inserting one.
+inline constexpr const char *kDefaultPublicWasmUrl =
+    "https://ilmenit.github.io/AltirraSDL/";
 
 // v4 two-sided punch: server-side limits.
 inline constexpr int    kPeerHintCandidatesMax = 512;

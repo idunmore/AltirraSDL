@@ -316,6 +316,16 @@ void RenderHamburgerMenu(ATSimulator &sim, ATUIState &uiState,
 		}
 		ImGui::Spacing();
 
+		// First Time Setup — same wizard available in Desktop's Tools
+		// menu, rendered with the touch chrome here.  Useful for users
+		// who want to revisit the joystick / firmware / mode choices
+		// without going through Desktop Mode.
+		if (ATTouchButton("First Time Setup", btnSize)) {
+			extern void Wiz_Open(ATUIState &);
+			Wiz_Open(uiState);
+		}
+		ImGui::Spacing();
+
 #ifdef ALTIRRA_NETPLAY_ENABLED
 		ImGui::Separator();
 		ImGui::Spacing();

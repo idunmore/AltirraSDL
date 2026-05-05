@@ -548,8 +548,24 @@ void PrefillHostMachineConfigDefaults(MachineConfig &cfg) {
 
 std::string FriendlyLobbyError(const std::string& raw, int httpStatus) {
 	// HTTP-level statuses take priority — they carry specific meaning.
-	if (httpStatus == 429)
+	if (httpStatus == 429) {
+		// Server reports two distinct 429 cases via the body's
+		// `error` field: "host limit reached" (this user already
+		// hosts kMaxHostedGamesPerHost games, regardless of how
+		// fast they're posting) and "rate limit exceeded" (token
+		// bucket is empty, retry later).  Distinguish them so the
+		// UX message tells the user the actual remedy.
+		if (raw.find("host limit reached") != std::string::npos) {
+			return "You're already hosting the maximum number of "
+			       "games — remove one of your hosted games and try "
+			       "again.";
+		}
+		if (raw.find("lobby full") != std::string::npos) {
+			return "Lobby is at capacity — try again in a few "
+			       "minutes.";
+		}
 		return "Lobby is rate-limiting - please wait a moment";
+	}
 	if (httpStatus == 401 || httpStatus == 403)
 		return "Lobby refused the request (auth)";
 	if (httpStatus == 404)

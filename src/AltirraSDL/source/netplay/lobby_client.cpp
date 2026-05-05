@@ -443,6 +443,41 @@ bool LobbyClient::List(std::vector<LobbySession>& out) {
 	return true;
 }
 
+bool LobbyClient::GetById(const std::string& sessionId,
+                          LobbySession& out) {
+	out = LobbySession{};
+	if (sessionId.empty()) {
+		mLastError  = "empty sessionId";
+		mLastStatus = 0;
+		return false;
+	}
+	std::string path = "/v1/session/";
+	path += sessionId;
+
+	HttpRequest hr;
+	hr.method    = "GET";
+	hr.host      = mEp.host.c_str();
+	hr.port      = mEp.port;
+	hr.path      = path.c_str();
+	hr.timeoutMs = mEp.timeoutMs;
+
+	HttpResponse resp;
+	HttpRequestSync(hr, resp); mLastStatus = resp.status;
+	if (resp.status != 200) {
+		FormatHttpError(mLastError, resp);
+		return false;
+	}
+	JsonCursor c{(const char*)resp.body.data(),
+	             (const char*)resp.body.data() + resp.body.size()};
+	c.skipWs();
+	if (!ReadSession(c, out)) {
+		mLastError = "malformed session entry";
+		return false;
+	}
+	mLastError.clear();
+	return true;
+}
+
 bool LobbyClient::Heartbeat(const std::string& sessionId,
                             const std::string& token,
                             int playerCount,

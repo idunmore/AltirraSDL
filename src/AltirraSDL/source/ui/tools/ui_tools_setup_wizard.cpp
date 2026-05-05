@@ -8,6 +8,8 @@
 #include <vector>
 #include <cstring>
 #include <cstdio>
+#include <cwctype>
+#include <vd2/system/strutil.h>
 #include <imgui.h>
 #include <SDL3/SDL.h>
 #include <vd2/system/vdtypes.h>
@@ -49,6 +51,9 @@
 #include "ui_mobile.h"
 #include "mobile_internal.h"
 #include "../gamelibrary/game_library.h"
+#include "inputmanager.h"
+#include "inputmap.h"
+#include "setup_wizard_shared.h"
 
 extern ATSimulator g_sim;
 extern ATMobileUIState g_mobileState;
@@ -58,34 +63,20 @@ extern ATMobileUIState g_mobileState;
 // Reference: src/Altirra/source/uisetupwizard.cpp
 // =========================================================================
 
-static struct SetupWizardState {
-	int page = 0;
-	bool wentPastFirst = false;
-	bool firmwareScanned = false;
-	int scanFound = 0;
-	int scanExisting = 0;
-	VDStringA scanMessage;
+// Shared state — definition of the struct lives in setup_wizard_shared.h
+// so the gaming-mode renderer (mobile_setup_wizard.cpp) can read/write
+// the same fields when the user toggles modes mid-wizard.
+SetupWizardState g_setupWiz;
 
-	// UI mode chosen by the user (deferred until wizard closes so the
-	// desktop-style wizard dialog doesn't disappear mid-flow).
-	// -1 means "no choice made, keep current mode".
-	int pendingUIMode = -1;
-
-	// Thread-safe: path stored by callback, processed on main thread
-	std::mutex scanMutex;
-	std::string pendingScanPath;
-	std::string pendingLibFolderPath;
-
-	void Reset() {
-		page = 0;
-		wentPastFirst = false;
-		firmwareScanned = false;
-		scanFound = 0;
-		scanExisting = 0;
-		scanMessage.clear();
-		pendingUIMode = -1;
-	}
-} g_setupWiz;
+void SetupWizardState::Reset() {
+	page = 0;
+	wentPastFirst = false;
+	scanFound = 0;
+	scanExisting = 0;
+	scanMessage.clear();
+	needsHardwareReset = false;
+	joystickPageSeeded = false;
+}
 
 // Firmware scan logic reimplemented from uifirmwarescan.cpp.
 // Exposed (no `static`) so the WASM bridge can invoke the same scan
@@ -150,13 +141,18 @@ void ATUIDoFirmwareScan(const char *utf8path) {
 
 	g_setupWiz.scanFound = (int)detected.size();
 	g_setupWiz.scanExisting = (int)existing;
-	g_setupWiz.firmwareScanned = true;
 	g_setupWiz.scanMessage.sprintf("Firmware images recognized: %d (%d already present)",
 		(int)detected.size(), (int)existing);
+
+	// New ROM(s) loaded — close path needs to LoadROMs+ColdReset for them
+	// to actually take effect on the running emulator.
+	if (!detected.empty())
+		g_setupWiz.needsHardwareReset = true;
 }
 
-// File dialog callback — may run on background thread, so just store the path.
-// The actual scan runs on the main thread in ATUIRenderSetupWizard().
+// File dialog callbacks — may run on a background thread, so just store
+// the path.  The actual processing happens on the main thread in
+// Wiz_PumpAsync().
 static void FirmwareScanCallback(void *, const char * const *filelist, int) {
 	if (!filelist || !filelist[0])
 		return;
@@ -171,102 +167,297 @@ static void LibFolderCallback(void *, const char * const *filelist, int) {
 	g_setupWiz.pendingLibFolderPath = filelist[0];
 }
 
-static bool IsGamingModeSelected() {
-	int sel = g_setupWiz.pendingUIMode;
-	if (sel < 0)
-		sel = (int)ATUIGetMode();
-	return sel == (int)ATUIMode::Gaming;
-}
-
-static int GetWizPrevPage(int page) {
+int Wiz_GetPrevPage(int page) {
 	switch (page) {
 		case 0:  return -1;
 		case 1:  return 0;
 		case 2:  return 1;
-		case 5:  return IsGamingModeSelected() ? 2 : 1;
+		case 5:  return 2;
 		case 6:  return 5;
-		case 10: return 6;
+		// Gaming Mode merges Screen Effects (page 6) into the Appearance
+		// page (5) via the performance preset, so back from Firmware
+		// jumps over page 6 directly to 5.
+		case 10: return ATUIIsGamingMode() ? 5 : 6;
 		case 11: return 10;
 		case 20: return 11;
 		case 21: return 20;
 		case 30: return g_sim.GetHardwareMode() == kATHardwareMode_5200 ? 20 : 21;
-		case 40: return 30;
-		case 41: return 30;
+		case 35: return 30;
+		case 40: return 35;
+		case 41: return 35;
 		default: return 0;
 	}
 }
 
-static int GetWizNextPage(int page) {
+int Wiz_GetNextPage(int page) {
 	switch (page) {
 		case 0:  return 1;
-		case 1:  return IsGamingModeSelected() ? 2 : 5;
+		case 1:  return 2;
 		case 2:  return 5;
-		case 5:  return 6;
+		// Gaming Mode skips page 6 (Screen Effects) — the perf preset
+		// in the merged Appearance page covers it.
+		case 5:  return ATUIIsGamingMode() ? 10 : 6;
 		case 6:  return 10;
 		case 10: return 11;
 		case 11: return 20;
 		case 20: return g_sim.GetHardwareMode() == kATHardwareMode_5200 ? 30 : 21;
 		case 21: return 30;
-		case 30: return g_sim.GetHardwareMode() == kATHardwareMode_5200 ? 41 : 40;
+		case 30: return 35;
+		case 35: return g_sim.GetHardwareMode() == kATHardwareMode_5200 ? 41 : 40;
 		default: return -1;
 	}
 }
 
-static void ApplyPendingUIMode(SDL_Window *window) {
-	if (g_setupWiz.pendingUIMode >= 0) {
-		ATUISetMode((ATUIMode)g_setupWiz.pendingUIMode);
-		ATUISaveMode();
-		float cs = SDL_GetDisplayContentScale(SDL_GetDisplayForWindow(window));
-		if (cs < 1.0f) cs = 1.0f;
-		if (cs > 4.0f) cs = 4.0f;
-		ATUIApplyModeStyle(cs);
+void Wiz_PumpAsync() {
+	std::string scanPath;
+	std::string libPath;
+	{
+		std::lock_guard<std::mutex> lock(g_setupWiz.scanMutex);
+		scanPath.swap(g_setupWiz.pendingScanPath);
+		libPath.swap(g_setupWiz.pendingLibFolderPath);
+	}
 
-		if (ATUIIsGamingMode()) {
-			GameBrowser_Init();
-			g_mobileState.currentScreen = ATMobileUIScreen::GameBrowser;
-			ATMobileUI_ApplyVisualEffects(g_mobileState);
-			ATMobileUI_ApplyPerformancePreset(g_mobileState);
-			g_sim.Pause();
+	if (!scanPath.empty())
+		ATUIDoFirmwareScan(scanPath.c_str());
+
+	if (!libPath.empty()) {
+		GameBrowser_Init();
+		ATGameLibrary *lib = GetGameLibrary();
+		if (lib) {
+			auto sources = lib->GetSources();
+			GameSource src;
+			src.mPath = VDTextU8ToW(libPath.c_str(), -1);
+			src.mbIsArchive = false;
+			sources.push_back(src);
+			lib->SetSources(std::move(sources));
+			lib->SaveSettingsToRegistry();
+			lib->StartScan();
+			extern void ATRegistryFlushToDisk();
+			ATRegistryFlushToDisk();
 		}
 	}
 }
 
-void ATUIRenderSetupWizard(ATSimulator &sim, ATUIState &state, SDL_Window *window) {
-	// Process pending firmware scan on main thread (callback may have run on background thread)
+void Wiz_TriggerFirmwareScan(SDL_Window *window) {
+#ifdef __EMSCRIPTEN__
+	// Browsers can't offer a cross-platform OS folder picker.  The
+	// firmware uploads always land in this fixed path, so seed the
+	// pending-scan slot directly — going through FirmwareScanCallback
+	// would re-enter the scanMutex from the same thread.
+	fprintf(stderr, "[wasm] SetupWizard: Scan for Firmware -> /home/web_user/firmware\n");
 	{
-		std::string scanPath;
-		{
-			std::lock_guard<std::mutex> lock(g_setupWiz.scanMutex);
-			scanPath.swap(g_setupWiz.pendingScanPath);
-		}
-		if (!scanPath.empty())
-			ATUIDoFirmwareScan(scanPath.c_str());
+		std::lock_guard<std::mutex> lock(g_setupWiz.scanMutex);
+		g_setupWiz.pendingScanPath = "/home/web_user/firmware";
 	}
+#else
+	SDL_ShowOpenFolderDialog(FirmwareScanCallback, nullptr, window, nullptr, false);
+#endif
+}
 
-	// Process pending game library folder on main thread
+void Wiz_TriggerLibFolderPicker(SDL_Window *window) {
+#ifdef __EMSCRIPTEN__
+	fprintf(stderr, "[wasm] SetupWizard: Add Folder -> /home/web_user/games\n");
 	{
-		std::string libPath;
-		{
-			std::lock_guard<std::mutex> lock(g_setupWiz.scanMutex);
-			libPath.swap(g_setupWiz.pendingLibFolderPath);
-		}
-		if (!libPath.empty()) {
-			GameBrowser_Init();
-			ATGameLibrary *lib = GetGameLibrary();
-			if (lib) {
-				auto sources = lib->GetSources();
-				GameSource src;
-				src.mPath = VDTextU8ToW(libPath.c_str(), -1);
-				src.mbIsArchive = false;
-				sources.push_back(src);
-				lib->SetSources(std::move(sources));
-				lib->SaveSettingsToRegistry();
-				lib->StartScan();
-				extern void ATRegistryFlushToDisk();
-				ATRegistryFlushToDisk();
+		std::lock_guard<std::mutex> lock(g_setupWiz.scanMutex);
+		g_setupWiz.pendingLibFolderPath = "/home/web_user/games";
+	}
+#else
+	SDL_ShowOpenFolderDialog(LibFolderCallback, nullptr, window, nullptr, false);
+#endif
+}
+
+void Wiz_Open(ATUIState &state) {
+	state.showSetupWizard = true;
+	if (ATUIIsGamingMode())
+		g_mobileState.currentScreen = ATMobileUIScreen::SetupWizard;
+}
+
+void Wiz_ApplyMode(ATUIMode newMode, SDL_Window *window) {
+	if (newMode == ATUIGetMode())
+		return;
+
+	ATUISetMode(newMode);
+
+	float cs = 1.0f;
+	if (window) {
+		cs = SDL_GetDisplayContentScale(SDL_GetDisplayForWindow(window));
+		if (cs < 1.0f) cs = 1.0f;
+		if (cs > 4.0f) cs = 4.0f;
+	}
+	ATUIApplyModeStyle(cs);
+
+	// Note: do not persist via ATUISaveMode() here.  The wizard's close
+	// path is the single commit point, so the mode the user has on screen
+	// at close time is what gets saved — even if they toggled several
+	// times along the way.
+
+	if (ATUIIsGamingMode()) {
+		// Seed the mobile state so the Gaming Mode renderer takes over
+		// next frame.  Effects/perf presets apply so the live preview
+		// truly looks like Gaming Mode (palette, scanlines, etc.).
+		GameBrowser_Init();
+		ATMobileUI_ApplyVisualEffects(g_mobileState);
+		ATMobileUI_ApplyPerformancePreset(g_mobileState);
+		g_mobileState.currentScreen = ATMobileUIScreen::SetupWizard;
+		g_sim.Pause();
+	}
+	// No matching cleanup when leaving Gaming → Desktop is needed: the
+	// outer dispatcher in ui_main.cpp picks the renderer from
+	// ATUIIsGamingMode() each frame, and Wiz_Finish clears the mobile
+	// screen state if the wizard ends in Desktop Mode.
+}
+
+void Wiz_GatherPortMaps(ATInputManager &im, int portIdx,
+	std::vector<WizPortMapEntry> &outEntries)
+{
+	outEntries.clear();
+
+	uint32 mapCount = im.GetInputMapCount();
+	for (uint32 i = 0; i < mapCount; ++i) {
+		vdrefptr<ATInputMap> imap;
+		if (im.GetInputMapByIndex(i, ~imap)) {
+			if (imap->UsesPhysicalPort(portIdx)) {
+				WizPortMapEntry e;
+				e.map = imap;
+				e.name = VDTextWToU8(imap->GetName(), -1);
+				e.active = im.IsInputMapEnabled(imap);
+				outEntries.push_back(std::move(e));
 			}
 		}
 	}
+
+	std::sort(outEntries.begin(), outEntries.end(),
+		[](const WizPortMapEntry &a, const WizPortMapEntry &b) {
+			return vdwcsicmp(a.map->GetName(), b.map->GetName()) < 0;
+		});
+}
+
+void Wiz_ActivatePortMap(ATInputManager &im,
+	const std::vector<WizPortMapEntry> &entries, ATInputMap *chosen)
+{
+	for (const auto &e : entries)
+		im.ActivateInputMap(e.map, e.map == chosen);
+}
+
+void Wiz_SeedDefaultPort1Map(ATInputManager &im,
+	std::vector<WizPortMapEntry> &entries)
+{
+	bool anyActive = false;
+	for (const auto &e : entries) {
+		if (e.active) { anyActive = true; break; }
+	}
+	if (anyActive)
+		return;
+
+	// Match by substring so a custom user map doesn't shadow the
+	// canonical one as long as the canonical one is registered.
+	auto containsCI = [](const wchar_t *s, const wchar_t *needle) {
+		if (!s || !needle) return false;
+		size_t nlen = 0; while (needle[nlen]) ++nlen;
+		for (; *s; ++s) {
+			size_t i = 0;
+			while (i < nlen
+				&& s[i]
+				&& towlower((wint_t)s[i]) == towlower((wint_t)needle[i]))
+				++i;
+			if (i == nlen) return true;
+		}
+		return false;
+	};
+
+	const bool is5200 = (g_sim.GetHardwareMode() == kATHardwareMode_5200);
+
+	ATInputMap *exact = nullptr;
+	ATInputMap *fallback = nullptr;
+	for (auto &e : entries) {
+		const wchar_t *nm = e.map->GetName();
+		if (!nm) continue;
+		if (is5200) {
+			// Canonical 5200 default: "Keyboard -> 5200 Controller
+			// (absolute; port 1)".  Prefer absolute over relative since
+			// the absolute map matches what the Windows wizard's "5200"
+			// hardware path lands on.
+			if (containsCI(nm, L"5200 Controller")
+				&& containsCI(nm, L"absolute"))
+			{
+				exact = e.map;
+				break;
+			}
+			// Fallback: any 5200 Controller map (relative/absolute/etc).
+			if (!fallback && containsCI(nm, L"5200 Controller"))
+				fallback = e.map;
+		} else {
+			// Canonical computer default: "Arrow Keys -> Joystick (port 1)".
+			if (containsCI(nm, L"Arrow Keys")
+				&& containsCI(nm, L"Joystick"))
+			{
+				exact = e.map;
+				break;
+			}
+			if (!fallback && containsCI(nm, L"Arrow"))
+				fallback = e.map;
+		}
+	}
+
+	ATInputMap *chosen = exact ? exact : fallback;
+	if (chosen) {
+		Wiz_ActivatePortMap(im, entries, chosen);
+		for (auto &x : entries) x.active = (x.map == chosen);
+	}
+}
+
+void Wiz_Finish(ATSimulator &sim, ATUIState &state, SDL_Window *window) {
+	(void)window;
+
+	// Only reset the simulator when something downstream of it actually
+	// changed.  Walking the wizard to glance at the Welcome / Interface
+	// Mode / Game Library / Theme pages doesn't need a cold reset and
+	// would pointlessly throw away a running game session.  Pages that
+	// touch firmware, hardware mode, video standard, or experience-level
+	// SIO patches set needsHardwareReset.
+	if (g_setupWiz.wentPastFirst && g_setupWiz.needsHardwareReset) {
+		sim.LoadROMs();
+		sim.ColdReset();
+	}
+
+	// Persist whatever mode the user landed on.  Calling unconditionally
+	// is safe — ATUISaveMode just writes the current value.
+	ATUISaveMode();
+
+	if (ATUIIsGamingMode()) {
+		// Hand off to the Game Library home screen as the post-wizard target.
+		GameBrowser_Init();
+		ATMobileUI_ApplyVisualEffects(g_mobileState);
+		ATMobileUI_ApplyPerformancePreset(g_mobileState);
+		g_mobileState.currentScreen = ATMobileUIScreen::GameBrowser;
+		g_sim.Pause();
+	} else {
+		// In case the wizard was opened in Gaming Mode and the user
+		// toggled to Desktop before closing, clear the lingering mobile
+		// screen so a future mode flip doesn't reopen the wizard screen.
+		if (g_mobileState.currentScreen == ATMobileUIScreen::SetupWizard)
+			g_mobileState.currentScreen = ATMobileUIScreen::None;
+	}
+
+	// Flush settings to disk so anything that was changed during the
+	// wizard but only stored in the in-memory registry (e.g. mode
+	// preference, options edits) survives a subsequent crash or
+	// process kill.  Each setter has already done its part; this is a
+	// catch-all that's cheap and idempotent.
+	try {
+		extern void ATRegistryFlushToDisk();
+		ATRegistryFlushToDisk();
+	} catch (...) {}
+
+	g_setupWiz.Reset();
+	state.showSetupWizard = false;
+}
+
+void ATUIRenderSetupWizard(ATSimulator &sim, ATUIState &state, SDL_Window *window) {
+	// Drain async results (firmware scan path, library folder pick) on
+	// the main thread before rendering — the SDL callbacks just stash
+	// the path under a mutex.
+	Wiz_PumpAsync();
 
 	ImGui::SetNextWindowSize(ImVec2(620, 480), ImGuiCond_Appearing);
 	ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
@@ -274,27 +465,14 @@ void ATUIRenderSetupWizard(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 	bool open = state.showSetupWizard;
 	if (!ImGui::Begin("First Time Setup", &open,
 		ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoCollapse)) {
-		if (!open) {
-			if (g_setupWiz.wentPastFirst) {
-				sim.LoadROMs();
-				sim.ColdReset();
-			}
-			ApplyPendingUIMode(window);
-			g_setupWiz.Reset();
-			state.showSetupWizard = false;
-		}
+		if (!open)
+			Wiz_Finish(sim, state, window);
 		ImGui::End();
 		return;
 	}
 
 	if (!open || ATUICheckEscClose()) {
-		if (g_setupWiz.wentPastFirst) {
-			sim.LoadROMs();
-			sim.ColdReset();
-		}
-		ApplyPendingUIMode(window);
-		g_setupWiz.Reset();
-		state.showSetupWizard = false;
+		Wiz_Finish(sim, state, window);
 		ImGui::End();
 		return;
 	}
@@ -305,20 +483,24 @@ void ATUIRenderSetupWizard(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 	{
 		ImGui::BeginChild("WizSteps", ImVec2(sidebarW, -40), ImGuiChildFlags_Borders);
 
-		static const struct { int pageMin; int pageMax; const char *label; bool gamingOnly; } kSteps[] = {
+		// `desktopOnly` skips the Screen Effects step in Gaming Mode,
+		// where the merged Appearance step's perf preset already covers
+		// it.  Game Library is now offered in both modes.
+		static const struct { int pageMin; int pageMax; const char *label; bool desktopOnly; } kSteps[] = {
 			{ 0, 0, "Welcome", false },
 			{ 1, 1, "Interface mode", false },
-			{ 2, 4, "Game Library", true },
+			{ 2, 4, "Game Library", false },
 			{ 5, 5, "Appearance", false },
-			{ 6, 6, "Screen Effects", false },
+			{ 6, 6, "Screen Effects", true },
 			{ 10, 19, "Setup firmware", false },
 			{ 20, 29, "Select system", false },
-			{ 30, 39, "Experience", false },
+			{ 30, 30, "Experience", false },
+			{ 35, 35, "Joystick", false },
 			{ 40, 49, "Finish", false },
 		};
 
 		for (auto &step : kSteps) {
-			if (step.gamingOnly && !IsGamingModeSelected())
+			if (step.desktopOnly && ATUIIsGamingMode())
 				continue;
 			bool active = (g_setupWiz.page >= step.pageMin && g_setupWiz.page <= step.pageMax);
 			if (active) {
@@ -371,16 +553,17 @@ void ATUIRenderSetupWizard(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 			ImGui::Spacing();
 			ImGui::Spacing();
 
-			int sel = g_setupWiz.pendingUIMode;
-			if (sel < 0)
-				sel = (int)ATUIGetMode();
+			// Live preview: clicking a radio applies the mode immediately
+			// so the wizard re-renders in the new style next frame.  The
+			// mode is only persisted on close (Wiz_Finish).
+			int sel = (int)ATUIGetMode();
 			if (ImGui::RadioButton("Desktop Mode", sel == (int)ATUIMode::Desktop))
-				g_setupWiz.pendingUIMode = (int)ATUIMode::Desktop;
+				Wiz_ApplyMode(ATUIMode::Desktop, window);
 			ImGui::TextDisabled("  Menu bar, keyboard shortcuts, mouse-driven");
 			ImGui::Spacing();
 
 			if (ImGui::RadioButton("Gaming Mode", sel == (int)ATUIMode::Gaming))
-				g_setupWiz.pendingUIMode = (int)ATUIMode::Gaming;
+				Wiz_ApplyMode(ATUIMode::Gaming, window);
 			ImGui::TextDisabled("  Large buttons, gamepad/touch navigation");
 
 			ImGui::Spacing();
@@ -392,13 +575,24 @@ void ATUIRenderSetupWizard(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 			break;
 		}
 
-		case 2: { // Game Library (Gaming Mode only)
-			ImGui::TextWrapped(
-				"Gaming Mode uses a Game Library as your home screen. Add folders "
-				"containing your Atari game files (.atr, .xex, .car, .cas, etc.) "
-				"to browse and play them.\n\n"
-				"You can also add more folders later from Settings > Game Library."
-			);
+		case 2: { // Game Library (available in both modes)
+			if (ATUIIsGamingMode()) {
+				ImGui::TextWrapped(
+					"Gaming Mode uses a Game Library as your home screen. Add folders "
+					"containing your Atari game files (.atr, .xex, .car, .cas, etc.) "
+					"to browse and play them.\n\n"
+					"You can also add more folders later from Settings > Game Library."
+				);
+			} else {
+				ImGui::TextWrapped(
+					"Add folders containing your Atari game files (.atr, .xex, .car, "
+					".cas, etc.) to populate the Game Library.\n\n"
+					"The Game Library is optional in Desktop Mode — you can also boot "
+					"individual files via File > Boot Image.... When populated, the "
+					"library is browsable from View > Game Library and shared with "
+					"Gaming Mode."
+				);
+			}
 			ImGui::Spacing();
 
 			GameBrowser_Init();
@@ -450,24 +644,8 @@ void ATUIRenderSetupWizard(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 			}
 
 			ImGui::Spacing();
-			if (ImGui::Button("Add Folder...")) {
-#ifdef __EMSCRIPTEN__
-				// Browsers can't offer a cross-platform folder picker
-				// that reaches into the real filesystem.  The game
-				// library on WASM always lives under the fixed
-				// uploads path, so just seed the pending-scan slot
-				// directly — calling LibFolderCallback would take
-				// the same scanMutex we already hold here.
-				fprintf(stderr, "[wasm] SetupWizard: Add Folder -> /home/web_user/games\n");
-				{
-					std::lock_guard<std::mutex> lock(g_setupWiz.scanMutex);
-					g_setupWiz.pendingLibFolderPath = "/home/web_user/games";
-				}
-#else
-				SDL_ShowOpenFolderDialog(LibFolderCallback, nullptr,
-					window, nullptr, false);
-#endif
-			}
+			if (ImGui::Button("Add Folder..."))
+				Wiz_TriggerLibFolderPicker(window);
 
 			ImGui::Spacing();
 			ImGui::Spacing();
@@ -483,6 +661,15 @@ void ATUIRenderSetupWizard(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 			);
 			ImGui::Spacing();
 
+			// Helper: settings.ini lives in user config; flush each
+			// edit to disk so a process kill (or Wiz_Finish path that
+			// only persists the mode, not options) doesn't lose the
+			// user's choice.  Matches the Gaming Mode pattern.
+			auto flushOptions = []() {
+				extern void ATRegistryFlushToDisk();
+				try { ATRegistryFlushToDisk(); } catch (...) {}
+			};
+
 			static const char *themeLabels[] = { "Use system setting", "Light", "Dark" };
 			int themeIdx = (int)g_ATOptions.mThemeMode;
 			if (ImGui::Combo("Theme", &themeIdx, themeLabels, 3)) {
@@ -492,6 +679,7 @@ void ATUIRenderSetupWizard(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 					g_ATOptions.mbDirty = true;
 					ATOptionsRunUpdateCallbacks(&prev);
 					ATOptionsSave();
+					flushOptions();
 					ATUIApplyTheme();
 				}
 			}
@@ -506,6 +694,7 @@ void ATUIRenderSetupWizard(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 					g_ATOptions.mbDirty = true;
 					ATOptionsRunUpdateCallbacks(&prev);
 					ATOptionsSave();
+					flushOptions();
 					ATUIApplyTheme();
 				}
 			}
@@ -582,11 +771,13 @@ void ATUIRenderSetupWizard(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 
 		case 10: { // Firmware
 			ImGui::TextWrapped(
-				"Altirra has internal replacements for all standard ROMs. However, "
-				"if you have original ROM images, you can set these up now for better "
-				"compatibility.\n\n"
-				"If you do not have ROM images or do not want to set them up now, just "
-				"click Next."
+				"Altirra ships with built-in replacements (\"AltirraOS\") "
+				"for every standard ROM, so the emulator works fine without "
+				"any original ROM image. If you do have original ROMs, "
+				"loading them improves compatibility with a small number of "
+				"timing-sensitive titles.\n\n"
+				"If you don't have ROM images or don't want to set them up now, "
+				"just click Next — the built-in firmware will be used."
 			);
 			ImGui::Spacing();
 
@@ -618,34 +809,23 @@ void ATUIRenderSetupWizard(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 							? ImVec4(0.3f, 1.0f, 0.3f, 1.0f)
 							: ImVec4(0.0f, 0.5f, 0.0f, 1.0f);
 						ImGui::PushStyleColor(ImGuiCol_Text, okColor);
-						ImGui::TextUnformatted("OK");
+						ImGui::TextUnformatted("Original ROM");
 						ImGui::PopStyleColor();
 					} else {
-						ImGui::TextDisabled("Not found");
+						// AltirraOS / built-in BASIC are bundled with the
+						// emulator and are used automatically when the
+						// real ROM isn't available.  Calling this "Not
+						// found" misleads users into thinking emulation
+						// won't work, so we explicitly label it.
+						ImGui::TextDisabled("Built-in (Altirra)");
 					}
 				}
 				ImGui::EndTable();
 			}
 
 			ImGui::Spacing();
-			if (ImGui::Button("Scan for firmware...")) {
-#ifdef __EMSCRIPTEN__
-				// Same story as Add Folder above: browsers have no
-				// reliable cross-platform OS folder picker, and
-				// anything the user uploads via the Files overlay
-				// already lands in this well-known path.  Seed the
-				// pending-scan slot directly — routing through
-				// FirmwareScanCallback would re-enter the scanMutex
-				// we already hold here.
-				fprintf(stderr, "[wasm] SetupWizard: Scan for Firmware -> /home/web_user/firmware\n");
-				{
-					std::lock_guard<std::mutex> lock(g_setupWiz.scanMutex);
-					g_setupWiz.pendingScanPath = "/home/web_user/firmware";
-				}
-#else
-				SDL_ShowOpenFolderDialog(FirmwareScanCallback, nullptr, window, nullptr, false);
-#endif
-			}
+			if (ImGui::Button("Scan for firmware..."))
+				Wiz_TriggerFirmwareScan(window);
 
 			if (!g_setupWiz.scanMessage.empty()) {
 				ImGui::SameLine();
@@ -664,8 +844,11 @@ void ATUIRenderSetupWizard(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 
 		case 20: { // Select system
 			ImGui::TextWrapped(
-				"Select the type of system to emulate. This can be changed later from "
-				"the System menu."
+				"Select the type of system to emulate. This can be changed later "
+				"from the System menu.\n\n"
+				"Both options work without original ROMs — Altirra ships with "
+				"its own built-in firmware (\"AltirraOS\") covering both XL/XE "
+				"and the 5200."
 			);
 			ImGui::Spacing();
 
@@ -675,10 +858,12 @@ void ATUIRenderSetupWizard(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 			if (ImGui::RadioButton("Computer (XL/XE)", isComputer) && !isComputer) {
 				uint32 profileId = ATGetDefaultProfileId(kATDefaultProfile_XL);
 				ATSettingsSwitchProfile(profileId);
+				g_setupWiz.needsHardwareReset = true;
 			}
 			if (ImGui::RadioButton("Atari 5200", is5200) && !is5200) {
 				uint32 profileId = ATGetDefaultProfileId(kATDefaultProfile_5200);
 				ATSettingsSwitchProfile(profileId);
+				g_setupWiz.needsHardwareReset = true;
 			}
 			break;
 		}
@@ -694,10 +879,14 @@ void ATUIRenderSetupWizard(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 			bool isNTSC = (sim.GetVideoStandard() == kATVideoStandard_NTSC
 				|| sim.GetVideoStandard() == kATVideoStandard_PAL60);
 
-			if (ImGui::RadioButton("NTSC (60 Hz)", isNTSC) && !isNTSC)
+			if (ImGui::RadioButton("NTSC (60 Hz)", isNTSC) && !isNTSC) {
 				ATSetVideoStandard(kATVideoStandard_NTSC);
-			if (ImGui::RadioButton("PAL (50 Hz)", !isNTSC) && isNTSC)
+				g_setupWiz.needsHardwareReset = true;
+			}
+			if (ImGui::RadioButton("PAL (50 Hz)", !isNTSC) && isNTSC) {
 				ATSetVideoStandard(kATVideoStandard_PAL);
+				g_setupWiz.needsHardwareReset = true;
+			}
 			break;
 		}
 
@@ -720,6 +909,7 @@ void ATUIRenderSetupWizard(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 				sim.SetDiskAccurateTimingEnabled(true);
 				ATUISetDriveSoundsEnabled(true);
 				ATUISetDisplayFilterMode(kATDisplayFilterMode_Bilinear);
+				g_setupWiz.needsHardwareReset = true;
 			}
 			if (ImGui::RadioButton("Convenient", !isAuthentic) && isAuthentic) {
 				ATUISetDriveSoundsEnabled(false);
@@ -729,12 +919,69 @@ void ATUIRenderSetupWizard(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 				sim.GetGTIA().SetArtifactingMode(ATArtifactMode::None);
 				ATUISetDisplayFilterMode(kATDisplayFilterMode_SharpBilinear);
 				ATUISetViewFilterSharpness(+1);
+				g_setupWiz.needsHardwareReset = true;
+			}
+			break;
+		}
+
+		case 35: { // Joystick (Port 1) — mirrors Input > Port 1
+			if (sim.GetHardwareMode() == kATHardwareMode_5200) {
+				ImGui::TextWrapped(
+					"Choose the input mapping for 5200 controller port 1. "
+					"The keyboard-to-5200-Controller map is preselected as "
+					"a sensible default.\n\n"
+					"You can change this any time from the Input > Port 1 "
+					"menu, and define your own mappings under Input > "
+					"Input Mappings."
+				);
+			} else {
+				ImGui::TextWrapped(
+					"Choose the input mapping for joystick port 1. "
+					"\"Arrow Keys -> Joystick (port 1)\" is preselected as a "
+					"sensible default — most Atari games use port 1 and the "
+					"keyboard arrow keys feel natural for movement.\n\n"
+					"You can change this any time from the Input > Port 1 "
+					"menu, and define your own mappings under Input > "
+					"Input Mappings."
+				);
+			}
+			ImGui::Spacing();
+
+			ATInputManager *pIM = sim.GetInputManager();
+			if (pIM) {
+				std::vector<WizPortMapEntry> entries;
+				Wiz_GatherPortMaps(*pIM, 0, entries);
+
+				// Auto-seed Arrow Keys the first time the user lands
+				// here in this wizard session.  joystickPageSeeded is
+				// cleared by Reset() so each new session reseeds.
+				if (!g_setupWiz.joystickPageSeeded) {
+					Wiz_SeedDefaultPort1Map(*pIM, entries);
+					g_setupWiz.joystickPageSeeded = true;
+				}
+
+				bool anyActive = false;
+				for (auto &e : entries) if (e.active) { anyActive = true; break; }
+
+				if (ImGui::RadioButton("None", !anyActive)) {
+					Wiz_ActivatePortMap(*pIM, entries, nullptr);
+				}
+
+				for (size_t i = 0; i < entries.size(); ++i) {
+					auto &e = entries[i];
+					ImGui::PushID((int)i);
+					if (ImGui::RadioButton(e.name.c_str(), e.active))
+						Wiz_ActivatePortMap(*pIM, entries, e.map);
+					ImGui::PopID();
+				}
+			} else {
+				ImGui::TextDisabled("Input manager unavailable.");
 			}
 			break;
 		}
 
 		case 40: // Finish (computer)
-			if (IsGamingModeSelected()) {
+			if (ATUIIsGamingMode()) {
 				ImGui::TextWrapped(
 					"Setup is now complete.\n\n"
 					"Click Finish to enter Gaming Mode. The Game Library will be your "
@@ -757,7 +1004,7 @@ void ATUIRenderSetupWizard(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 			break;
 
 		case 41: // Finish (5200)
-			if (IsGamingModeSelected()) {
+			if (ATUIIsGamingMode()) {
 				ImGui::TextWrapped(
 					"Setup is now complete.\n\n"
 					"Click Finish to enter Gaming Mode. The 5200 needs a cartridge to "
@@ -788,8 +1035,8 @@ void ATUIRenderSetupWizard(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 
 	// Bottom buttons
 	ImGui::Separator();
-	int prevPage = GetWizPrevPage(g_setupWiz.page);
-	int nextPage = GetWizNextPage(g_setupWiz.page);
+	int prevPage = Wiz_GetPrevPage(g_setupWiz.page);
+	int nextPage = Wiz_GetNextPage(g_setupWiz.page);
 	bool canPrev = (prevPage >= 0);
 	bool canNext = (nextPage >= 0);
 
@@ -807,25 +1054,17 @@ void ATUIRenderSetupWizard(ATSimulator &sim, ATUIState &state, SDL_Window *windo
 		}
 	} else {
 		if (ImGui::Button("Finish")) {
-			if (g_setupWiz.wentPastFirst) {
-				sim.LoadROMs();
-				sim.ColdReset();
-			}
-			ApplyPendingUIMode(window);
-			g_setupWiz.Reset();
-			state.showSetupWizard = false;
+			Wiz_Finish(sim, state, window);
+			ImGui::End();
+			return;
 		}
 	}
 
 	ImGui::SameLine();
 	if (ImGui::Button("Close")) {
-		if (g_setupWiz.wentPastFirst) {
-			sim.LoadROMs();
-			sim.ColdReset();
-		}
-		ApplyPendingUIMode(window);
-		g_setupWiz.Reset();
-		state.showSetupWizard = false;
+		Wiz_Finish(sim, state, window);
+		ImGui::End();
+		return;
 	}
 
 	ImGui::End();

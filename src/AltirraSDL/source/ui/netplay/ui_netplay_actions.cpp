@@ -128,13 +128,14 @@ ATNetplay::LobbyEndpoint EndpointFromUrl(const std::string& urlIn) {
 	return ep;
 }
 
+} // namespace anonymous (close so AllEnabledHttpLobbies has the
+  // public linkage matching its declaration in ui_netplay_actions.h)
+
 // Every enabled HTTP lobby from the user's lobby.ini.  Hosting fans
 // out Create / Heartbeat / Delete across all of them so a game shows
-// up on every lobby the user has configured.
-struct EnabledHttpLobby {
-	std::string                section;
-	ATNetplay::LobbyEndpoint   endpoint;
-};
+// up on every lobby the user has configured.  Public so the
+// deep-link join path in ui_netplay_deeplink.cpp can target the
+// first lobby for its single-shot GET /v1/session/<id> fetch.
 std::vector<EnabledHttpLobby> AllEnabledHttpLobbies() {
 	std::vector<EnabledHttpLobby> out;
 	for (const auto& e : GetConfiguredLobbies()) {
@@ -146,6 +147,8 @@ std::vector<EnabledHttpLobby> AllEnabledHttpLobbies() {
 	}
 	return out;
 }
+
+namespace {
 
 // Pick the first enabled HTTP lobby — used by paths that inherently
 // target one lobby (e.g. Browse's per-lobby List is already fanned
@@ -1316,7 +1319,13 @@ void StartHostingAction() {
 		existing->enabled = true;
 	} else {
 		if (st.hostedGames.size() >= State::kMaxHostedGames) {
-			st.session.lastError = "Too many hostedGames — remove one first.";
+			// Same wording the server-side 429 ("host limit reached")
+			// produces via FriendlyLobbyError, so users see a single
+			// message regardless of which side caught the cap.
+			st.session.lastError =
+				"You're already hosting the maximum number of "
+				"games — remove one of your hosted games and try "
+				"again.";
 			Navigate(Screen::Error);
 			return;
 		}

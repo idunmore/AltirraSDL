@@ -20,7 +20,8 @@ enum class ATMobileUIScreen {
 	FirstRunWizard,  // First-boot firmware setup
 	About,           // Full-screen About panel
 	DiskManager,     // Full-screen Disk Drive manager
-	GameBrowser      // Full-screen Game Library browser
+	GameBrowser,     // Full-screen Game Library browser
+	SetupWizard      // Full-screen First Time Setup wizard (gaming-mode renderer)
 };
 
 struct ATMobileUIState {

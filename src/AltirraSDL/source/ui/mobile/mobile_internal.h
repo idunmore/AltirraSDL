@@ -169,6 +169,8 @@ void RenderMobileAbout(ATSimulator &sim, ATUIState &uiState,
 	ATMobileUIState &mobileState, SDL_Window *window);
 void RenderFirstRunWizard(ATSimulator &sim, ATUIState &uiState,
 	ATMobileUIState &mobileState, SDL_Window *window);
+void RenderMobileSetupWizard(ATSimulator &sim, ATUIState &uiState,
+	ATMobileUIState &mobileState, SDL_Window *window);
 void RenderLoadGamePrompt(ATSimulator &sim, ATUIState &uiState,
 	ATMobileUIState &mobileState);
 

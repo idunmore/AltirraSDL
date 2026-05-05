@@ -420,7 +420,8 @@ void TestExpireSweeps() {
 	seed.maxPlayers   = 2; seed.protocolVer = 1;
 	seed.visibility   = kVisibilityPublic;
 	seed.createdAt    = IsoNow();
-	Session out = f.store.Create(seed);
+	Store::CreateError createErr = Store::CreateError::None;
+	Session out = f.store.Create(seed, createErr);
 	T_EXPECT(!out.id.empty(), "seeded session");
 
 	int n = f.store.ExpireOnce(NowMs() +
@@ -741,12 +742,187 @@ void TestWssRelayOnlyRoundtrip() {
 	T_EXPECT(sawFalse, "list contains wssRelayOnly:false");
 }
 
+// Per-host cap: a single hostHandle can have at most
+// kMaxHostedGamesPerHost concurrent sessions.  The (N+1)th request
+// returns 429 with body {"error":"host limit reached"}.  Each prior
+// session uses a different cartName so the dedup path doesn't kick
+// in (which would replace the existing entry instead of adding).
+void TestHostCap() {
+	++g_testsRun;
+	Fixture f;
+	auto c = f.client();
+	const char *carts[] = {"A","B","C","D","E","F"};
+	int created = 0, capped = 0;
+	for (int i = 0; i < (int)(sizeof(carts) / sizeof(carts[0])); ++i) {
+		auto r = c.Post(kPathSession,
+			MakeCreateBody(carts[i], "alice", "1.2.3.4:1"),
+			"application/json");
+		if (!r) T_FAIL("no response");
+		if (r->status == 201) ++created;
+		else if (r->status == 429 &&
+		         r->body.find("host limit reached") != std::string::npos)
+			++capped;
+		else {
+			std::fprintf(stderr, "unexpected: status=%d body=%s\n",
+				r->status, r->body.c_str());
+			T_FAIL("unexpected create status");
+		}
+	}
+	T_EXPECT_EQ_INT(created, kMaxHostedGamesPerHost,
+		"first N creates succeed");
+	T_EXPECT_EQ_INT(capped, 1, "(N+1)th create returns 429 host limit");
+}
+
+// Cap bucket key is normalised: trim + ASCII-lowercase.  "Alice",
+// "ALICE", "alice ", " alice" all collapse onto the same counter so
+// users can't slip the cap by re-typing their handle differently.
+void TestHostCapCaseInsensitive() {
+	++g_testsRun;
+	Fixture f;
+	auto c = f.client();
+	// 5 different handles spelling the same normalised name → 5 slots.
+	const char *handles[] = {"alice","Alice","ALICE","alice "," alice"};
+	int created = 0;
+	for (int i = 0; i < 5; ++i) {
+		char cart[8];
+		std::snprintf(cart, sizeof cart, "G%d", i);
+		auto r = c.Post(kPathSession,
+			MakeCreateBody(cart, handles[i], "1.2.3.4:1"),
+			"application/json");
+		if (!r) T_FAIL("no response");
+		if (r->status == 201) ++created;
+	}
+	T_EXPECT_EQ_INT(created, kMaxHostedGamesPerHost,
+		"5 different spellings fill the same bucket");
+	// 6th create with yet another spelling → host-limit 429.
+	auto r = c.Post(kPathSession,
+		MakeCreateBody("G6", "AlIcE", "1.2.3.4:1"),
+		"application/json");
+	T_EXPECT(r, "got response");
+	T_EXPECT_EQ_INT(r->status, 429, "case-fold spelling caps too");
+	T_EXPECT(r->body.find("host limit reached") != std::string::npos,
+		"error body is host-limit");
+}
+
+// Public projection /v1/public/sessions: returns an array, contains
+// only the curated fields, includes a server-built joinUrl that uses
+// the configured wasm base + ?s=<id>, and CORS-allows browser fetch.
+void TestPublicSessionsEndpoint() {
+	++g_testsRun;
+	Fixture f;
+	auto c = f.client();
+	auto r1 = c.Post(kPathSession,
+		MakeCreateBody("Archon", "alice", "1.2.3.4:1"),
+		"application/json");
+	T_EXPECT_EQ_INT(r1 ? r1->status : 0, 201, "create 201");
+	std::string id, token; int ttl = 0;
+	T_EXPECT(ReadCreateRespJson(r1->body, id, token, ttl),
+		"parse create");
+
+	auto r = c.Get(kPathPublicSessions);
+	T_EXPECT(r,                          "got response");
+	T_EXPECT_EQ_INT(r->status, 200,      "public sessions 200");
+	// CORS header present (set by the pre-routing handler for all GETs).
+	auto cors = r->get_header_value("Access-Control-Allow-Origin");
+	T_EXPECT(cors == "*",                "CORS Access-Control-Allow-Origin: *");
+
+	const std::string& body = r->body;
+	T_EXPECT(!body.empty() && body.front() == '[',  "is JSON array");
+	// Curated fields present.
+	T_EXPECT(body.find("\"cartName\":\"Archon\"") != std::string::npos,
+		"contains cartName");
+	T_EXPECT(body.find("\"hostHandle\":\"alice\"") != std::string::npos,
+		"contains hostHandle");
+	T_EXPECT(body.find("\"joinUrl\":") != std::string::npos,
+		"contains joinUrl");
+	// joinUrl points at the configured base + ?s=<id>.
+	std::string expected = "\"joinUrl\":\"" + f.cfg.publicWasmUrl
+		+ "?s=" + id + "\"";
+	T_EXPECT(body.find(expected) != std::string::npos,
+		"joinUrl uses configured wasm base + ?s=<id>");
+	// Internal protocol fields must NOT leak through.
+	T_EXPECT(body.find("\"token\":")        == std::string::npos,
+		"no token leak");
+	T_EXPECT(body.find("\"candidates\":")   == std::string::npos,
+		"no candidates leak");
+	T_EXPECT(body.find("\"wssRelayOnly\":") == std::string::npos,
+		"no wssRelayOnly leak");
+	T_EXPECT(body.find("\"kernelCRC32\":")  == std::string::npos,
+		"no kernelCRC32 leak");
+	T_EXPECT(body.find("\"sessionId\":")    == std::string::npos,
+		"no raw sessionId leak (joinUrl is the public handle)");
+}
+
+// Custom PUBLIC_WASM_URL is honoured: a self-hosted lobby can point
+// joinUrl at its own WASM build instead of the upstream default.
+void TestPublicSessionsCustomUrl() {
+	++g_testsRun;
+	// Custom Fixture that sets a different publicWasmUrl.
+	Config cfg = Fixture::MakeCfg();
+	cfg.publicWasmUrl = "https://example.org/altirra/";
+	Store store(cfg);
+	httplib::Server srv;
+	Install(srv, store);
+	srv.set_payload_max_length(kMaxRequestBodyBytes);
+	int port = srv.bind_to_any_port("127.0.0.1");
+	std::thread t([&] { srv.listen_after_bind(); });
+	for (int i = 0; i < 200; ++i) {
+		if (srv.is_running()) break;
+		std::this_thread::sleep_for(std::chrono::milliseconds(5));
+	}
+	httplib::Client c("127.0.0.1", port);
+	c.set_connection_timeout(2, 0);
+
+	auto r1 = c.Post(kPathSession,
+		MakeCreateBody("Joust", "alice", "1.2.3.4:1"),
+		"application/json");
+	T_EXPECT_EQ_INT(r1 ? r1->status : 0, 201, "create 201");
+	std::string id, token; int ttl = 0;
+	T_EXPECT(ReadCreateRespJson(r1->body, id, token, ttl),
+		"parse create");
+
+	auto r = c.Get(kPathPublicSessions);
+	srv.stop();
+	t.join();
+	T_EXPECT(r && r->status == 200, "public list 200");
+	std::string expected = "\"joinUrl\":\"https://example.org/altirra/?s="
+		+ id + "\"";
+	T_EXPECT(r->body.find(expected) != std::string::npos,
+		"custom wasm URL flows into joinUrl");
+}
+
+// Two different hosts get independent buckets.
+void TestHostCapPerHandle() {
+	++g_testsRun;
+	Fixture f;
+	auto c = f.client();
+	for (int i = 0; i < kMaxHostedGamesPerHost; ++i) {
+		char cart[8];
+		std::snprintf(cart, sizeof cart, "A%d", i);
+		auto r = c.Post(kPathSession,
+			MakeCreateBody(cart, "alice", "1.2.3.4:1"),
+			"application/json");
+		T_EXPECT_EQ_INT(r ? r->status : 0, 201, "alice fills");
+	}
+	// bob still has a clean bucket.
+	auto r = c.Post(kPathSession,
+		MakeCreateBody("Z", "bob", "1.2.3.4:1"),
+		"application/json");
+	T_EXPECT_EQ_INT(r ? r->status : 0, 201,
+		"different handle gets its own slots");
+}
+
 int RunAll() {
 	TestHealthz();
 	TestCreateAndList();
 	TestCreateDedupReplacesPriorSession();
 	TestListEchoesMachineFields();
 	TestCreateValidation();
+	TestHostCap();
+	TestHostCapCaseInsensitive();
+	TestHostCapPerHandle();
+	TestPublicSessionsEndpoint();
+	TestPublicSessionsCustomUrl();
 	TestHeartbeatBadToken();
 	TestHeartbeatOk();
 	TestDeleteBadToken();

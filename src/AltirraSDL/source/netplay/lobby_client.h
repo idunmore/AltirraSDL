@@ -161,6 +161,15 @@ public:
 	// Returns true on HTTP 200 (including empty list).  Populates `out`.
 	bool List(std::vector<LobbySession>& out);
 
+	// GET /v1/session/<id> — fetch a single session by lobby-issued id.
+	// Returns true on HTTP 200, populating `out`.  Returns false on 404
+	// ("no such session", LastStatus() == 404) and on any other error.
+	// Used by the deep-link join flow: the WASM/native client receives
+	// only an id (e.g. from `?s=<id>` in the URL), then calls this to
+	// fetch the rest of the session metadata before invoking the normal
+	// join action.
+	bool GetById(const std::string& sessionId, LobbySession& out);
+
 	// Returns true on HTTP 200.  `playerCount` must be <= session's
 	// maxPlayers; server silently ignores out-of-range values.  Empty
 	// `state` leaves the server-side state unchanged; otherwise pass

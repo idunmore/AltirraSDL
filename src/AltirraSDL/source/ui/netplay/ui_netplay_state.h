@@ -25,6 +25,7 @@
 #include <vector>
 
 #include "netplay/lobby_client.h"
+#include "netplay/lobby_protocol.h"   // ATLobby::kMaxHostedGamesPerHost
 #include "netplay/netplay_glue.h"     // ATNetplayGlue::PeerPath
 #include "netplay/platform_notify.h"
 
@@ -597,10 +598,13 @@ struct State {
 	// runs; runtime fields (state/port/tokens) reset each launch.
 	std::vector<HostedGame> hostedGames;
 
-	// Cap on the number of simultaneous hostedGames.  Lobby rate limit is
-	// 60 req/min; heartbeating N hostedGames every 30 s puts us at
-	// 2N req/min.  Cap at 5 → 10 req/min, well under budget.
-	static constexpr size_t kMaxHostedGames = 5;
+	// Cap on the number of simultaneous hostedGames.  Single source of
+	// truth lives in lobby_protocol.h (shared with the server, which
+	// enforces the same number on POST /v1/session); this alias keeps
+	// the existing State::kMaxHostedGames spelling for the dozen
+	// references already in the UI.
+	static constexpr size_t kMaxHostedGames =
+		(size_t)ATLobby::kMaxHostedGamesPerHost;
 
 	// The offer currently being edited / added (id string), so the
 	// HostSetup screen knows which one to mutate.  Empty when adding

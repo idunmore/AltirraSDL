@@ -4738,11 +4738,60 @@
     });
 
     // ───────────────────────────────────────────────────────────────────
+    //  Deep-link URL parameters → CLI flags
+    // ───────────────────────────────────────────────────────────────────
+    //  External sites embed the lobby's /v1/public/sessions list and
+    //  render a [PLAY] button as
+    //    <a href="https://ilmenit.github.io/AltirraSDL/?s=<sessionId>">
+    //  We pick `s` and `code` out of the URL here and pre-populate
+    //  Module.arguments with `--join-session <id>` (and optionally
+    //  `--join-code <code>`) so the emulator's argv parser sees them
+    //  exactly as if a native shell had launched it that way.
+    //
+    //  Validation is intentionally lax — the C++ deep-link state
+    //  machine does the lobby fetch and surfaces a friendly Error
+    //  screen on 404 / network failure / malformed id.  Here we just
+    //  cap length so a hostile URL can't blow out argv.
+    //
+    //  NOTE: this block must run BEFORE `window.Module = {...}` so
+    //  the resulting array is part of the Module config the
+    //  emscripten runtime reads at startup.  We assemble it into a
+    //  separate variable and reference it from the Module literal.
+    var __wasmCliArgs = [];
+    try {
+      var __params = new URLSearchParams(window.location.search || '');
+      var __s = (__params.get('s') || '').trim();
+      var __code = (__params.get('code') || '').trim();
+      // sessionId is a UUIDv4 (36 chars) but accept up to 128 in case
+      // a self-hosted lobby uses a different id format.  Reject anything
+      // that contains characters outside [A-Za-z0-9._-] so we don't pass
+      // a shell metacharacter into argv.
+      var __idOk = (s) => s.length > 0 && s.length <= 128
+        && /^[A-Za-z0-9._-]+$/.test(s);
+      var __codeOk = (s) => s.length > 0 && s.length <= 64
+        && /^[A-Za-z0-9._-]+$/.test(s);
+      if (__idOk(__s)) {
+        __wasmCliArgs.push('--join-session', __s);
+        jlog('deeplink: --join-session ' + __s);
+      } else if (__s) {
+        jlog('deeplink: ignored malformed ?s=', __s);
+      }
+      if (__codeOk(__code)) {
+        __wasmCliArgs.push('--join-code', __code);
+      } else if (__code) {
+        jlog('deeplink: ignored malformed ?code=');
+      }
+    } catch (e) {
+      jlog('deeplink: URL parse failed —', e && e.message ? e.message : e);
+    }
+
+    // ───────────────────────────────────────────────────────────────────
     //  Emscripten Module configuration
     // ───────────────────────────────────────────────────────────────────
     window.Module = {
       canvas: canvas,
       noInitialRun: false,
+      arguments: __wasmCliArgs,
       print:    (t) => appendLog('[stdout] ' + t),
       printErr: (t) => appendLog('[stderr] ' + t),
       setStatus: (t) => { statusEl.textContent = t || 'Running'; },

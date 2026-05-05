@@ -2158,7 +2158,12 @@ int main(int argc, char *argv[]) {
 				// On desktop, show the setup wizard for first-time
 				// configuration.  On Android, the mobile first-run
 				// flow handles this instead.
-				g_uiState.showSetupWizard = true;
+				//
+				// Wiz_Open also seeds the Gaming Mode currentScreen so
+				// that if the user has Gaming Mode set as the active UI
+				// mode, the wizard renders with the touch chrome.
+				extern void Wiz_Open(ATUIState &);
+				Wiz_Open(g_uiState);
 #endif
 			}
 		}

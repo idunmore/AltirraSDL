@@ -743,6 +743,10 @@ void ATMobileUI_Render(ATSimulator &sim, ATUIState &uiState,
 	case ATMobileUIScreen::GameBrowser:
 		RenderGameBrowser(sim, uiState, mobileState, window);
 		break;
+
+	case ATMobileUIScreen::SetupWizard:
+		RenderMobileSetupWizard(sim, uiState, mobileState, window);
+		break;
 	}
 
 	// Global overlays: variant picker can be opened from both the

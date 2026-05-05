@@ -1093,8 +1093,10 @@ static void RenderToolsMenu(ATSimulator &sim, ATUIState &state, SDL_Window *wind
 
 	ImGui::Separator();
 
-	if (ImGui::MenuItem("First Time Setup..."))
-		state.showSetupWizard = true;
+	if (ImGui::MenuItem("First Time Setup...")) {
+		extern void Wiz_Open(ATUIState &);
+		Wiz_Open(state);
+	}
 
 	ImGui::Separator();
 

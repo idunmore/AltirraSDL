@@ -289,6 +289,23 @@ void LobbyWorker::ThreadMain() {
 			case LobbyOp::Stats:
 				out.ok = client.Stats(out.stats);
 				break;
+			case LobbyOp::GetById: {
+				// Deep-link single-session fetch.  The session id was
+				// supplied via req.sessionId; result goes into the
+				// usual sessions vector so the response handler can
+				// reuse the List-style code path.
+				ATNetplay::LobbySession one;
+				out.ok = client.GetById(q.req.sessionId, one);
+				if (out.ok) {
+					out.sessions.clear();
+					out.sessions.push_back(std::move(one));
+				}
+				out.httpStatus = client.LastStatus();
+				if (!out.ok) {
+					out.error = client.LastError();
+				}
+				break;
+			}
 			case LobbyOp::PeerHint: {
 				// req.sessionId  = target host's lobby session id
 				// req.token      = joiner sessionNonce hex (32 chars)
@@ -689,6 +706,20 @@ void OnSuccess(emscripten_fetch_t* f) {
 				out.ok = ParseListResp(body, len, out.sessions);
 				if (!out.ok) out.error = "malformed list response";
 				break;
+			case LobbyOp::GetById: {
+				// Single-session response: parse one entry directly.
+				ATLobby::JsonCursor c{body, body + len};
+				c.skipWs();
+				ATNetplay::LobbySession one;
+				if (!ParseSession(c, one)) {
+					out.ok = false;
+					out.error = "malformed session response";
+				} else {
+					out.sessions.clear();
+					out.sessions.push_back(std::move(one));
+				}
+				break;
+			}
 			case LobbyOp::Create:
 				out.ok = ParseCreateResp(body, len, out.create);
 				if (!out.ok) out.error = "malformed create response";
@@ -793,6 +824,11 @@ bool LobbyWorker::Post(LobbyRequest req, const std::string& source) {
 			break;
 		case LobbyOp::Stats:
 			path = "/v1/stats";
+			methodStr = "GET";
+			break;
+		case LobbyOp::GetById:
+			path  = "/v1/session/";
+			path += req.sessionId;
 			methodStr = "GET";
 			break;
 		case LobbyOp::PeerHint: {

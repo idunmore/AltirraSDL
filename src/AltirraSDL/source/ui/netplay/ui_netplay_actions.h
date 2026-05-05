@@ -18,8 +18,10 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "ui_netplay_state.h"  // MachineConfig
+#include "netplay/lobby_client.h"  // ATNetplay::LobbyEndpoint
 
 class ATGameLibrary;
 
@@ -30,6 +32,22 @@ namespace ATNetplayUI {
 // on shutdown (the library's life is scoped to the app).
 ATGameLibrary& LibrarySingleton();
 
+
+// --- Lobby enumeration --------------------------------------------------
+
+// One enabled HTTP lobby from the user's lobby.ini (with the URL
+// resolved to a concrete endpoint).  Used by hosting fan-out and by
+// the deep-link join path which needs an HTTP lobby to issue
+// GET /v1/session/<id> against.
+struct EnabledHttpLobby {
+	std::string                section;
+	ATNetplay::LobbyEndpoint   endpoint;
+};
+
+// Returns every enabled HTTP lobby in user config order, with URL
+// already resolved to an endpoint.  Empty vector means the user has
+// no HTTP lobbies configured (only LAN-broadcast, or all disabled).
+std::vector<EnabledHttpLobby> AllEnabledHttpLobbies();
 
 // --- Per-offer host lifecycle -------------------------------------------
 

@@ -182,6 +182,7 @@ target_sources(AltirraSDL PRIVATE
     source/ui/mobile/mobile_settings.cpp
     source/ui/mobile/mobile_disk.cpp
     source/ui/mobile/mobile_about_wizard.cpp
+    source/ui/mobile/mobile_setup_wizard.cpp
     source/ui/mobile/mobile_visual_effects.cpp
     source/ui/mobile/mobile_suspend.cpp
     source/ui/mobile/mobile_dialogs.cpp
@@ -428,6 +429,7 @@ if(ALTIRRA_NETPLAY)
         source/ui/netplay/ui_netplay_desktop.cpp
         source/ui/netplay/ui_netplay_actions.cpp
         source/ui/netplay/ui_netplay_activity.cpp
+        source/ui/netplay/ui_netplay_deeplink.cpp
         source/ui/netplay/ui_netplay.cpp
 
         # Emote system (icon picker, overlay, netplay send/receive)
