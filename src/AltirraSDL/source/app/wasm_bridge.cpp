@@ -922,15 +922,42 @@ void ATWasmFirstRunBootstrap() {
 	g_firstRunState.store(1);
 
 	struct stat st;
-	if (stat(kFirstRunMarkerPath, &st) == 0) {
-		fprintf(stderr, "[wasm] FirstRun: marker present, skipping\n");
+	const bool markerPresent = (stat(kFirstRunMarkerPath, &st) == 0);
+	const bool fwInstalled   = DirHasAnyFile(kFirstRunFirmwareDir);
+
+	// Marker present + firmware actually installed = previous run
+	// extracted ROMs successfully (or user has manually-uploaded ROMs).
+	// Either way, nothing to do; report ready.
+	if (markerPresent && fwInstalled) {
+		fprintf(stderr, "[wasm] FirstRun: marker + firmware present, skipping\n");
 		g_firstRunState.store(8);
 		return;
 	}
-	if (DirHasAnyFile(kFirstRunFirmwareDir)) {
+	// Firmware files but no marker = manually-installed ROMs from a
+	// previous build of the page that didn't write the marker.  Backfill
+	// the marker so the wizard never asks again, and we're ready.
+	if (fwInstalled) {
 		fprintf(stderr, "[wasm] FirstRun: firmware dir non-empty, skipping\n");
 		WriteFirstRunMarker();
 		g_firstRunState.store(8);
+		return;
+	}
+	// Marker present but firmware dir is empty = user dismissed the
+	// JS-side wizard with Skip, or a bootstrap ran out of mirrors and
+	// wrote the marker.  Either way the emulator has no kernel ROM and
+	// any caller that gates on "ready" (the deep-link join, in
+	// particular) needs to see this as a *failure*, not state 8 ("ready,
+	// nothing to do").  Re-arm for a fresh fetch attempt: clear the
+	// marker so a subsequent ATWasmResetFirstRun + bootstrap actually
+	// runs the mirror walk again, and report state 7 ("all mirrors
+	// failed") so the deep-link UI shows the Retry button.
+	if (markerPresent && !fwInstalled) {
+		fprintf(stderr, "[wasm] FirstRun: marker present but no firmware "
+			"files — likely a previous Skip; treating as failed so "
+			"caller can offer Retry\n");
+		unlink(kFirstRunMarkerPath);
+		_altirra_wasm_sync_fs_out();
+		g_firstRunState.store(7);
 		return;
 	}
 

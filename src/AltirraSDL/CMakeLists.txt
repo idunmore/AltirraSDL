@@ -684,6 +684,38 @@ add_custom_command(
 
 target_sources(AltirraSDL PRIVATE ${EMOTES_GEN_C})
 
+# ---------------------------------------------------------------------------
+# Help content (Altirra .chm XML sources -> embedded binary blob)
+# ---------------------------------------------------------------------------
+# The Windows build ships an HTML Help .chm built from src/ATHelpFile/source.
+# For SDL3, bake the same XML into a single gzip-compressed binary blob so
+# the help system works with no runtime file lookup on any platform.
+set(HELP_SRC_DIR     ${CMAKE_SOURCE_DIR}/src/ATHelpFile/source)
+set(HELP_GEN_DIR     ${CMAKE_CURRENT_BINARY_DIR}/generated)
+set(HELP_GEN_H       ${HELP_GEN_DIR}/help_data.h)
+set(HELP_GEN_C       ${HELP_GEN_DIR}/help_data.cpp)
+set(HELP_BAKE_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/tools/bake_help.py)
+
+file(GLOB HELP_XML_INPUTS CONFIGURE_DEPENDS ${HELP_SRC_DIR}/*.xml)
+file(GLOB HELP_PIC_INPUTS CONFIGURE_DEPENDS
+    ${HELP_SRC_DIR}/pics/*.png ${HELP_SRC_DIR}/pics/*.jpg)
+
+add_custom_command(
+    OUTPUT ${HELP_GEN_H} ${HELP_GEN_C}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${HELP_GEN_DIR}
+    COMMAND ${Python3_EXECUTABLE} ${HELP_BAKE_SCRIPT}
+            ${HELP_GEN_DIR}
+            ${HELP_SRC_DIR}
+    DEPENDS ${HELP_BAKE_SCRIPT} ${HELP_XML_INPUTS} ${HELP_PIC_INPUTS}
+    COMMENT "Baking ATHelpFile XML + pics -> C++"
+    VERBATIM
+)
+
+target_sources(AltirraSDL PRIVATE ${HELP_GEN_C}
+    source/ui/dialogs/ui_help_contents.cpp
+    source/ui/dialogs/ui_help_render.cpp
+)
+
 # ===========================================================================
 # Build info header — stamps version, build date/time, and git commit into
 # a generated header.  Runs at BUILD time (not configure time) so the

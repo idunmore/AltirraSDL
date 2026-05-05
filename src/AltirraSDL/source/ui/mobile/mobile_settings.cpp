@@ -668,22 +668,14 @@ void RenderSettings(ATSimulator &sim, ATUIState &uiState,
 		if (s_settingsPage == ATMobileSettingsPage::Display) {
 		ATTouchSection("Visual Effects");
 
-		// Warn the user up front if the current display backend can't
-		// actually render GPU-based effects.  Scanlines still work in
-		// software so they're never greyed-out.
-		{
-			IDisplayBackend *backend = ATUIGetDisplayBackend();
-			bool hwSupport = backend && backend->SupportsScreenFX();
-			if (!hwSupport) {
-				ATTouchMutedText(
-					"Bloom and CRT distortion need the OpenGL display "
-					"backend.  The SDL_Renderer fallback (currently "
-					"active on this device) will accept the toggles "
-					"but silently ignore those two — scanlines still "
-					"work either way.");
-				ImGui::Spacing();
-			}
-		}
+		// Backends without GPU shader effects (WASM's SDL_Renderer,
+		// the desktop SDL_Renderer fallback) can't render bloom,
+		// distortion, aperture grille, or vignette — those toggles
+		// are hidden entirely so the user can't pick something the
+		// pipeline will silently drop.  Scanlines stay because they
+		// run in the CPU artifacting path on every backend.
+		IDisplayBackend *fxBackend = ATUIGetDisplayBackend();
+		bool hwScreenFX = fxBackend && fxBackend->SupportsScreenFX();
 
 		// Manually toggling any visual effect moves the performance
 		// preset to Custom so the user can see they've left the
@@ -712,28 +704,30 @@ void RenderSettings(ATSimulator &sim, ATUIState &uiState,
 			try { ATMobileUI_ApplyVisualEffects(mobileState); } catch (...) {}
 		}
 
-		if (ATTouchToggle("Bloom", &mobileState.fxBloom)) {
-			markCustom();
-			SaveMobileConfig(mobileState);
-			try { ATMobileUI_ApplyVisualEffects(mobileState); } catch (...) {}
-		}
+		if (hwScreenFX) {
+			if (ATTouchToggle("Bloom", &mobileState.fxBloom)) {
+				markCustom();
+				SaveMobileConfig(mobileState);
+				try { ATMobileUI_ApplyVisualEffects(mobileState); } catch (...) {}
+			}
 
-		if (ATTouchToggle("CRT Distortion", &mobileState.fxDistortion)) {
-			markCustom();
-			SaveMobileConfig(mobileState);
-			try { ATMobileUI_ApplyVisualEffects(mobileState); } catch (...) {}
-		}
+			if (ATTouchToggle("CRT Distortion", &mobileState.fxDistortion)) {
+				markCustom();
+				SaveMobileConfig(mobileState);
+				try { ATMobileUI_ApplyVisualEffects(mobileState); } catch (...) {}
+			}
 
-		if (ATTouchToggle("Aperture Grille", &mobileState.fxApertureGrille)) {
-			markCustom();
-			SaveMobileConfig(mobileState);
-			try { ATMobileUI_ApplyVisualEffects(mobileState); } catch (...) {}
-		}
+			if (ATTouchToggle("Aperture Grille", &mobileState.fxApertureGrille)) {
+				markCustom();
+				SaveMobileConfig(mobileState);
+				try { ATMobileUI_ApplyVisualEffects(mobileState); } catch (...) {}
+			}
 
-		if (ATTouchToggle("Vignette", &mobileState.fxVignette)) {
-			markCustom();
-			SaveMobileConfig(mobileState);
-			try { ATMobileUI_ApplyVisualEffects(mobileState); } catch (...) {}
+			if (ATTouchToggle("Vignette", &mobileState.fxVignette)) {
+				markCustom();
+				SaveMobileConfig(mobileState);
+				try { ATMobileUI_ApplyVisualEffects(mobileState); } catch (...) {}
+			}
 		}
 
 		ATTouchSection("Interface");
@@ -826,9 +820,10 @@ void RenderSettings(ATSimulator &sim, ATUIState &uiState,
 		// --- Sub-page: Audio ---
 		// Simplified mirror of Desktop's Audio category page
 		// (ui_system_pages_outputs.cpp RenderAudioCategory).  Only the
-		// three most-used toggles are exposed here; advanced POKEY
-		// channel enables, non-linear mixing, audio monitor/scope and
-		// latency live in the desktop Configure System dialog.
+		// most-used toggles plus output latency are exposed here;
+		// advanced POKEY channel enables, non-linear mixing and the
+		// audio monitor/scope live in the desktop Configure System
+		// dialog.
 		if (s_settingsPage == ATMobileSettingsPage::Audio) {
 			ATTouchSection("Audio");
 
@@ -884,6 +879,27 @@ void RenderSettings(ATSimulator &sim, ATUIState &uiState,
 			ATTouchMutedText(
 				"Simulate the mechanical clicks and head-stepping of a "
 				"real disk drive.  Default: off.");
+
+			// Output latency — same setting as Desktop's Audio Options
+			// dialog (ui_recording.cpp:571).  Backed by
+			// IATAudioOutput::SetLatency, persisted under
+			// "Audio: Latency" in kATSettingsCategory_Sound, so the
+			// value round-trips with the Windows / Desktop UI.  Ticks
+			// 1..50 → 10..500 ms in 10 ms steps; "%d0 ms" format
+			// renders the tick followed by literal "0 ms".
+			if (IATAudioOutput *audioOut = sim.GetAudioOutput()) {
+				int latency = audioOut->GetLatency();
+				int tick = (latency + 5) / 10;
+				tick = std::clamp(tick, 1, 50);
+				if (ATTouchSlider("Latency", &tick, 1, 50, "%d0 ms")) {
+					audioOut->SetLatency(tick * 10);
+					ATPersistMobileEdit(kATSettingsCategory_Sound);
+				}
+			}
+			ATTouchMutedText(
+				"Audio buffer length.  Lower values reduce delay between "
+				"emulator events and sound but may cause crackling on "
+				"slower devices.  Default: 30 ms.");
 		} // end Audio page
 
 		// --- Sub-page: Performance (bundled preset) ---

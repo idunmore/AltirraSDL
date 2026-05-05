@@ -201,11 +201,15 @@ void ATUIRenderViewMenu(ATSimulator &sim, ATUIState &state, SDL_Window *window, 
 		state.showAdjustColors = true;
 
 	// Screen Effects submenu — combines built-in effects (Basic) and
-	// librashader presets into a unified mode selector.
-	if (ImGui::BeginMenu("Screen Effects")) {
-		IDisplayBackend *be = ATUIGetDisplayBackend();
-		bool shaderAvail = be && be->SupportsExternalShaders();
-		bool hasPreset = be && be->HasShaderPreset();
+	// librashader presets into a unified mode selector.  Hidden on
+	// backends without GPU shader effects (WASM's SDL_Renderer, the
+	// SDL_Renderer fallback when GL context creation fails on desktop):
+	// none of the entries do anything visible there.
+	IDisplayBackend *sfxBE = ATUIGetDisplayBackend();
+	if (sfxBE && sfxBE->SupportsScreenFX() && ImGui::BeginMenu("Screen Effects")) {
+		IDisplayBackend *be = sfxBE;
+		bool shaderAvail = be->SupportsExternalShaders();
+		bool hasPreset = be->HasShaderPreset();
 
 		// Sync mode from actual backend state
 		if (hasPreset)

@@ -1181,6 +1181,7 @@ void ATUIShutdown() {
 	ATUIVirtualKeyboard_Shutdown();
 	ATUIShutdownPaletteSolver();
 	ATUIStopRecording();
+	ATUIHelpShutdown();
 #ifndef ALTIRRA_WASM
 	if (s_usingGLBackend) {
 		ImGui_ImplOpenGL3_Shutdown();
@@ -1621,6 +1622,8 @@ void ATUIRenderFrame(ATSimulator &sim, VDVideoDisplaySDL3 &display,
 	if (state.showCommandLineHelp)   ATUIRenderCommandLineHelpDialog(state);
 	if (state.showChangeLog)         ATUIRenderChangeLogDialog(state);
 	if (state.showCompatWarning)     ATUIRenderCompatWarning(sim, state);
+	if (state.showHelpContents && !ATUIIsGamingMode())
+		ATUIRenderHelpContents(state);
 	if (state.showExitConfirm)       ATUIRenderExitConfirm(sim, state);
 	if (state.showDiskExplorer)      ATUIRenderDiskExplorer(sim, state, window);
 	// Setup wizard: in Gaming Mode the wizard is rendered through

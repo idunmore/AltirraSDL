@@ -106,7 +106,14 @@ bool     g_firmwareKicked = false;   // ATWasmFirstRunBootstrap call gate
 // recognise its own work and ignore other ops that happen to share
 // the worker queue.  The high bit avoids collision with the offer-
 // hash tags that ReconcileHostedGames uses for per-game Create.
+//
+// Reset to 0 on Cancel so a late lobby response (cancelled mid-fetch
+// but the request was already on the wire) does NOT match — it would
+// otherwise either re-fire StartJoiningAction (popping the user back
+// into the flow they cancelled) or route them to the Error screen
+// after they navigated away.
 constexpr uint32_t kDeepLinkTagBase = 0x5DEA1ED0u;
+constexpr uint32_t kDeepLinkTagNone = 0u;
 
 // Read the same registry key the Gaming Mode setup wizard uses to
 // signal "user has been through first-run".  We don't link against
@@ -297,8 +304,17 @@ void DriveDeepLinkJoin() {
 
 bool OnDeepLinkLobbyResult(const LobbyResult& r) {
 	if (r.op != LobbyOp::GetById)   return false;
+	// Match against our latest tag — Cancel resets g_fetchTag to 0 so
+	// a late response from a cancelled request fails this check and
+	// drops silently (no StartJoiningAction re-fire, no error screen
+	// after the user already navigated away).
+	if (g_fetchTag == kDeepLinkTagNone) return false;
 	if (r.tag != g_fetchTag)        return false;
 
+	// Disarm the tag immediately so a (defensive) duplicate response
+	// from the worker cannot re-enter this handler.  The worker
+	// shouldn't deliver duplicates, but it's cheap to be defensive.
+	g_fetchTag = kDeepLinkTagNone;
 	g_phase = Phase::Idle;  // clear in-flight; next branch sets terminal
 
 	State& st = GetState();
@@ -374,18 +390,25 @@ bool OnDeepLinkLobbyResult(const LobbyResult& r) {
 }
 
 DeepLinkUiState GetDeepLinkUiState() {
-	{
-		std::lock_guard<std::mutex> lk(g_deepLinkMu);
-		if (g_pendingSessionId.empty() && g_phase != Phase::Done)
-			return DeepLinkUiState::NotPending;
-	}
+	// Phase is touched only on the main thread; no mutex needed for
+	// the read.  The pending-session string is mutated from the URL
+	// bridge on the main thread too (CLI parser runs before the loop),
+	// so reading it without the mutex here is safe in practice — but
+	// we still take it briefly because SetPendingDeepLinkSessionId can
+	// fire from a future altirra:// handler thread.
 	switch (g_phase) {
 		case Phase::Idle:                return DeepLinkUiState::NotPending;
 		case Phase::WaitingForNickname:  return DeepLinkUiState::NeedsNickname;
 		case Phase::WaitingForFirmware:  return DeepLinkUiState::DownloadingFw;
 		case Phase::FirmwareFailed:      return DeepLinkUiState::FirmwareFailed;
 		case Phase::FetchInFlight:       return DeepLinkUiState::Looking;
-		case Phase::Done:                return DeepLinkUiState::Joining;
+		// Done means StartJoiningAction has already navigated us off
+		// DeepLinkPrep onto JoinConfirm/Waiting.  If the user backs
+		// onto DeepLinkPrep via the back stack, we want it to
+		// auto-close (NotPending → renderer calls Navigate(Closed))
+		// rather than show a stale "Joining…" indicator that the
+		// Cancel button can no longer rewind.
+		case Phase::Done:                return DeepLinkUiState::NotPending;
 	}
 	return DeepLinkUiState::NotPending;
 }
@@ -433,6 +456,10 @@ void CancelDeepLink() {
 	ClearPendingDeepLink();
 	g_phase = Phase::Done;
 	g_firmwareKicked = false;
+	// Disarm the in-flight tag — see kDeepLinkTagNone for why.  The
+	// late lobby response (if it arrives) drops in
+	// OnDeepLinkLobbyResult's first guard.
+	g_fetchTag = kDeepLinkTagNone;
 	State& st = GetState();
 	if (st.screen == Screen::DeepLinkPrep)
 		Navigate(Screen::Closed);

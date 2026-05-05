@@ -167,6 +167,19 @@ static void LibFolderCallback(void *, const char * const *filelist, int) {
 	g_setupWiz.pendingLibFolderPath = filelist[0];
 }
 
+// Page 6 (Screen Effects) needs the GPU FX pipeline to do anything
+// useful — the radio buttons toggle bloom/distortion/mask/vignette
+// which are all SupportsScreenFX()-gated.  When the active display
+// backend can't render them (WASM's SDL_Renderer, or the desktop
+// SDL_Renderer fallback after a failed GL context creation), the
+// page becomes a no-op, so we skip it the same way Gaming Mode does.
+static bool Wiz_SkipScreenFXPage() {
+	if (ATUIIsGamingMode())
+		return true;
+	IDisplayBackend *be = ATUIGetDisplayBackend();
+	return !be || !be->SupportsScreenFX();
+}
+
 int Wiz_GetPrevPage(int page) {
 	switch (page) {
 		case 0:  return -1;
@@ -175,9 +188,10 @@ int Wiz_GetPrevPage(int page) {
 		case 5:  return 2;
 		case 6:  return 5;
 		// Gaming Mode merges Screen Effects (page 6) into the Appearance
-		// page (5) via the performance preset, so back from Firmware
-		// jumps over page 6 directly to 5.
-		case 10: return ATUIIsGamingMode() ? 5 : 6;
+		// page (5) via the performance preset, and backends without GPU
+		// FX skip the page entirely, so back from Firmware jumps over
+		// page 6 directly to 5 in both cases.
+		case 10: return Wiz_SkipScreenFXPage() ? 5 : 6;
 		case 11: return 10;
 		case 20: return 11;
 		case 21: return 20;
@@ -195,8 +209,9 @@ int Wiz_GetNextPage(int page) {
 		case 1:  return 2;
 		case 2:  return 5;
 		// Gaming Mode skips page 6 (Screen Effects) — the perf preset
-		// in the merged Appearance page covers it.
-		case 5:  return ATUIIsGamingMode() ? 10 : 6;
+		// in the merged Appearance page covers it.  Backends without
+		// GPU FX (WASM, GL fallback) skip it too.
+		case 5:  return Wiz_SkipScreenFXPage() ? 10 : 6;
 		case 6:  return 10;
 		case 10: return 11;
 		case 11: return 20;

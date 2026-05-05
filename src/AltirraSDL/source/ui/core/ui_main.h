@@ -37,6 +37,7 @@ struct ATUIState {
 	bool showCommandLineHelp = false;
 	bool showChangeLog = false;
 	bool showCompatWarning = false;
+	bool showHelpContents = false;
 
 	// Tools menu dialogs
 	bool showDiskExplorer = false;

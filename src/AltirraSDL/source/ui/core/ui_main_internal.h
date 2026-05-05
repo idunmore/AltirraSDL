@@ -15,6 +15,11 @@ void ATUIRenderCommandLineHelpDialog(ATUIState &state);
 void ATUIRenderChangeLogDialog(ATUIState &state);
 void ATUIRenderAboutDialog(ATUIState &state);
 
+// Help → Contents (defined in ui/dialogs/ui_help_contents.cpp).
+void ATUIRenderHelpContents(ATUIState &state);
+void ATUIShowHelpTopic(const char *page, const char *anchor);
+void ATUIHelpShutdown();
+
 // -------------------------------------------------------------------------
 // Phase 3g: Compatibility warning state — definition lives in
 // ui_main_compat.cpp; ui_main.cpp's deferred-action queue and frame

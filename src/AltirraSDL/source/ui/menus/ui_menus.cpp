@@ -1157,7 +1157,8 @@ static void RenderWindowMenu(SDL_Window *window) {
 // =========================================================================
 
 static void RenderHelpMenu(ATUIState &state) {
-	ImGui::MenuItem("Contents", nullptr, false, false);  // placeholder — needs help system
+	if (ImGui::MenuItem("Contents"))
+		state.showHelpContents = true;
 
 	if (ImGui::MenuItem("About"))
 		state.showAboutDialog = true;

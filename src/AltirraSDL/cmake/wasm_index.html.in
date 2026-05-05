@@ -237,6 +237,14 @@
       gap: 6px;
       flex: 1 1 auto;
       padding-left: 16px;
+      /* The toolbar carries seven controls (Upload, From URL, New
+         Folder, Select, Search, Wipe, Help).  At ~960px desktop they
+         all fit on a single row, but the dialog clamps to 90vw so
+         tablets and phones drop below that.  Allow wrap so the search
+         field and Help button drop to a second row instead of pushing
+         the close button off-screen. */
+      flex-wrap: wrap;
+      row-gap: 4px;
     }
     .fm-actions button {
       background: #2d2d2d;
@@ -572,8 +580,10 @@
       cursor: not-allowed;
     }
 
-    /* Wipe / Move / Firmware dialogs (centred popups over the FM overlay) */
-    #wipe-backdrop, #move-backdrop, #fw-backdrop {
+    /* Wipe / Move / Firmware / URL / Help dialogs (centred popups over
+       the FM overlay) */
+    #wipe-backdrop, #move-backdrop, #fw-backdrop,
+    #url-backdrop,  #help-backdrop {
       position: fixed;
       inset: 0;
       background: rgba(0,0,0,0.65);
@@ -582,8 +592,9 @@
       justify-content: center;
       z-index: 200;
     }
-    #wipe-backdrop.open, #move-backdrop.open, #fw-backdrop.open { display: flex; }
-    #wipe-box, #move-box, #fw-box {
+    #wipe-backdrop.open, #move-backdrop.open, #fw-backdrop.open,
+    #url-backdrop.open,  #help-backdrop.open { display: flex; }
+    #wipe-box, #move-box, #fw-box, #url-box, #help-box {
       width: min(440px, 90vw);
       background: #1c1c1c;
       border: 1px solid #5a3a3a;
@@ -593,6 +604,15 @@
       color: #e0e0e0;
     }
     #move-box { border-color: #3a4a5a; }
+    #url-box  { border-color: #3a4a5a; width: min(520px, 92vw); }
+    #help-box {
+      border-color: #3a4a5a;
+      width: min(680px, 94vw);
+      max-height: 88vh;
+      display: flex;
+      flex-direction: column;
+      padding: 0;
+    }
     #fw-box {
       width: min(560px, 92vw);
       border-color: #4872ad;
@@ -695,13 +715,14 @@
       text-transform: uppercase;
       letter-spacing: 0.06em;
     }
-    #wipe-box h2, #move-box h2, #fw-box h2 {
+    #wipe-box h2, #move-box h2, #fw-box h2,
+    #url-box h2,  #help-box h2 {
       font-size: 1rem;
       color: #f3b6b6;
       margin-bottom: 8px;
     }
-    #move-box h2, #fw-box h2 { color: #7db2ff; }
-    #wipe-box p, #move-box p, #fw-box p {
+    #move-box h2, #fw-box h2, #url-box h2, #help-box h2 { color: #7db2ff; }
+    #wipe-box p, #move-box p, #fw-box p, #url-box p, #help-box p {
       font-size: 0.85rem;
       color: #bbb;
       margin-bottom: 14px;
@@ -718,7 +739,7 @@
       font-family: "SF Mono", Menlo, monospace;
       font-weight: 700;
     }
-    #wipe-input, #move-input {
+    #wipe-input, #move-input, #url-input, #url-name {
       display: block;
       width: 100%;
       margin-top: 6px;
@@ -730,7 +751,8 @@
       border-radius: 3px;
       font-family: "SF Mono", Menlo, monospace;
     }
-    #wipe-input:focus, #move-input:focus { outline: none; border-color: #5a7aad; }
+    #wipe-input:focus, #move-input:focus,
+    #url-input:focus, #url-name:focus { outline: none; border-color: #5a7aad; }
     .wipe-buttons {
       display: flex;
       justify-content: flex-end;
@@ -807,6 +829,232 @@
       margin-top: 2px;
     }
 
+    /* ── From-URL dialog ─────────────────────────────────────────────
+       Two stacked text inputs (URL + optional rename), a target-folder
+       row, and a single download button.  Progress bar replaces the
+       form area while a fetch is in-flight; an error/help block
+       replaces it on failure (the most common case is CORS, which
+       deserves a dedicated explanation rather than a generic toast). */
+    .url-row {
+      display: block;
+      font-size: 0.78rem;
+      color: #bbb;
+      margin: 0 0 8px;
+    }
+    .url-row .lbl {
+      display: block;
+      font-size: 0.72rem;
+      color: #8aa;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 2px;
+    }
+    .url-row .hint {
+      display: block;
+      font-size: 0.7rem;
+      color: #666;
+      margin-top: 2px;
+    }
+    .url-target {
+      font-size: 0.78rem;
+      color: #bbb;
+      margin: 2px 0 14px;
+    }
+    .url-target b { color: #7db2ff; font-weight: 600; }
+    #url-progress { margin: 4px 0 14px; }
+    #url-progress[hidden] { display: none; }
+    #url-progress-bar {
+      width: 100%;
+      height: 8px;
+      background: #2a2a2a;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    #url-progress-fill {
+      width: 0%;
+      height: 100%;
+      background: linear-gradient(90deg, #4872ad, #7db2ff);
+      transition: width 0.15s linear;
+    }
+    #url-progress-fill.indet {
+      width: 30%;
+      animation: fw-progress-pulse 1.4s ease-in-out infinite;
+    }
+    #url-progress-msg {
+      margin-top: 6px;
+      font-size: 0.78rem;
+      color: #8aa;
+      text-align: center;
+      font-variant-numeric: tabular-nums;
+    }
+    #url-error {
+      margin: 4px 0 14px;
+      padding: 10px 12px;
+      background: #2a1d1d;
+      border: 1px solid #5a3030;
+      border-radius: 4px;
+      font-size: 0.8rem;
+      color: #f3c6c6;
+      line-height: 1.45;
+    }
+    #url-error[hidden] { display: none; }
+    #url-error b { color: #f3b6b6; }
+    #url-error code {
+      background: #1a1010;
+      padding: 1px 5px;
+      border-radius: 2px;
+      font-family: "SF Mono", Menlo, monospace;
+      font-size: 0.75rem;
+      color: #ffd0a0;
+    }
+
+    /* ── Help dialog ──────────────────────────────────────────────────
+       A single scrollable column of explanatory sections.  Each section
+       leads with a short heading and a paragraph (or list) of plain
+       English.  This is the canonical reference for everything Files
+       can do, so it's intentionally long — but the dialog scrolls so
+       only the screen real estate the user already gave us is used. */
+    .help-header {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 14px 22px 10px;
+      border-bottom: 1px solid #2a2a2a;
+      background: #1f1f1f;
+      border-radius: 6px 6px 0 0;
+    }
+    .help-header h2 { flex: 1 1 auto; margin: 0; }
+    .help-header .help-close {
+      background: transparent;
+      border: none;
+      color: #888;
+      font-size: 1.2rem;
+      cursor: pointer;
+      padding: 2px 8px;
+    }
+    .help-header .help-close:hover { color: #fff; }
+    .help-body {
+      flex: 1 1 auto;
+      overflow-y: auto;
+      padding: 14px 22px 18px;
+    }
+    .help-body h3 {
+      font-size: 0.86rem;
+      color: #7db2ff;
+      margin: 16px 0 6px;
+      letter-spacing: 0.02em;
+    }
+    .help-body h3:first-child { margin-top: 0; }
+    .help-body p {
+      font-size: 0.83rem;
+      line-height: 1.5;
+      color: #cbd2d9;
+      margin: 0 0 8px;
+    }
+    .help-body ul {
+      margin: 4px 0 10px 22px;
+      padding: 0;
+      font-size: 0.82rem;
+      color: #cbd2d9;
+      line-height: 1.55;
+    }
+    .help-body li { margin-bottom: 3px; }
+    .help-body code, .help-body kbd {
+      background: #11181f;
+      padding: 1px 6px;
+      border-radius: 3px;
+      font-family: "SF Mono", Menlo, monospace;
+      font-size: 0.78rem;
+      color: #ffd58a;
+    }
+    .help-body kbd {
+      border: 1px solid #2c3a4a;
+      box-shadow: 0 1px 0 #1a242e;
+    }
+    .help-footer {
+      flex: 0 0 auto;
+      padding: 10px 22px 14px;
+      border-top: 1px solid #2a2a2a;
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+    .help-footer button {
+      background: #2d2d2d;
+      color: #ddd;
+      border: 1px solid #444;
+      padding: 6px 14px;
+      font-size: 0.85rem;
+      cursor: pointer;
+      border-radius: 3px;
+    }
+    .help-footer button.primary {
+      background: #3a598a;
+      border-color: #4872ad;
+      color: #fff;
+    }
+    .help-footer button.primary:hover { background: #4872ad; }
+
+    /* ── Footer storage indicator ─────────────────────────────────────
+       Sits to the right of the file-count summary in .fm-footer.  Two
+       short text spans bracket a thin progress bar; clicking the bar
+       opens the Help dialog at the storage section.  When the browser
+       has not yet granted persistent storage, a "🔒 Persist" pill is
+       inserted before the bar so the user can request a one-tap
+       upgrade — this is the difference between "files survive a tab
+       close" and "files survive a low-disk situation". */
+    .fm-storage {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex: 0 0 auto;
+      font-size: 0.74rem;
+      color: #8aa;
+      font-variant-numeric: tabular-nums;
+      cursor: help;
+    }
+    .fm-storage .fm-storage-bar {
+      width: 110px;
+      height: 6px;
+      background: #2a2a2a;
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    .fm-storage .fm-storage-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #4872ad, #7db2ff);
+      transition: width 0.2s ease, background 0.2s ease;
+    }
+    .fm-storage.warn  .fm-storage-fill { background: linear-gradient(90deg, #ad8a48, #d8b86c); }
+    .fm-storage.crit  .fm-storage-fill { background: linear-gradient(90deg, #a04848, #d87878); }
+    .fm-storage .fm-storage-text { white-space: nowrap; }
+    .fm-storage .fm-persist {
+      background: #2d2d2d;
+      color: #ddd;
+      border: 1px solid #444;
+      padding: 2px 8px;
+      font-size: 0.72rem;
+      border-radius: 3px;
+      cursor: pointer;
+    }
+    .fm-storage .fm-persist:hover { background: #383838; }
+    .fm-storage .fm-persist.persisted {
+      color: #6ec06e;
+      border-color: #2c4a2c;
+      background: #1a2a1a;
+      cursor: default;
+    }
+    .fm-storage .fm-persist.persisted:hover { background: #1a2a1a; }
+    /* Stack the indicator under the existing summary line on narrow
+       screens so neither gets clipped. */
+    @media (max-width: 600px) {
+      .fm-footer { flex-wrap: wrap; row-gap: 4px; }
+      .fm-storage { width: 100%; justify-content: space-between; }
+      .fm-storage .fm-storage-bar { flex: 1 1 auto; max-width: 200px; }
+    }
+
     /* Small toast notifications */
     #toasts {
       position: fixed;
@@ -874,10 +1122,12 @@
         <h2 id="fm-title">Files</h2>
         <div class="fm-actions">
           <button id="fm-upload" title="Upload files">📁 Upload…</button>
+          <button id="fm-from-url" title="Download a file directly from a URL">🔗 From URL…</button>
           <button id="fm-new-folder" title="Create a new folder here">＋ New Folder</button>
           <button id="fm-select-toggle" title="Toggle multi-select mode">☑ Select</button>
           <input type="search" id="fm-search" class="fm-search" placeholder="Search…">
           <button id="fm-wipe" class="danger" title="Delete uploaded files or reset everything">🗑 Wipe…</button>
+          <button id="fm-help" title="Show help (storage, uploads, URL imports, shortcuts)">❓ Help</button>
         </div>
         <button class="fm-close" id="fm-close" title="Close (Esc)">✕</button>
       </div>
@@ -900,7 +1150,11 @@
       </div>
       <div class="fm-footer">
         <span id="fm-summary">—</span>
-        <span>Drag and drop files anywhere to upload</span>
+        <span class="fm-storage" id="fm-storage" title="Browser storage used by your library — click for details" hidden>
+          <button class="fm-persist" id="fm-persist" title="Ask the browser to keep your files even when disk space gets low">🔒 Persist</button>
+          <span class="fm-storage-bar"><span class="fm-storage-fill" id="fm-storage-fill"></span></span>
+          <span class="fm-storage-text" id="fm-storage-text">checking…</span>
+        </span>
       </div>
     </div>
   </div>
@@ -947,6 +1201,197 @@
       <div class="wipe-buttons">
         <button id="move-cancel">Cancel</button>
         <button id="move-go" class="primary">Move</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- From-URL download dialog ------------------------------------------ -->
+  <div id="url-backdrop" role="dialog" aria-modal="true" aria-labelledby="url-title">
+    <div id="url-box">
+      <h2 id="url-title">Download from URL</h2>
+      <p>
+        Fetch a file (game, ROM, archive…) directly into your library
+        without saving it to disk first. The site you link to must allow
+        cross-origin downloads (most file archives do; private hosts
+        usually don't).
+      </p>
+      <label class="url-row">
+        <span class="lbl">URL</span>
+        <input type="url" id="url-input" autocomplete="off" spellcheck="false"
+               placeholder="https://example.org/somefile.zip">
+        <span class="hint">http:// and https:// are accepted. data: URIs work for tiny test files.</span>
+      </label>
+      <label class="url-row">
+        <span class="lbl">Save as (optional)</span>
+        <input type="text" id="url-name" autocomplete="off" spellcheck="false"
+               placeholder="Auto-detected from URL or server header">
+        <span class="hint">Leave blank to use the filename from the URL.</span>
+      </label>
+      <div class="url-target" id="url-target">
+        Target: <b id="url-target-text">auto-categorize by extension</b>
+      </div>
+      <div id="url-progress" hidden>
+        <div id="url-progress-bar"><div id="url-progress-fill" class="indet"></div></div>
+        <div id="url-progress-msg">Connecting…</div>
+      </div>
+      <div id="url-error" hidden></div>
+      <div class="wipe-buttons">
+        <button id="url-cancel">Cancel</button>
+        <button id="url-go" class="primary">Download</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- File-manager help dialog ------------------------------------------ -->
+  <div id="help-backdrop" role="dialog" aria-modal="true" aria-labelledby="help-title">
+    <div id="help-box">
+      <div class="help-header">
+        <h2 id="help-title">📚 File Manager — Help</h2>
+        <button class="help-close" id="help-close" title="Close (Esc)">✕</button>
+      </div>
+      <div class="help-body" id="help-body">
+        <h3 id="help-where">Where your files live</h3>
+        <p>
+          AltirraSDL runs entirely in your browser, so there is no
+          download folder on your hard disk. Everything you upload is
+          stored in <b>IndexedDB</b>, a per-site database the browser
+          keeps for this page. Files survive page reloads, browser
+          restarts, and even computer reboots — but they are tied to
+          this exact origin (the site URL). Visiting from a different
+          browser, profile, or device shows an empty library.
+        </p>
+        <p>
+          Internally the emulator mounts that database as a Unix-style
+          tree at <code>/home/web_user/</code>. Each category in the
+          sidebar is a real folder there (<code>/games</code>,
+          <code>/disks</code>, <code>/firmware</code>, etc.), which is
+          why renaming, moving and creating folders all behave like a
+          regular file manager.
+        </p>
+
+        <h3 id="help-storage">Storage usage &amp; quotas</h3>
+        <p>
+          The bar at the bottom of the File Manager shows how much
+          browser storage your library is using and how much the
+          browser is willing to give you. Browsers do not advertise a
+          fixed cap — they offer a sliding quota based on free disk
+          space, and they may evict the data of less-used origins when
+          the disk fills up.
+        </p>
+        <ul>
+          <li><b>🔒 Persist</b> — clicking this asks the browser to mark
+              your library as <i>persistent</i>. Persistent storage is
+              not evicted automatically; the browser will only delete
+              it if you ask it to. Click the pill once and it changes
+              to a green ✓ when granted. Some browsers (notably Safari
+              and Firefox in Private Mode) refuse the request silently;
+              that is normal — your files are still kept until storage
+              pressure forces an eviction.</li>
+          <li><b>Bar colour</b> — green/blue when comfortable, amber
+              past 75% of the offered quota, red past 90%. If the bar
+              turns red, free space by deleting items you no longer
+              need or by using <b>🗑 Wipe…</b> to reset categories.</li>
+          <li><b>Need more space?</b> Browsers grow the quota
+              automatically as your free disk space allows. There is
+              no manual "request more" API beyond the persist
+              upgrade. To make room, free space on the underlying
+              disk and the quota will rise on the next estimate.</li>
+        </ul>
+
+        <h3 id="help-upload">Adding files (4 ways)</h3>
+        <ul>
+          <li><b>📁 Upload…</b> — opens your operating-system file
+              picker. Multi-select is supported. Files are routed by
+              extension into the right category, unless you uploaded
+              from inside a folder view (then they land in that folder).</li>
+          <li><b>🔗 From URL…</b> — fetches a file straight off the web
+              into your library. Useful for direct links from public
+              archives. The remote server must send permissive CORS
+              headers; if it doesn't the download fails with a
+              dedicated explanation.</li>
+          <li><b>Drag &amp; drop</b> — drop files from your desktop or
+              another browser tab onto the canvas (auto-categorize) or
+              onto the open File Manager (lands in the current folder
+              or filter).</li>
+          <li><b>Bulk archives</b> — drop a <code>.zip</code> in the
+              Archives folder and use <b>📦 Unpack</b> from the batch
+              toolbar to expand it into a sibling folder.</li>
+        </ul>
+
+        <h3 id="help-url">Using "From URL…"</h3>
+        <p>
+          Paste a direct link to a file. The dialog shows where the
+          file will land (the current folder when you opened the
+          dialog from inside one, or the auto-categorize router by
+          extension). The download streams directly into the virtual
+          filesystem with a live progress bar.
+        </p>
+        <p>
+          <b>About CORS errors</b> — browsers refuse to read the body
+          of a cross-site fetch unless the server explicitly opts in
+          with <code>Access-Control-Allow-Origin</code>. Public
+          archives and CDNs (ifarchive.org, ibiblio.org, GitHub
+          releases, archive.org…) usually do; personal hosting,
+          Dropbox/Google Drive share links, and most game-site
+          download pages don't. If a download fails with a CORS
+          message, the cleanest workaround is to download the file in
+          a new browser tab and then drop it onto the File Manager.
+        </p>
+
+        <h3 id="help-organize">Organizing &amp; cleaning up</h3>
+        <ul>
+          <li><b>＋ New Folder</b> — create folders inside any category
+              or anywhere under <i>All files</i>.</li>
+          <li><b>☑ Select</b> — enables checkboxes so you can multi-
+              select files for cut, copy, paste, move, unpack or
+              delete operations.</li>
+          <li><b>Cut / Copy / Paste</b> — shortcuts <kbd>Ctrl/Cmd+X</kbd>,
+              <kbd>Ctrl/Cmd+C</kbd>, <kbd>Ctrl/Cmd+V</kbd>. Cut entries
+              are dimmed until pasted.</li>
+          <li><b>Rename</b> — <kbd>F2</kbd> on a single highlighted
+              row.</li>
+          <li><b>Delete</b> — <kbd>Delete</kbd> key on the highlighted
+              row(s); folders are removed recursively.</li>
+          <li><b>🗑 Wipe…</b> — one-shot reset. The dialog offers
+              "Wipe uploaded files" (keeps emulator settings) and
+              "Reset to factory" (deletes everything including
+              settings and the first-launch ROM marker).</li>
+        </ul>
+
+        <h3 id="help-download">Saving files back out</h3>
+        <p>
+          Hover any file row and click <b>⬇ Download</b> (the icon
+          appears on hover) to save the in-browser copy back to your
+          operating-system Downloads folder. This is the bridge for
+          getting save-states, screenshots and edited disks back out
+          of the sandbox.
+        </p>
+
+        <h3 id="help-keyboard">Keyboard shortcuts</h3>
+        <ul>
+          <li><kbd>Esc</kbd> — close the topmost dialog</li>
+          <li><kbd>Ctrl/Cmd+X / C / V</kbd> — cut / copy / paste</li>
+          <li><kbd>Delete</kbd> — delete highlighted entries</li>
+          <li><kbd>F2</kbd> — rename highlighted entry</li>
+        </ul>
+
+        <h3 id="help-trouble">Things that go wrong</h3>
+        <ul>
+          <li><b>Files vanished after relaunch</b> — you may be in a
+              private/incognito window. Those windows give every site
+              a temporary IndexedDB that is wiped on close.</li>
+          <li><b>Browser asked to "free up space"</b> — accept the
+              prompt for unrelated sites first. If your library is the
+              one being evicted, click <b>🔒 Persist</b> next time.</li>
+          <li><b>Upload fails with "QuotaExceededError"</b> — your
+              browser hit the soft quota. Free disk space on the host
+              system or remove large items from the library.</li>
+          <li><b>"From URL" failed with no body</b> — almost always
+              CORS. See the URL section above.</li>
+        </ul>
+      </div>
+      <div class="help-footer">
+        <button id="help-ok" class="primary">Got it</button>
       </div>
     </div>
   </div>
@@ -1114,6 +1559,12 @@
     const fmNewFolder    = document.getElementById('fm-new-folder');
     const fmSelectToggle = document.getElementById('fm-select-toggle');
     const fmWipe         = document.getElementById('fm-wipe');
+    const fmFromUrl      = document.getElementById('fm-from-url');
+    const fmHelp         = document.getElementById('fm-help');
+    const fmStorage      = document.getElementById('fm-storage');
+    const fmStorageFill  = document.getElementById('fm-storage-fill');
+    const fmStorageText  = document.getElementById('fm-storage-text');
+    const fmPersist      = document.getElementById('fm-persist');
     const fmBreadcrumb   = document.getElementById('fm-breadcrumb');
     const fmBatchBar     = document.getElementById('fm-batchbar');
     const fmBatchCount   = document.getElementById('fm-batch-count');
@@ -1133,6 +1584,20 @@
     const moveSuggest    = document.getElementById('move-suggestions');
     const moveGo         = document.getElementById('move-go');
     const moveCancel     = document.getElementById('move-cancel');
+    const urlBackdrop    = document.getElementById('url-backdrop');
+    const urlInput       = document.getElementById('url-input');
+    const urlName        = document.getElementById('url-name');
+    const urlTargetText  = document.getElementById('url-target-text');
+    const urlGo          = document.getElementById('url-go');
+    const urlCancel      = document.getElementById('url-cancel');
+    const urlProgress    = document.getElementById('url-progress');
+    const urlProgressFill= document.getElementById('url-progress-fill');
+    const urlProgressMsg = document.getElementById('url-progress-msg');
+    const urlError       = document.getElementById('url-error');
+    const helpBackdrop   = document.getElementById('help-backdrop');
+    const helpClose      = document.getElementById('help-close');
+    const helpOk         = document.getElementById('help-ok');
+    const helpBody       = document.getElementById('help-body');
     const fwBackdrop     = document.getElementById('fw-backdrop');
     const fwGo           = document.getElementById('fw-go');
     const fwSkip         = document.getElementById('fw-skip');
@@ -1295,7 +1760,9 @@
       const wipeOpen = wipeBackdrop && wipeBackdrop.classList.contains('open');
       const moveOpen = moveBackdrop && moveBackdrop.classList.contains('open');
       const fwOpen   = fwBackdrop   && fwBackdrop  .classList.contains('open');
-      return fmOpen || wipeOpen || moveOpen || fwOpen;
+      const urlOpen  = urlBackdrop  && urlBackdrop .classList.contains('open');
+      const helpOpen = helpBackdrop && helpBackdrop.classList.contains('open');
+      return fmOpen || wipeOpen || moveOpen || fwOpen || urlOpen || helpOpen;
     }
     // True iff the focused element is a text-entry control where
     // shortcut characters should pass through to native editing
@@ -1338,12 +1805,14 @@
       // Firmware), only outside text-entry controls, and never in
       // pickMode (we don't want to mutate the FS while a native file
       // dialog is waiting for the user).
-      const fmOpen = fmBackdrop && fmBackdrop.classList.contains('open');
+      const fmOpen   = fmBackdrop   && fmBackdrop  .classList.contains('open');
       const wipeOpen = wipeBackdrop && wipeBackdrop.classList.contains('open');
       const moveOpen = moveBackdrop && moveBackdrop.classList.contains('open');
       const fwOpen   = fwBackdrop   && fwBackdrop  .classList.contains('open');
+      const urlOpen  = urlBackdrop  && urlBackdrop .classList.contains('open');
+      const helpOpen = helpBackdrop && helpBackdrop.classList.contains('open');
       if (e.type !== 'keydown')               return;
-      if (!fmOpen || wipeOpen || moveOpen || fwOpen) return;
+      if (!fmOpen || wipeOpen || moveOpen || fwOpen || urlOpen || helpOpen) return;
       if (pickMode)                            return;
       if (focusInTextInput())                  return;
       handleFmShortcut(e);
@@ -3199,6 +3668,14 @@
       // Pick mode also disables the Select toggle (multi-select makes
       // no sense for a "choose one file" picker).
       fmSelectToggle.disabled = !!pickMode;
+      // From-URL is disabled in pick mode for the same reason as Wipe:
+      // the C-side native dialog is waiting for one specific path, and
+      // a successful URL download can't fire the pick callback.  The
+      // user could finish the download then click the new file, but
+      // that's a confusing two-step — better to require them to
+      // cancel/re-open the picker first.  Help stays enabled so users
+      // can read up on what's going on while the picker is up.
+      fmFromUrl.disabled = !!pickMode;
       // Keep the Upload button's tooltip aligned with the routing
       // logic in fmFilePicker's change handler.  Cheap: just title
       // text, no DOM rebuild.
@@ -3208,6 +3685,10 @@
       renderClipboardBanner();
       renderBatchBar();
       renderList();
+      // Storage estimate is async + cheap — let it run in the
+      // background; it'll update the footer in place when it
+      // resolves.  We don't await so renderFm stays synchronous.
+      refreshStorageInfo();
     }
 
     // ───────────────────────────────────────────────────────────────────
@@ -3864,6 +4345,595 @@
     moveInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') { e.preventDefault(); executeMove(); }
     });
+
+    // ───────────────────────────────────────────────────────────────────
+    //  From-URL download dialog
+    //
+    //  The user pastes a URL; we fetch it via the browser's standard
+    //  fetch() (so HTTPS, HTTP/2, gzip and brotli all "just work"), read
+    //  the response body as a stream so we can show a real progress bar,
+    //  then write the bytes into IDBFS at the same target the toolbar's
+    //  upload button would have chosen.
+    //
+    //  CORS is the dominant failure mode for arbitrary URLs in a
+    //  browser sandbox — the most common public archive sites (ifarchive,
+    //  ibiblio, archive.org, github releases) work fine, but personal
+    //  hosting, Dropbox/Google Drive share links, and most game-site
+    //  download pages don't send Access-Control-Allow-Origin and the
+    //  browser refuses to expose the response body to JS.  We catch
+    //  the resulting opaque TypeError and replace the generic toast
+    //  with a dedicated explanation block in the dialog so users
+    //  understand the issue isn't "your URL is wrong".
+    //
+    //  The dialog can be cancelled mid-fetch via the AbortController
+    //  stored in `urlAbort`.  Esc and the Cancel button both call
+    //  closeUrlDialog() which aborts.
+    // ───────────────────────────────────────────────────────────────────
+    let urlAbort = null;     // active AbortController, or null
+    let urlBusy  = false;    // gate against double-click / Enter spam
+
+    // Pull a sensible filename out of a URL.  The path's last segment
+    // wins; query and hash are stripped.  Falls back to "download.bin"
+    // for empty / opaque URLs (e.g. data:).  Result is run through
+    // sanitize() at the call site so reserved characters can't escape
+    // the chosen folder.
+    function filenameFromUrl(u) {
+      try {
+        const parsed = new URL(u);
+        // data: URI — pull the MIME-derived extension if obvious.
+        if (parsed.protocol === 'data:') {
+          const m = /^data:([^;,]+)/i.exec(u);
+          const mime = m ? m[1].toLowerCase() : '';
+          const ext = mime.includes('zip') ? 'zip'
+                    : mime.includes('octet') ? 'bin'
+                    : mime.split('/').pop() || 'bin';
+          return 'download.' + ext;
+        }
+        // Strip trailing slashes; pick last non-empty segment.
+        const segs = parsed.pathname.replace(/\/+$/, '').split('/');
+        const last = segs.pop() || '';
+        if (last) return decodeURIComponent(last);
+      } catch (_) {}
+      return 'download.bin';
+    }
+
+    // Optional: server-suggested filename via Content-Disposition.
+    // Honour both `filename=...` and the RFC 5987 `filename*=UTF-8''...`
+    // form; the latter wins when both are present.  Returns null when
+    // the header is missing / unparseable so callers can fall back to
+    // the URL-derived name.
+    function filenameFromHeader(headers) {
+      try {
+        const cd = headers.get('content-disposition') || '';
+        if (!cd) return null;
+        const star = /filename\*\s*=\s*[^']*''([^;]+)/i.exec(cd);
+        if (star) return decodeURIComponent(star[1].trim());
+        const plain = /filename\s*=\s*"?([^";]+)"?/i.exec(cd);
+        if (plain) return plain[1].trim();
+      } catch (_) {}
+      return null;
+    }
+
+    // Resolve the destination folder + descriptive label for the
+    // dialog's "Target" line.  Mirrors uploadTargetForCurrentView() so
+    // the URL flow lands in the same place a regular upload would.
+    function urlDestinationFor(name) {
+      const t = uploadTargetForCurrentView();
+      if (typeof t === 'string') {
+        // Tree-mode: explicit folder — show it relative to ~ for brevity.
+        return { dir: t, id: '_dir', primary: null,
+                 label: t.replace(ROOT, '~') };
+      }
+      // Filter-mode: auto-categorize by the proposed filename's ext.
+      // We compute this on every input change so the user sees the
+      // routing update as they type / paste a new URL.
+      const ext = extOf(name);
+      const cat = categoryForExt(ext);
+      return Object.assign({}, cat,
+        { label: cat.label + '  (' + cat.dir.replace(ROOT, '~') + ')' });
+    }
+
+    function refreshUrlTarget() {
+      const proposed = (urlName.value || '').trim()
+                    || filenameFromUrl((urlInput.value || '').trim())
+                    || 'download.bin';
+      const dest = urlDestinationFor(proposed);
+      urlTargetText.textContent = dest.label;
+    }
+
+    function openUrlDialog() {
+      // Reset state every open so a previous error / progress doesn't
+      // leak into the new attempt.  Stay on the dialog after a
+      // successful download so the user can paste another URL — the
+      // dialog only closes on explicit Cancel / Esc / outside-click.
+      urlAbort = null;
+      urlBusy  = false;
+      urlInput.value = '';
+      urlName.value  = '';
+      urlError.hidden = true;
+      urlError.innerHTML = '';
+      urlProgress.hidden = true;
+      // Clear any inline width left over from a previous determinate
+      // run.  The .indet class sets `width: 30%` via CSS so the pulse
+      // animation has something to slide; an inline `style.width` of
+      // 0% would override that and the pulse would animate an
+      // invisible zero-width fill.
+      urlProgressFill.style.width = '';
+      urlProgressFill.classList.add('indet');
+      urlProgressMsg.textContent = 'Connecting…';
+      urlGo.disabled = false;
+      urlGo.textContent = 'Download';
+      urlCancel.textContent = 'Cancel';
+      refreshUrlTarget();
+      urlBackdrop.classList.add('open');
+      setTimeout(() => urlInput.focus(), 30);
+    }
+
+    function closeUrlDialog() {
+      // Abort any in-flight fetch first so the network handler bails
+      // before it tries to write to a hidden dialog.
+      if (urlAbort) {
+        try { urlAbort.abort(); } catch (_) {}
+      }
+      urlAbort = null;
+      urlBusy  = false;
+      urlBackdrop.classList.remove('open');
+    }
+
+    function showUrlError(html) {
+      urlError.innerHTML = html;
+      urlError.hidden = false;
+      urlProgress.hidden = true;
+      urlGo.disabled = false;
+      urlGo.textContent = 'Retry';
+      urlBusy = false;
+    }
+
+    async function executeUrlFetch() {
+      if (urlBusy) return;
+      const raw = (urlInput.value || '').trim();
+      if (!raw) { toast('Enter a URL', 'error'); urlInput.focus(); return; }
+      // Light validation — reject anything other than http/https/data
+      // up front.  ftp:// is technically valid but no modern browser
+      // exposes a fetchable body for it, and javascript: / file: are
+      // either unsafe or unreachable from a sandboxed page.
+      let parsed;
+      try { parsed = new URL(raw); }
+      catch (_) {
+        showUrlError('<b>Invalid URL.</b> Make sure it starts with '
+          + '<code>https://</code>, <code>http://</code>, or '
+          + '<code>data:</code>.');
+        return;
+      }
+      const proto = parsed.protocol.toLowerCase();
+      if (proto !== 'https:' && proto !== 'http:' && proto !== 'data:') {
+        showUrlError('<b>Unsupported scheme</b> <code>' + proto
+          + '</code>. Use <code>https://</code>, <code>http://</code> '
+          + 'or <code>data:</code>.');
+        return;
+      }
+
+      urlBusy = true;
+      urlError.hidden = true;
+      urlError.innerHTML = '';
+      urlProgress.hidden = false;
+      // Same rationale as openUrlDialog: clear inline width before
+      // re-arming the indeterminate pulse so the CSS `.indet` rule
+      // wins and the pulse is visible.  The Connecting… phase before
+      // the first byte arrives sees this state.
+      urlProgressFill.style.width = '';
+      urlProgressFill.classList.add('indet');
+      urlProgressMsg.textContent = 'Connecting…';
+      urlGo.disabled = true;
+      urlGo.textContent = 'Downloading…';
+
+      // Capture the controller in a local ref.  closeUrlDialog
+      // reassigns the module-level urlAbort to null (and the next
+      // openUrlDialog may reassign it again to a fresh controller),
+      // so checking the module-level variable in the catch / stream
+      // handlers below would race: a fetch aborted by Cancel could
+      // fall through to the CORS-error branch (because urlAbort no
+      // longer points at this controller) and write a stale error
+      // into the freshly-reset dialog the next time the user opens
+      // it.  Holding the controller locally ensures the handlers
+      // always reason about the right request.
+      const ctrl = new AbortController();
+      urlAbort = ctrl;
+      const startedAt = performance.now();
+
+      jlog('url-fetch: GET', parsed.href);
+      let resp;
+      try {
+        resp = await fetch(parsed.href, {
+          method:      'GET',
+          mode:        'cors',
+          credentials: 'omit',
+          redirect:    'follow',
+          // No special headers — keeping the request "simple" so it
+          // never triggers a CORS preflight that the average static
+          // host doesn't handle.
+          signal:      ctrl.signal,
+        });
+      } catch (e) {
+        if (ctrl.signal.aborted) {
+          jlog('url-fetch: aborted');
+          return;   // dialog already closed by closeUrlDialog
+        }
+        // Network-level failure (offline, DNS, TLS) OR the dreaded
+        // opaque CORS rejection.  fetch() can't tell us which is
+        // which — both surface as "TypeError: Failed to fetch".  We
+        // present the most common cause first and let the user
+        // self-diagnose with the dev tools as a backup.
+        const msg = (e && e.message) ? e.message : String(e);
+        jlog('url-fetch: failed —', msg);
+        showUrlError(
+          '<b>Could not fetch the URL.</b> The most common cause is '
+          + '<b>cross-origin (CORS) blocking</b> — the server didn\'t '
+          + 'send <code>Access-Control-Allow-Origin</code>, so the '
+          + 'browser refused to expose the response body. Public '
+          + 'archives like <code>ifarchive.org</code>, '
+          + '<code>ibiblio.org</code> and <code>archive.org</code> '
+          + 'usually work; personal hosting, share links and most '
+          + 'game-site download pages don\'t.<br><br>'
+          + '<b>Workaround:</b> open the link in a new browser tab, '
+          + 'save the file locally, then drop it onto the File '
+          + 'Manager.<br><br>'
+          + '<b>Other possibilities:</b> network offline, invalid '
+          + 'TLS certificate, or a typo in the URL. Open DevTools '
+          + '(F12) → Network for the exact reason. ('
+          + 'Browser said: <code>' + escapeHtmlBasic(msg) + '</code>)');
+        return;
+      }
+
+      if (!resp.ok) {
+        jlog('url-fetch: HTTP', resp.status);
+        showUrlError('<b>Server returned HTTP ' + resp.status
+          + '</b> ' + escapeHtmlBasic(resp.statusText || '')
+          + '. Double-check the URL is a direct link to the file '
+          + '(not a download landing page).');
+        return;
+      }
+
+      // Pull the body as a stream so we can show byte-accurate
+      // progress.  The Content-Length header may be missing (gzip,
+      // chunked transfer) — in that case we keep the bar in
+      // indeterminate mode and just show "<received> downloaded".
+      const totalHdr = resp.headers.get('content-length');
+      const total = totalHdr ? parseInt(totalHdr, 10) : 0;
+      const reader = resp.body && resp.body.getReader
+                       ? resp.body.getReader()
+                       : null;
+      let received = 0;
+      const chunks = [];
+
+      function fmtRate(bytes, ms) {
+        if (ms <= 0) return '';
+        const bps = (bytes * 1000) / ms;
+        return ' · ' + fmtBytes(bps) + '/s';
+      }
+
+      try {
+        if (reader) {
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            chunks.push(value);
+            received += value.byteLength;
+            if (total > 0) {
+              const pct = Math.min(100, (received * 100) / total);
+              urlProgressFill.classList.remove('indet');
+              urlProgressFill.style.width = pct.toFixed(1) + '%';
+              urlProgressMsg.textContent =
+                fmtBytes(received) + ' / ' + fmtBytes(total)
+                + '  (' + pct.toFixed(0) + '%)'
+                + fmtRate(received, performance.now() - startedAt);
+            } else {
+              urlProgressMsg.textContent =
+                fmtBytes(received) + ' downloaded'
+                + fmtRate(received, performance.now() - startedAt);
+            }
+          }
+        } else {
+          // Old browsers without ReadableStream — fall back to the
+          // whole-buffer path.  Less responsive but still works.
+          urlProgressMsg.textContent = 'Downloading…';
+          const buf = await resp.arrayBuffer();
+          chunks.push(new Uint8Array(buf));
+          received = buf.byteLength;
+        }
+      } catch (e) {
+        if (ctrl.signal.aborted) {
+          jlog('url-fetch: aborted mid-stream');
+          return;
+        }
+        const msg = (e && e.message) ? e.message : String(e);
+        jlog('url-fetch: stream failed —', msg);
+        showUrlError('<b>Connection lost</b> mid-download: '
+          + '<code>' + escapeHtmlBasic(msg) + '</code>');
+        return;
+      }
+
+      // Concatenate the streamed chunks into a single Uint8Array.
+      // chunks.length === 1 covers the no-streaming fallback above
+      // without an extra allocation.
+      let bytes;
+      if (chunks.length === 1) {
+        bytes = chunks[0];
+      } else {
+        bytes = new Uint8Array(received);
+        let off = 0;
+        for (const c of chunks) { bytes.set(c, off); off += c.byteLength; }
+      }
+
+      // Resolve the final filename: explicit user override > server
+      // Content-Disposition > URL-derived.  All three pass through
+      // sanitize() so a hostile filename can't punch out of the
+      // category folder.
+      const userName  = (urlName.value || '').trim();
+      const headerName= filenameFromHeader(resp.headers);
+      const fallback  = filenameFromUrl(parsed.href);
+      const chosen    = userName || headerName || fallback || 'download.bin';
+      const safe      = sanitize(chosen) || 'download.bin';
+
+      // Same routing logic as the toolbar Upload button: tree-mode
+      // forces the current folder, otherwise auto-categorize.
+      let targetDir;
+      const t = uploadTargetForCurrentView();
+      if (typeof t === 'string') {
+        targetDir = t;
+      } else {
+        targetDir = categoryForExt(extOf(safe)).dir;
+      }
+      try { Module.FS.mkdirTree(targetDir); } catch (_) {}
+      const path = targetDir + '/' + safe;
+
+      try {
+        Module.FS.writeFile(path, bytes);
+      } catch (e) {
+        const msg = (e && e.message) ? e.message : String(e);
+        jlog('url-fetch: write failed —', msg);
+        showUrlError('<b>Save failed:</b> <code>'
+          + escapeHtmlBasic(msg) + '</code>. The browser may have '
+          + 'run out of storage — see the bar at the bottom of the '
+          + 'File Manager.');
+        return;
+      }
+      appendLog('[url] ' + path + ' (' + fmtBytes(bytes.length) + ')');
+      jlog('url-fetch: wrote', path, fmtBytes(bytes.length));
+
+      // Best-effort flush so a tab close right after download still
+      // persists the file.  Same pattern as uploadFiles().
+      await syncFsOut();
+
+      // If the file landed in /firmware, ask the C side to rescan
+      // so the Setup Wizard / Firmware page picks it up immediately.
+      if (path.includes('/firmware/') && Module._ATWasmRescanFirmware) {
+        try { Module._ATWasmRescanFirmware(); } catch (_) {}
+      }
+
+      toast('Downloaded ' + safe + '  (' + fmtBytes(bytes.length) + ')');
+      closeUrlDialog();
+      renderFm();
+      refreshStorageInfo();   // bar may have moved meaningfully
+
+      // If the file is bootable, treat it like an uploaded boot image
+      // and hand off — same UX as a drag-drop / Upload of the same
+      // extension would give.
+      const cat = categoryForExt(extOf(safe));
+      if (cat && cat.primary && (typeof t !== 'string')) {
+        bridgeBoot(path);
+      }
+    }
+
+    // Tiny HTML escape for inserting browser-supplied / user-supplied
+    // strings into the URL error block.  innerHTML is unavoidable
+    // there because the surrounding error template uses <b>/<code>
+    // tags, but everything plugged into it goes through this first.
+    function escapeHtmlBasic(s) {
+      return String(s).replace(/[&<>"']/g, (ch) => ({
+        '&':'&amp;', '<':'&lt;', '>':'&gt;',
+        '"':'&quot;', "'":'&#39;',
+      }[ch]));
+    }
+
+    urlGo.addEventListener('click', executeUrlFetch);
+    urlCancel.addEventListener('click', closeUrlDialog);
+    urlBackdrop.addEventListener('click', (e) => {
+      if (e.target === urlBackdrop) closeUrlDialog();
+    });
+    urlInput.addEventListener('input', refreshUrlTarget);
+    urlName .addEventListener('input', refreshUrlTarget);
+    urlInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); executeUrlFetch(); }
+    });
+    urlName.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); executeUrlFetch(); }
+    });
+
+    // The url/help backdrops cover the whole viewport when open, so
+    // any drag-drop the user makes onto the page lands on them rather
+    // than on canvasWrap or fmBackdrop (their actual handlers).  With
+    // no listener of our own, the events bubble to <body>, no one
+    // calls preventDefault on dragover, and the browser's default
+    // file-handling kicks in on drop — which navigates the tab away
+    // from the wasm runtime and ends the session.  Swallow the
+    // events here so a misclicked drag while these dialogs are up is
+    // a no-op rather than a crash.  We deliberately do NOT route the
+    // drop into uploadFiles: a "from URL" or "help" context isn't
+    // where the user expects file uploads to land.
+    ['dragenter', 'dragover', 'drop'].forEach((evt) => {
+      urlBackdrop.addEventListener(evt,  (e) => e.preventDefault());
+      helpBackdrop.addEventListener(evt, (e) => e.preventDefault());
+    });
+
+    // ───────────────────────────────────────────────────────────────────
+    //  Help dialog
+    //
+    //  Static content; we just toggle visibility and optionally scroll
+    //  the body to a section anchor when openHelpDialog is called with
+    //  one (e.g. clicking the storage indicator jumps to the storage
+    //  section directly).
+    // ───────────────────────────────────────────────────────────────────
+    function openHelpDialog(scrollToId) {
+      helpBackdrop.classList.add('open');
+      // Reset scroll on every open unless an anchor was requested.
+      if (scrollToId) {
+        // Wait for layout so getBoundingClientRect is correct.
+        setTimeout(() => {
+          const target = document.getElementById(scrollToId);
+          if (target && helpBody) {
+            // Use offsetTop relative to the scrolling container — the
+            // built-in scrollIntoView would also scroll the page if
+            // the container couldn't satisfy the request, which is
+            // ugly behind a modal.
+            const top = target.offsetTop - helpBody.offsetTop - 6;
+            helpBody.scrollTop = Math.max(0, top);
+          }
+        }, 0);
+      } else {
+        helpBody.scrollTop = 0;
+      }
+    }
+    function closeHelpDialog() {
+      helpBackdrop.classList.remove('open');
+    }
+    helpClose.addEventListener('click', closeHelpDialog);
+    helpOk   .addEventListener('click', closeHelpDialog);
+    helpBackdrop.addEventListener('click', (e) => {
+      if (e.target === helpBackdrop) closeHelpDialog();
+    });
+
+    // ───────────────────────────────────────────────────────────────────
+    //  Storage usage indicator
+    //
+    //  navigator.storage.estimate() returns the bytes the browser
+    //  thinks our origin is currently using and the bytes it's willing
+    //  to give us.  Both numbers are best-effort — Safari rounds them
+    //  hard for fingerprinting reasons, Firefox can return undefined,
+    //  Chrome usually has both.  We treat the indicator as advisory
+    //  and degrade gracefully when either number is missing.
+    //
+    //  navigator.storage.persist() asks the browser to mark our
+    //  storage as "persistent" — i.e. the browser won't auto-evict
+    //  even under low-disk pressure.  Some UAs grant silently, some
+    //  prompt the user, some refuse without prompting.  We reflect
+    //  the result in the pill's appearance.
+    // ───────────────────────────────────────────────────────────────────
+    let storageRefreshInflight = false;
+    let storagePersisted = false;
+
+    function fmtBytesMB(n) {
+      // Rounder version for the storage line — KB / MB / GB.  An
+      // empty library should read "0 B" rather than the previous
+      // "1 KB" floor (Math.max(1, …) was too eager when n was
+      // genuinely zero, e.g. a brand-new install with no uploads).
+      if (n <= 0) return '0 B';
+      if (n < 1024) return n + ' B';
+      if (n < 1024 * 1024) {
+        // Round up so a few hundred bytes don't disappear into "0 KB".
+        return Math.max(1, Math.round(n / 1024)) + ' KB';
+      }
+      if (n < 1024 * 1024 * 1024) {
+        return (n / (1024 * 1024)).toFixed(1) + ' MB';
+      }
+      return (n / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+    }
+
+    async function refreshStorageInfo() {
+      if (!fmStorage) return;
+      // StorageManager is feature-detected — Safari < 15.2 / older
+      // Edge / private windows can drop it entirely.  In that case
+      // we hide the indicator instead of showing "unknown" forever.
+      if (!navigator.storage || !navigator.storage.estimate) {
+        fmStorage.hidden = true;
+        return;
+      }
+      if (storageRefreshInflight) return;
+      storageRefreshInflight = true;
+      try {
+        // Persistence query is cheap and idempotent — refresh both
+        // each call so the pill reflects the live state.
+        if (navigator.storage.persisted) {
+          try { storagePersisted = !!(await navigator.storage.persisted()); }
+          catch (_) { storagePersisted = false; }
+        }
+        const est = await navigator.storage.estimate();
+        const usage = (typeof est.usage === 'number') ? est.usage : 0;
+        const quota = (typeof est.quota === 'number') ? est.quota : 0;
+        fmStorage.hidden = false;
+        // Reflect persistence on the pill.
+        if (fmPersist) {
+          if (storagePersisted) {
+            fmPersist.textContent = '✓ Persisted';
+            fmPersist.title = 'Browser will not auto-evict your library.';
+            fmPersist.classList.add('persisted');
+            fmPersist.disabled = true;
+          } else {
+            fmPersist.textContent = '🔒 Persist';
+            fmPersist.title = 'Ask the browser to keep your files even '
+              + 'when disk space gets low (one click, no popup on most '
+              + 'browsers).';
+            fmPersist.classList.remove('persisted');
+            fmPersist.disabled = false;
+          }
+        }
+        let pct = 0;
+        if (quota > 0) {
+          pct = Math.min(100, (usage * 100) / quota);
+          fmStorageFill.style.width = pct.toFixed(1) + '%';
+          fmStorageText.textContent =
+            fmtBytesMB(usage) + ' of ' + fmtBytesMB(quota)
+            + '  (' + pct.toFixed(0) + '%)';
+          fmStorage.title =
+            'Library is using ' + fmtBytesMB(usage) + ' of '
+            + fmtBytesMB(quota) + ' the browser is offering '
+            + '(quota grows automatically with free disk space). '
+            + 'Click for details.';
+        } else if (usage > 0) {
+          fmStorageFill.style.width = '0%';
+          fmStorageText.textContent = fmtBytesMB(usage) + ' used';
+          fmStorage.title = 'Browser does not advertise a quota; '
+            + 'library is using ' + fmtBytesMB(usage) + '. Click for details.';
+        } else {
+          fmStorageFill.style.width = '0%';
+          fmStorageText.textContent = '— used';
+          fmStorage.title = 'Storage estimate unavailable. Click for details.';
+        }
+        fmStorage.classList.toggle('warn', pct >= 75 && pct < 90);
+        fmStorage.classList.toggle('crit', pct >= 90);
+      } catch (e) {
+        // Estimate threw — leave the previous text in place rather
+        // than wiping the indicator to "error".
+        jlog('storage: estimate failed —', e && e.message ? e.message : e);
+      } finally {
+        storageRefreshInflight = false;
+      }
+    }
+
+    async function requestPersistentStorage() {
+      if (!navigator.storage || !navigator.storage.persist) {
+        toast('Persistent storage is not available in this browser', 'error');
+        return;
+      }
+      if (storagePersisted) return;   // nothing to do
+      try {
+        const granted = await navigator.storage.persist();
+        if (granted) {
+          storagePersisted = true;
+          toast('Persistent storage granted — your library will not be auto-evicted.');
+        } else {
+          // Browsers that refuse silently (Safari, Firefox in private
+          // mode) still keep the data; the difference is "may evict"
+          // vs "won't evict".  Communicate that distinction.
+          toast('Browser declined persistent storage. Your files are '
+              + 'still saved, but may be evicted under low-disk pressure.',
+              'error', 6000);
+        }
+      } catch (e) {
+        toast('Persist request failed: ' + e, 'error');
+      }
+      refreshStorageInfo();
+    }
 
     // ───────────────────────────────────────────────────────────────────
     //  Firmware-download wizard wiring
@@ -4541,6 +5611,22 @@
     // the canvas.  Order matters — innermost dialog wins.
     window.addEventListener('keydown', (e) => {
       if (e.key !== 'Escape') return;
+      // Help is the topmost overlay when open; close it first so the
+      // user's first Esc dismisses what they were just reading rather
+      // than the FM beneath it.
+      if (helpBackdrop.classList.contains('open')) {
+        e.preventDefault();
+        closeHelpDialog();
+        return;
+      }
+      // URL dialog is dismissable mid-fetch — closeUrlDialog aborts
+      // any in-flight request via the AbortController owned by the
+      // active fetch.
+      if (urlBackdrop.classList.contains('open')) {
+        e.preventDefault();
+        closeUrlDialog();
+        return;
+      }
       if (wipeBackdrop.classList.contains('open')) {
         e.preventDefault();
         closeWipeDialog();
@@ -4639,6 +5725,20 @@
     fmNewFolder.addEventListener('click', newFolder);
     fmSelectToggle.addEventListener('click', () => setSelectMode(!selectMode));
     fmWipe.addEventListener('click', openWipeDialog);
+    fmFromUrl.addEventListener('click', openUrlDialog);
+    fmHelp.addEventListener('click', () => openHelpDialog());
+    if (fmStorage) {
+      // Click the storage indicator to jump straight to the storage
+      // section of Help — the bar already raises the question, may as
+      // well answer it in one click.
+      fmStorage.addEventListener('click', (e) => {
+        if (e.target === fmPersist) return;   // persist button has its own handler
+        openHelpDialog('help-storage');
+      });
+    }
+    if (fmPersist) {
+      fmPersist.addEventListener('click', requestPersistentStorage);
+    }
 
     fmBatchDelete.addEventListener('click', batchDelete);
     fmBatchMove  .addEventListener('click', () => {
@@ -4852,6 +5952,10 @@
         btnFiles.disabled = false;
         if (btnFirmware) btnFirmware.disabled = false;
         canvas.focus();
+        // Prime the storage indicator so the first time the user
+        // opens the File Manager the bar shows real numbers
+        // immediately rather than "checking…" for a frame.
+        refreshStorageInfo();
         jlog('runtime ready, build=@ALTIRRA_WASM_GIT_SHA@',
              '(@ALTIRRA_WASM_BUILD_STAMP@)');
         // Log what's on disk after IDBFS syncfs completed so we can
@@ -4899,9 +6003,10 @@
       // Emscripten's secondary progress channel: the dependency
       // counter starts at N (left == N total deps) and decrements
       // toward 0 as each preRun / async-fs / WASM-load step
-      // completes.  Translate to a friendlier label so non-technical
-      // users see what's happening even if the loader runtime path
-      // doesn't emit "Downloading data..." through setStatus.
+      // completes.  Translate to a friendlier label so non-
+      // technical users see what's happening even if the loader
+      // runtime path doesn't emit "Downloading data..." through
+      // setStatus.
       monitorRunDependencies: (left) => {
         Module.totalDependencies =
           Math.max(Module.totalDependencies, left);
@@ -4909,9 +6014,9 @@
           const done  = Module.totalDependencies - left;
           const total = Module.totalDependencies;
           // First step is always the WASM fetch, which dwarfs the
-          // others.  Show "Downloading…" until that's done; the tail
-          // steps (IDBFS mount + dir creation) run sub-second so a
-          // single "Preparing…" label covers them.
+          // others.  Show "Downloading…" until that's done; the
+          // tail steps (IDBFS mount + dir creation) run sub-second
+          // so a single "Preparing…" label covers them.
           statusEl.textContent = (done === 0)
             ? 'Downloading Atari emulator…'
             : 'Preparing the emulator… (' + done + '/' + total + ')';
