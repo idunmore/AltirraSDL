@@ -68,4 +68,41 @@ struct LobbyResult;
 // returns false so the caller falls through to its other handlers.
 bool OnDeepLinkLobbyResult(const LobbyResult& r);
 
+// One-click join UX states.  The Screen::DeepLinkPrep renderer
+// switches on this each frame to pick what to draw.  The order
+// roughly tracks the state machine; gaps are intentional so a future
+// state can slot in without renumbering.
+enum class DeepLinkUiState {
+	NotPending,        // no deep-link in flight; screen should be Closed
+	NeedsNickname,     // first-time visitor; ask for a name and persist
+	DownloadingFw,     // WASM auto-fetching ROM bundle from kFirstRunUrls
+	FirmwareFailed,    // all firmware mirrors failed; show error + retry
+	Looking,           // GET /v1/session/<id> in flight on the lobby
+	Joining,           // StartJoiningAction has fired; standard screens
+	                   // (JoinConfirm / Waiting / AcceptJoinPrompt) take
+	                   // over, but the deep-link UI may still be showing
+	                   // until those screens push a new entry.
+};
+
+// Snapshot of where the deep-link state machine is.  Cheap; safe
+// to call every frame from the renderer.
+DeepLinkUiState GetDeepLinkUiState();
+
+// Submit the user's nickname from the deep-link mini-prompt.  Persists
+// to the netplay registry, marks first-run complete, and advances the
+// state machine.  Empty input is rejected (caller should disable the
+// Continue button).  Trims to <=24 chars to match the regular Nickname
+// screen's limit; the lobby hard-caps at 32.
+void SubmitDeepLinkNickname(const std::string& nick);
+
+// Cancel the in-flight deep-link join (e.g. user closes the prep
+// modal).  Wipes the pending session id so a later refresh doesn't
+// re-trigger.  Safe to call from any phase.
+void CancelDeepLink();
+
+// Re-arm the firmware fetch after a previous all-mirrors-failed.
+// Triggered from the FirmwareFailed UI's Retry button.  WASM only;
+// no-op on native builds.
+void RetryDeepLinkFirmware();
+
 } // namespace ATNetplayUI

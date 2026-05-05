@@ -46,6 +46,11 @@ enum class Screen {
 	// Nickname/Browser.
 	Closed,
 
+	DeepLinkPrep,     // One-click join (?s=...) preflight: nickname,
+	                  // firmware download, lobby fetch — in that
+	                  // sequence; takes the user straight from URL
+	                  // click to in-game.  Driven by the deep-link
+	                  // state machine in ui_netplay_deeplink.cpp.
 	Nickname,         // First-time handle prompt
 	OnlinePlayHub,    // Hub: Host Games / Browse / Preferences cards
 	Browser,          // Online sessions grid (browse peers)

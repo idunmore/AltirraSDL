@@ -140,6 +140,33 @@ jobs:
             exit 1
           fi
 
+      # Precompress index.html / AltirraSDL.js / AltirraSDL.wasm with
+      # brotli (q=11) and gzip (level 9), keeping the originals.  Caddy
+      # on the lobby VM is configured with `precompressed br gzip`, so
+      # it serves the .br variant directly to clients that advertise
+      # `Accept-Encoding: br` — no runtime compression cost on the
+      # 1/8-OCPU Free Tier instance.  Gzip is the universal fallback
+      # for anyone whose request path or middleware drops the br
+      # encoding.  Sizes:
+      #   - 11 MB AltirraSDL.wasm → ~3.0-3.5 MB .br (~70% smaller)
+      #   - 255 KB AltirraSDL.js  → ~50-60 KB .br
+      #   - 204 KB index.html     → ~30-35 KB .br
+      # GitHub Pages serves its own gzip transparently, so the .br /
+      # .gz files are harmless extras for that target — Pages will
+      # ignore them and serve index.html / .wasm / .js on demand.
+      - name: Precompress (brotli + gzip)
+        run: |
+          set -e
+          DIST=wasm-dist
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq brotli
+          for f in index.html AltirraSDL.js AltirraSDL.wasm; do
+            brotli -q 11 --keep "${DIST}/${f}"
+            gzip   -9  --keep "${DIST}/${f}"
+          done
+          echo "=== precompressed bundle ==="
+          ls -lh "${DIST}"
+
       - name: Extract version
         id: version
         run: |
@@ -185,6 +212,19 @@ jobs:
           path: wasm-dist
           name: github-pages
 
+      # Same wasm-dist tree, but as a regular workflow artifact so the
+      # deploy-vm job can download it.  Pages's special artifact format
+      # (a tar.gz) isn't reusable by other jobs.  Includes .br / .gz
+      # siblings for Caddy's `precompressed br gzip` directive.
+      - name: Upload wasm-dist for VM deploy
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/WASM-target')
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-dist
+          path: wasm-dist
+          if-no-files-found: error
+          retention-days: 7
+
   deploy-pages:
     name: Deploy to GitHub Pages
     needs: wasm
@@ -206,6 +246,97 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+  # Parallel deploy: rsync the same wasm-dist tree (with brotli + gzip
+  # precompressed siblings) to the Oracle Cloud VM that hosts the
+  # netplay lobby.  Caddy serves it at
+  #   https://lobby.atari.org.pl/AltirraSDL/play/
+  # so the page → WS connection is same-origin, sidestepping the
+  # third-party-WS filters and DNS-level blocklists that bite a non-
+  # trivial slice of users when the WASM is on ilmenit.github.io.
+  # GitHub Pages stays as a backup target — both deploys race; either
+  # going green is enough for users.
+  #
+  # Identity: a separate `wasm-deploy` user on the VM (NOT the lobby
+  # binary's `deploy` user), with its own ed25519 keypair and a
+  # narrow sudoers allowlist scoped to /var/www/altirra-sdl-wasm/.
+  # See altirra-sdl-lobby/DEPLOYMENT.md for the bootstrap recipe.
+  # A leaked WASM_DEPLOY_SSH_KEY can replace the static bundle but
+  # cannot touch the lobby binary, the systemd unit, or the Caddyfile.
+  deploy-vm:
+    name: Deploy to Oracle VM (lobby.atari.org.pl)
+    needs: wasm
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/WASM-target')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: wasm-dist
+          path: wasm-dist
+
+      - name: SSH setup
+        env:
+          SSH_KEY: ${{ secrets.WASM_DEPLOY_SSH_KEY }}
+          HOST:    ${{ secrets.WASM_DEPLOY_HOST }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          # Same accept-new policy as the lobby's deploy.yml — the
+          # SSH key proves identity, and Oracle's SSH banner sometimes
+          # delays past ssh-keyscan's 5 s default.
+          touch ~/.ssh/known_hosts
+
+      - name: rsync to VM and atomic-swap
+        env:
+          HOST: ${{ secrets.WASM_DEPLOY_HOST }}
+        run: |
+          set -e
+          # Stage cleanly: wipe any leftovers from a prior aborted run
+          # so we never serve a half-mixed tree.
+          ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=accept-new \
+              wasm-deploy@"$HOST" \
+              'rm -rf /home/wasm-deploy/stage && mkdir -p /home/wasm-deploy/stage'
+
+          rsync -avz --delete \
+              -e "ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=accept-new" \
+              wasm-dist/ wasm-deploy@"$HOST":/home/wasm-deploy/stage/
+
+          # Atomic-swap pattern (same as the welcome page in the lobby
+          # repo): build the new tree under .new, rename old to .old,
+          # rename new into place.  An incoming GET in flight either
+          # gets fully old or fully new, never a mixed tree.  Sudoers
+          # whitelists exactly the five commands below with these
+          # exact paths — see altirra-sdl-lobby/DEPLOYMENT.md.
+          ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=accept-new \
+              wasm-deploy@"$HOST" '
+              set -e
+              sudo /usr/bin/rm -rf /var/www/altirra-sdl-wasm.new
+              sudo /usr/bin/install -d -m 0755 /var/www/altirra-sdl-wasm.new
+              sudo /bin/cp -a /home/wasm-deploy/stage/. /var/www/altirra-sdl-wasm.new/
+              sudo /usr/bin/rm -rf /var/www/altirra-sdl-wasm.old
+              if [ -d /var/www/altirra-sdl-wasm ]; then
+                  sudo /usr/bin/mv /var/www/altirra-sdl-wasm /var/www/altirra-sdl-wasm.old
+              fi
+              sudo /usr/bin/mv /var/www/altirra-sdl-wasm.new /var/www/altirra-sdl-wasm
+          '
+
+      - name: Smoke test
+        env:
+          HOST: ${{ secrets.WASM_DEPLOY_HOST }}
+        run: |
+          set -e
+          # HTML 200 (Caddy serves index.html for the bare /play/ URL).
+          curl -fsS -o /dev/null --max-time 10 \
+              "https://lobby.atari.org.pl/AltirraSDL/play/"
+          echo "OK: index.html"
+          # Brotli content-encoded WASM — confirms .wasm.br exists and
+          # Caddy is wired up to serve precompressed.  We expect the
+          # brotli payload to be substantially smaller than 11 MB.
+          BR=$(curl -fsS --max-time 30 -H 'Accept-Encoding: br' \
+                  "https://lobby.atari.org.pl/AltirraSDL/play/AltirraSDL.wasm" \
+                  -o /dev/null -w '%{size_download} %{content_type}\n')
+          echo "OK: AltirraSDL.wasm br-served = $BR"
 
   publish-nightly:
     name: Attach to rolling nightly release

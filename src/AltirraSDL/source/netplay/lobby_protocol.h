@@ -212,8 +212,21 @@ namespace Field {
 // Default WASM client URL used to build joinUrl when the lobby is
 // run without --public-wasm-url override.  Trailing slash required:
 // the lobby appends "?s=<id>" without inserting one.
+//
+// Same-origin URL: the production lobby runs at lobby.atari.org.pl
+// AND also serves the WASM bundle at /AltirraSDL/play/, so a joinUrl
+// built from this base produces a same-origin WS connection from the
+// emulator back to /netplay.  Same-origin sidesteps the third-party-
+// WS filters and DNS-level blocklists that bite a non-trivial slice
+// of users when the WASM is hosted on a different host (e.g.
+// ilmenit.github.io → lobby.atari.org.pl was a third-party WS).
+//
+// ilmenit.github.io stays as a backup URL — operators who prefer it
+// can still set --public-wasm-url to the GitHub Pages host, and the
+// CI keeps publishing both targets so users have a fallback if the
+// VM is down.
 inline constexpr const char *kDefaultPublicWasmUrl =
-    "https://ilmenit.github.io/AltirraSDL/";
+    "https://lobby.atari.org.pl/AltirraSDL/play/";
 
 // v4 two-sided punch: server-side limits.
 inline constexpr int    kPeerHintCandidatesMax = 512;

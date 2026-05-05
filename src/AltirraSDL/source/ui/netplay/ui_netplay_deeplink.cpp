@@ -26,9 +26,30 @@
 
 #include "netplay/netplay_glue.h"
 
+#include "ui/core/ui_mode.h"
+
 #include <vd2/system/registry.h>
 
 #include <mutex>
+
+#if defined(__EMSCRIPTEN__)
+// WASM auto-fetch: forward-declare the wasm_bridge.cpp exports rather
+// than #including the bridge header (which pulls emscripten.h).  The
+// signatures are stable: ATWasmGetFirstRunState() returns the state
+// machine value documented in wasm_bridge.cpp's StartFetchAt path
+// (5/6/8 = ready, 7 = all mirrors failed, 0..4 = in progress).
+extern "C" int  ATWasmGetFirstRunState();
+extern "C" void ATWasmFirstRunBootstrap();
+extern "C" void ATWasmResetFirstRun();
+#endif
+
+// We don't link against ui_mobile.cpp's SetFirstRunComplete() —
+// duplicating the registry write here keeps this module's dependency
+// surface narrow (and lets it compile on Desktop UI builds that
+// don't include the mobile sources).  The "Mobile" / "FirstRunComplete"
+// pair is the same one IsFirstRunComplete() above reads, so the two
+// stay in sync.
+extern void ATRegistryFlushToDisk();
 
 namespace ATNetplayUI {
 
@@ -53,13 +74,29 @@ std::mutex     g_deepLinkMu;
 std::string    g_pendingSessionId;     // protected by g_deepLinkMu
 std::string    g_pendingEntryCode;     // protected by g_deepLinkMu
 
+// Internal state-machine phase.  The public DeepLinkUiState (in the
+// header) is a thinner enum the renderer consults; this internal one
+// also tracks transient transitions (Idle → reevaluate next tick).
 enum class Phase {
-	Idle,           // nothing pending or last attempt finished
-	FetchInFlight,  // GetById posted, waiting for OnDeepLinkLobbyResult
-	Done,           // terminal — error already routed or join fired
+	Idle,                // nothing pending or last attempt finished;
+	                     // DriveDeepLinkJoin will (re)evaluate the
+	                     // gates on the next call.
+	WaitingForNickname,  // first-time visitor; SubmitDeepLinkNickname
+	                     // will advance to WaitingForFirmware.
+	WaitingForFirmware,  // WASM auto-firmware-fetch in flight; tick
+	                     // polls ATWasmGetFirstRunState until it's
+	                     // 5/6/8 (ready) or 7 (failed).
+	FirmwareFailed,      // all mirrors failed; UI offers Retry which
+	                     // calls RetryDeepLinkFirmware().
+	FetchInFlight,       // GetById posted, waiting for
+	                     // OnDeepLinkLobbyResult.
+	Done,                // terminal — error already routed or join
+	                     // fired; ClearPendingDeepLink has been
+	                     // called.
 };
 Phase    g_phase    = Phase::Idle;
 uint32_t g_fetchTag = 0;
+bool     g_firmwareKicked = false;   // ATWasmFirstRunBootstrap call gate
 
 // Distinct tag for our GetById posts so the result handler can
 // recognise its own work and ignore other ops that happen to share
@@ -82,6 +119,26 @@ void RouteToError(const std::string& msg) {
 	State& st = GetState();
 	st.session.lastError = msg;
 	Navigate(Screen::Error);
+}
+
+// Duplicate of ui_mobile.cpp's SetFirstRunComplete — see comment above
+// the extern.  Writes "Mobile/FirstRunComplete=true" and flushes the
+// registry to disk so the value survives the WASM page-close that
+// often happens before any natural flush opportunity.
+void MarkFirstRunComplete() {
+	VDRegistryAppKey key("Mobile", true);
+	if (key.isReady())
+		key.setBool("FirstRunComplete", true);
+	try { ATRegistryFlushToDisk(); } catch (...) {}
+}
+
+// Same-page navigation helper — only Navigate if we aren't already
+// on the target.  Avoids pushing a second copy of DeepLinkPrep onto
+// the back stack each frame the prep screen is active.
+void EnsureOnScreen(Screen target) {
+	State& st = GetState();
+	if (st.screen != target)
+		Navigate(target);
 }
 
 } // namespace anonymous
@@ -123,27 +180,56 @@ void DriveDeepLinkJoin() {
 	// again — even if the stash still has a leftover value.  A fresh
 	// SetPendingDeepLinkSessionId() would be needed (e.g. a future
 	// in-app "open this URL" flow).
-	if (g_phase == Phase::Done) return;
-	if (g_phase == Phase::FetchInFlight) return;  // wait for response
+	if (g_phase == Phase::Done)             return;
+	if (g_phase == Phase::FetchInFlight)    return;  // wait for response
 
-	// Gates — every one of these must be open before we commit:
-	//
-	//   - GetWorker().IsRunning(): the worker thread / fetch helpers
-	//     must be alive, otherwise Post() drops the request.
-	//   - !ATNetplayGlue::IsActive(): we must not already be in a
-	//     session (the user could have manually joined something else
-	//     between the URL click and this tick).
-	//   - IsFirstRunComplete(): the Gaming Mode setup wizard must be
-	//     done (firmware installed, nickname picked).  Without this
-	//     the join would fail with "missing kernel" and confuse the
-	//     user.  Desktop UI doesn't run the wizard but writes the
-	//     same flag, so the check is correct in both modes.
+	// Phase 1 — nickname.  When the user arrives via deep-link we
+	// skip the full Gaming Mode setup wizard and just ask for a name
+	// (so the host's "X wants to join" prompt shows a real handle,
+	// not "Player_AB12").  The firmware fetch runs in parallel from
+	// the WASM bootstrap so it's already a head-start by the time
+	// the user types.
+	if (!IsFirstRunComplete()) {
+		g_phase = Phase::WaitingForNickname;
+		EnsureOnScreen(Screen::DeepLinkPrep);
+		return;
+	}
+
+	// Phase 2 — firmware (WASM only).  Wait until the auto-fetch
+	// (kFirstRunUrls cascade) has produced an extracted ROM.  States
+	// 5/6/8 mean "ready"; 7 means "all mirrors failed"; 0..4 mean
+	// "in progress".  Idempotent: ATWasmFirstRunBootstrap uses an
+	// atomic guard so a second call from here is a no-op if JS
+	// already kicked it.
+#if defined(__EMSCRIPTEN__)
+	{
+		const int s = ATWasmGetFirstRunState();
+		if (s == 7) {
+			g_phase = Phase::FirmwareFailed;
+			EnsureOnScreen(Screen::DeepLinkPrep);
+			return;
+		}
+		if (s >= 0 && s <= 4) {
+			if (!g_firmwareKicked) {
+				ATWasmFirstRunBootstrap();
+				g_firmwareKicked = true;
+			}
+			g_phase = Phase::WaitingForFirmware;
+			EnsureOnScreen(Screen::DeepLinkPrep);
+			return;
+		}
+		// 5 / 6 / 8 = firmware ready (or already-present); fall through.
+	}
+#endif
+
+	// Phase 3 — gates: worker + no-active-session.  No screen change
+	// here; we should already be on DeepLinkPrep showing "Looking up
+	// the game…" once the fetch is in flight.
 	if (!GetWorker().IsRunning())   return;
 	if (ATNetplayGlue::IsActive())  return;
-	if (!IsFirstRunComplete())      return;
 
-	// All gates open — issue the lobby fetch.  We pick the first
-	// enabled HTTP lobby; if the user has multiple federated lobbies
+	// Phase 4 — issue the lobby fetch.  We pick the first enabled
+	// HTTP lobby; if the user has multiple federated lobbies
 	// configured, the deep-link assumes the one that minted the URL
 	// is the same one configured first (which is the default —
 	// lobby.atari.org.pl).  A failed fetch falls through to the
@@ -173,6 +259,7 @@ void DriveDeepLinkJoin() {
 		return;
 	}
 	g_phase = Phase::FetchInFlight;
+	EnsureOnScreen(Screen::DeepLinkPrep);
 }
 
 bool OnDeepLinkLobbyResult(const LobbyResult& r) {
@@ -226,8 +313,83 @@ bool OnDeepLinkLobbyResult(const LobbyResult& r) {
 	ClearPendingDeepLink();
 	g_phase = Phase::Done;
 
+	// One-click UX: a deep-link arrival is by definition the user
+	// saying "I want to play this thing right now", which is the
+	// canonical Gaming Mode use case (touch HUD, larger fonts, no
+	// debug menus).  Flip to Gaming Mode if we're not already there
+	// before the join screens render.  The user can switch back via
+	// the hamburger any time after the session ends.
+	if (!ATUIIsGamingMode())
+		ATUISetMode(ATUIMode::Gaming);
+
 	StartJoiningAction();
 	return true;
+}
+
+DeepLinkUiState GetDeepLinkUiState() {
+	{
+		std::lock_guard<std::mutex> lk(g_deepLinkMu);
+		if (g_pendingSessionId.empty() && g_phase != Phase::Done)
+			return DeepLinkUiState::NotPending;
+	}
+	switch (g_phase) {
+		case Phase::Idle:                return DeepLinkUiState::NotPending;
+		case Phase::WaitingForNickname:  return DeepLinkUiState::NeedsNickname;
+		case Phase::WaitingForFirmware:  return DeepLinkUiState::DownloadingFw;
+		case Phase::FirmwareFailed:      return DeepLinkUiState::FirmwareFailed;
+		case Phase::FetchInFlight:       return DeepLinkUiState::Looking;
+		case Phase::Done:                return DeepLinkUiState::Joining;
+	}
+	return DeepLinkUiState::NotPending;
+}
+
+void SubmitDeepLinkNickname(const std::string& nickIn) {
+	// Trim and clamp to <=24 chars to match the regular Nickname
+	// screen's contract.  An empty string after trim is treated as
+	// "no name" — caller should disable the Continue button so this
+	// doesn't fire.  Empty-but-anonymous mode isn't offered on the
+	// deep-link path: the host's "X wants to join" prompt is much
+	// more useful with a real name.
+	std::string nick = nickIn;
+	while (!nick.empty() && (unsigned char)nick.front() <= 0x20)
+		nick.erase(nick.begin());
+	while (!nick.empty() && (unsigned char)nick.back()  <= 0x20)
+		nick.pop_back();
+	if (nick.size() > 24) nick.resize(24);
+	if (nick.empty()) return;
+
+	State& st = GetState();
+	st.prefs.nickname    = nick;
+	st.prefs.isAnonymous = false;
+	SaveToRegistry();
+	MarkFirstRunComplete();
+
+	// Re-enter the state machine from Idle on the next tick — it'll
+	// either advance to WaitingForFirmware (if firmware is missing)
+	// or straight to FetchInFlight.
+	g_phase = Phase::Idle;
+}
+
+void CancelDeepLink() {
+	ClearPendingDeepLink();
+	g_phase = Phase::Done;
+	g_firmwareKicked = false;
+	State& st = GetState();
+	if (st.screen == Screen::DeepLinkPrep)
+		Navigate(Screen::Closed);
+}
+
+void RetryDeepLinkFirmware() {
+#if defined(__EMSCRIPTEN__)
+	ATWasmResetFirstRun();
+	g_firmwareKicked = false;
+	// State machine drops back to Idle so the next DriveDeepLinkJoin
+	// call re-checks ATWasmGetFirstRunState (which is now 0 after
+	// reset), kicks the bootstrap, and parks us back on the
+	// "Downloading…" UI.
+	if (g_phase == Phase::FirmwareFailed)
+		g_phase = Phase::Idle;
+#endif
 }
 
 } // namespace ATNetplayUI

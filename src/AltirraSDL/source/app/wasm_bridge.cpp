@@ -625,7 +625,18 @@ namespace {
 	// xf25.zip both bundle the Altirra-distributable ROM set; the
 	// extractor accepts any ".rom" entry so either layout works.
 	constexpr const char *kFirstRunUrls[] = {
-		// CORS-permissive primary (verified 2026-05).
+		// Self-hosted primary on the netplay lobby — same origin as
+		// the WASM page when served from lobby.atari.org.pl/AltirraSDL/
+		// play/.  ~26 KB minimal repackage of pcxf360.zip containing
+		// only ATARIBAS.ROM / ATARIOSB.ROM / ATARIXL.ROM (the three
+		// .rom files the extractor cares about).  Same-origin =
+		// guaranteed CORS, fast, no third-party dependency.  Ships
+		// from the altirra-sdl-lobby repo's page/firmware/ tree.
+		"https://lobby.atari.org.pl/AltirraSDL/firmware/altirra-firmware.zip",
+
+		// CORS-permissive secondary on ifarchive (verified 2026-05).
+		// Survives a lobby outage; same content, larger payload
+		// (591 KB — includes XFD demo disks the extractor ignores).
 		"https://ifarchive.org/if-archive/emulators/atari/pcxf360.zip",
 
 		// CORS-permissive ifarchive mirror (same content, separate

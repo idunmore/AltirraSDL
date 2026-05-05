@@ -24,6 +24,7 @@
 #include "ui_netplay.h"
 #include "ui_netplay_lobby_worker.h"
 #include "ui_netplay_actions.h"
+#include "ui_netplay_deeplink.h"
 
 #include "input/touch_widgets.h"
 #include "ui/core/ui_mode.h"
@@ -156,6 +157,184 @@ void RenderNickname() {
 	ImGui::EndDisabled();
 
 	if (!open) Navigate(Screen::Closed);
+
+	EndSheet();
+}
+
+// -------------------------------------------------------------------
+// Deep-link one-click join preflight
+//
+// Driven entirely by the deep-link state machine in
+// ui_netplay_deeplink.cpp; this renderer just picks one of four tiny
+// sub-views based on GetDeepLinkUiState() and forwards user actions
+// to SubmitDeepLinkNickname / RetryDeepLinkFirmware / CancelDeepLink.
+// Once the state machine fires StartJoiningAction the standard
+// JoinConfirm / Waiting screens push themselves over the top of this.
+// -------------------------------------------------------------------
+
+// Backing storage for the nickname input.  Defined here so both the
+// input field (in the NeedsNickname case) and the footer's Continue
+// button (which checks emptiness and reads the final value) share
+// the same buffer.  Buffer size is 32 (lobby's kHostHandleMax).
+namespace {
+	char *Wiz_DeepLinkNickBuf() {
+		static char buf[32] = {};
+		return buf;
+	}
+}
+
+void RenderDeepLinkPrep() {
+	bool open = true;
+	if (!BeginSheet("Joining online game", &open,
+	                ImVec2(Dp(360), Dp(280)),
+	                ImVec2(Dp(560), Dp(420)))) {
+		return;
+	}
+
+	const DeepLinkUiState ui = GetDeepLinkUiState();
+
+	// Title bar — Back / Cancel both abort the deep-link.  We don't
+	// push DeepLinkPrep onto the back stack on advance, so a tap on
+	// the system-back gesture also lands here as a single pop.
+	if (ScreenHeader("Joining online game")) {
+		CancelDeepLink();
+	}
+
+	BeginScreenBody(ATTouch::kFooterReserveSingle);
+
+	switch (ui) {
+		case DeepLinkUiState::NeedsNickname: {
+			ATTouchSection("What name should the host see?");
+			ATTouchMutedText(
+				"This is the only thing they'll see before deciding "
+				"to let you in.  1-24 characters.");
+			ImGui::Spacing();
+
+			char *buf = Wiz_DeepLinkNickBuf();
+			static bool seeded = false;
+			State& st = GetState();
+			if (!seeded || ConsumeFocusRequest(2001)) {
+				// Seed with whatever's already saved (re-entry case); a
+				// truly fresh visitor shows an empty box.
+				std::snprintf(buf, 32, "%s",
+					st.prefs.nickname.c_str());
+				ImGui::SetKeyboardFocusHere();
+				seeded = true;
+			}
+			ImGui::PushItemWidth(-FLT_MIN);
+			ATTouchInputTextScrollAware("##dlhandle", buf, 32);
+			ImGui::PopItemWidth();
+			break;
+		}
+
+		case DeepLinkUiState::DownloadingFw: {
+			ATTouchSection("Setting up the emulator");
+			ATTouchMutedText(
+				"Downloading the Atari ROMs the host's game needs "
+				"(about 26 KB — one-time per browser).");
+			ImGui::Spacing();
+			// Indeterminate ImGui progress bar — there's no per-mirror
+			// byte progress exposed from the WASM bridge, and the fetch
+			// is fast enough (sub-second on a healthy mirror) that an
+			// animated bar reads better than a stalled "0%".
+			ImGui::ProgressBar(-1.0f * (float)ImGui::GetTime(),
+				ImVec2(-FLT_MIN, Dp(8)), "");
+			break;
+		}
+
+		case DeepLinkUiState::FirmwareFailed: {
+			ATTouchSection("Couldn't download the Atari ROMs");
+			ATTouchMutedText(
+				"All firmware mirrors failed.  Check your connection "
+				"and try again, or close this dialog and run the "
+				"manual setup wizard from the menu.");
+			break;
+		}
+
+		case DeepLinkUiState::Looking: {
+			ATTouchSection("Looking up the game");
+			ATTouchMutedText(
+				"Asking the lobby for the session details.  This "
+				"usually takes a second or two.");
+			ImGui::Spacing();
+			ImGui::ProgressBar(-1.0f * (float)ImGui::GetTime(),
+				ImVec2(-FLT_MIN, Dp(8)), "");
+			break;
+		}
+
+		case DeepLinkUiState::Joining: {
+			ATTouchSection("Joining session");
+			ATTouchMutedText(
+				"Waiting for the host to accept your request to join.");
+			ImGui::Spacing();
+			ImGui::ProgressBar(-1.0f * (float)ImGui::GetTime(),
+				ImVec2(-FLT_MIN, Dp(8)), "");
+			break;
+		}
+
+		case DeepLinkUiState::NotPending:
+			// Drifted here without an active deep-link; pop back so
+			// the user isn't stuck on an empty modal.
+			Navigate(Screen::Closed);
+			EndScreenBody();
+			EndSheet();
+			return;
+	}
+
+	EndScreenBody();
+
+	ImGui::Separator();
+	ImGui::Spacing();
+
+	// Footer — content varies per phase.  Cancel is always present
+	// so the user can never get trapped in a multi-second fetch.
+	if (ui == DeepLinkUiState::NeedsNickname) {
+		float btnW = (ImGui::GetContentRegionAvail().x - Dp(10)) * 0.5f;
+		if (ATTouchButton("Cancel",
+		                  ImVec2(btnW, Dp(ATTouch::kButtonHeightNormal)),
+		                  ATTouchButtonStyle::Neutral)) {
+			CancelDeepLink();
+		}
+		ImGui::SameLine(0, Dp(10));
+
+		// Re-fetch the buffer the input lives in.  Static, so the
+		// final value the user typed is what we read here even
+		// though the input field rendered earlier this frame.
+		const char *cur = Wiz_DeepLinkNickBuf();
+		const bool valid = cur && cur[0] != 0;
+
+		ImGui::BeginDisabled(!valid);
+		if (ATTouchButton("Continue",
+		                  ImVec2(btnW, Dp(ATTouch::kButtonHeightNormal)),
+		                  ATTouchButtonStyle::Accent)) {
+			SubmitDeepLinkNickname(std::string(cur));
+		}
+		ImGui::EndDisabled();
+	}
+	else if (ui == DeepLinkUiState::FirmwareFailed) {
+		float btnW = (ImGui::GetContentRegionAvail().x - Dp(10)) * 0.5f;
+		if (ATTouchButton("Cancel",
+		                  ImVec2(btnW, Dp(ATTouch::kButtonHeightNormal)),
+		                  ATTouchButtonStyle::Neutral)) {
+			CancelDeepLink();
+		}
+		ImGui::SameLine(0, Dp(10));
+		if (ATTouchButton("Try again",
+		                  ImVec2(btnW, Dp(ATTouch::kButtonHeightNormal)),
+		                  ATTouchButtonStyle::Accent)) {
+			RetryDeepLinkFirmware();
+		}
+	}
+	else {
+		// DownloadingFw / Looking / Joining: only Cancel.
+		if (ATTouchButton("Cancel",
+		                  ImVec2(-FLT_MIN, Dp(ATTouch::kButtonHeightNormal)),
+		                  ATTouchButtonStyle::Neutral)) {
+			CancelDeepLink();
+		}
+	}
+
+	if (!open) CancelDeepLink();
 
 	EndSheet();
 }
@@ -2575,6 +2754,7 @@ bool ATNetplayUI_DispatchScreen() {
 	if (GameBrowser_IsPickerActive() && ATUIIsGamingMode()) return true;
 
 	switch (st.screen) {
+		case Screen::DeepLinkPrep:  RenderDeepLinkPrep();   break;
 		case Screen::Nickname:      RenderNickname();       break;
 		case Screen::OnlinePlayHub: RenderOnlinePlayHub();  break;
 		case Screen::Browser:       RenderBrowser();        break;
